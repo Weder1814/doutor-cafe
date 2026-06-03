@@ -64,7 +64,7 @@ Responda SOMENTE com o JSON, sem markdown, sem backticks, sem texto extra.`,
       .join("");
 
     // Strip markdown code fences if model wraps response anyway
-    const cleaned = rawText.replace(/```(?:json)?|```/g, "").trim();
+    const cleaned = rawText.replace(/(?:json)?|/g, "").trim();
 
     let resultado;
     try {
@@ -100,7 +100,6 @@ app.get("/", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  console.log(`POST http://localhost:${PORT}/diagnostico`);
+  console.log(Servidor rodando na porta ${PORT});
+  console.log(POST http://localhost:${PORT}/diagnostico);
 });
-

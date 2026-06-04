@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Doutor Café</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:Arial,sans-serif;background:#f0f7f1;min-height:100vh;display:flex;flex-direction:column;align-items:center;}
+.header{width:100%;background:linear-gradient(170deg,#0f2e14,#1e5c28);padding:40px 24px;text-align:center;}
+.titulo{font-size:32px;font-weight:900;color:white;}
+.titulo span{color:#8de89a;}
+.subtitulo{color:rgba(255,255,255,0.6);margin-top:6px;}
+.corpo{width:100%;max-width:420px;padding:24px 20px;}
+.btn-foto{width:100%;background:linear-gradient(145deg,#2d8a3e,#1a5228);color:white;border:none;border-radius:28px;padding:28px;font-size:22px;font-weight:900;cursor:pointer;margin-bottom:14px;}
+.btn-gal{width:100%;background:white;color:#1a3a1f;border:2px solid #b8dbbe;border-radius:20px;padding:16px;font-size:17px;font-weight:800;cursor:pointer;}
+.resultado{display:none;background:white;border-radius:20px;padding:20px;margin-top:16px;box-shadow:0 2px 12px rgba(0,0,0,0.1);}
+.spinner{display:none;text-align:center;padding:32px;font-size:18px;color:#1a3a1f;}
+input[type=file]{display:none;}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="titulo">Doutor <span>Café</span></div>
+  <div class="subtitulo">O agrônomo no seu bolso 🌿</div>
+</div>
+<div class="corpo">
+  <input type="file" id="cam" accept="image/*" capture="environment">
+  <input type="file" id="gal" accept="image/*">
+  <button class="btn-foto" onclick="document.getElementById('cam').click()">📷 FOTOGRAFAR A FOLHA</button>
+  <button class="btn-gal" onclick="document.getElementById('gal').click()">🖼️ Escolher da Galeria</button>
+  <div class="spinner" id="spinner">🔍 Analisando a folha...</div>
+  <div class="resultado" id="resultado"></div>
+</div>
+<script>
+const SERVIDOR = "https://doutor-cafe-production.up.railway.app";
+
+function processar(file) {
+  if (!file) return;
+  document.getElementById("spinner").style.display = "block";
+  document.getElementById("resultado").style.display = "none";
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    const b64 = e.target.result.split(",")[1];
+    try {
+      const res = await fetch(SERVIDOR + "/diagnostico", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({imagem: b64, tipo: file.type})
+      });
+      const data = await res.json();
+      document.getElementById("spinner").style.display = "none";
+      const div = document.getElementById("resultado");
+      div.style.display = "block";
+      div.innerHTML = "<h2>" + (data.diagnostico || "Erro") + "</h2><p>" + (data.acao || data.erro || "") + "</p>";
+      if (window.speechSynthesis && data.acao) {
+        const msg = new SpeechSynthesisUtterance(data.acao);
+        msg.lang = "pt-BR";
+        window.speechSynthesis.speak(msg);
+      }
+    } catch(err) {
+      document.getElementById("spinner").style.display = "none";
+      document.getElementById("resultado").innerHTML = "<p>Erro ao analisar. Tente novamente.</p>";
+      document.getElementById("resultado").style.display = "block";
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+document.getElementById("cam").onchange = function(e) { processar(e.target.files[0]); };
+document.getElementById("gal").onchange = function(e) { processar(e.target.files[0]); };
+</script>
+</body>
+</html>

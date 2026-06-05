@@ -28,7 +28,7 @@ app.post("/diagnostico", async (req, res) => {
           role: "user",
           content: [
             { type: "image", source: { type: "base64", media_type: tipo || "image/jpeg", data: imagem }},
-            { type: "text", text: "Analise esta folha de cafe. Responda SOMENTE este JSON exato sem mais nada: {\"diagnostico\":\"ferrugem\",\"acao\":\"o que fazer\"}" }
+            { type: "text", text: "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira. Analise CUIDADOSAMENTE esta foto de folha decafe. Responda SOMENTE este JSON sem mais nada: {\"diagnostico\":\"ferrugem|bicho|nitrogenio|magnesio|saudavel\",\"acao\":\"o que o produtor deve fazer agora\"} CRITERIOS: ferrugem=po alaranjado embaixo da folha. bicho=trilhas ou galerias dentro da folha aspecto de raspagem. nitrogenio=folha toda amarela uniforme. magnesio=nervuras verdes tecido entre elas amarelo. saudavel verde escuro sem problemas.SE HOUVER TRILHAS OU GALERIAS NA FOLHA = bicho." }
           ]
         }]
       })

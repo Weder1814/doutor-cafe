@@ -68,7 +68,7 @@ app.post("/diagnostico", async (req, res) => {
 
     const data = await response.json();
     console.log("Data completa:", JSON.stringify(data));
-    
+    console.log("Resposta completa:",JSON.stringify(data));
     const txt = data.content && data.content[0] ? data.content[0].text : "";
     const match = txt.match(/\{[\s\S]*\}/);
     

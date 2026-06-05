@@ -70,7 +70,7 @@ app.post("/diagnostico", async (req, res) => {
     console.log("Resposta da API recebida");
     
     const txt = data.content && data.content[0] ? data.content[0].text : "";
-    const match = txt.match(/\{[\s\S]*?\}/);
+    const match = txt.match(/\{[\s\S]*\}/);
     
     if (!match) {
       console.log("Erro: resposta invalida da IA:", txt);

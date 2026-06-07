@@ -1,74 +1,273 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Doutor Café</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:Arial,sans-serif;background:#f0f7f1;min-height:100vh;display:flex;flex-direction:column;align-items:center;}
-.header{width:100%;background:linear-gradient(170deg,#0f2e14,#1e5c28);padding:40px 24px;text-align:center;}
-.titulo{font-size:32px;font-weight:900;color:white;}
-.titulo span{color:#8de89a;}
-.subtitulo{color:rgba(255,255,255,0.6);margin-top:6px;}
-.corpo{width:100%;max-width:420px;padding:24px 20px;}
-.btn-foto{width:100%;background:linear-gradient(145deg,#2d8a3e,#1a5228);color:white;border:none;border-radius:28px;padding:28px;font-size:22px;font-weight:900;cursor:pointer;margin-bottom:14px;}
-.btn-gal{width:100%;background:white;color:#1a3a1f;border:2px solid #b8dbbe;border-radius:20px;padding:16px;font-size:17px;font-weight:800;cursor:pointer;}
-.resultado{display:none;background:white;border-radius:20px;padding:20px;margin-top:16px;box-shadow:0 2px 12px rgba(0,0,0,0.1);}
-.spinner{display:none;text-align:center;padding:32px;font-size:18px;color:#1a3a1f;}
-input[type=file]{display:none;}
+:root {
+  --verde: #1a5c2a;
+  --verde-claro: #2d8a3e;
+  --verde-neon: #5dde74;
+  --creme: #f5f0e8;
+  --marrom: #3d2b1a;
+  --cinza: #7a8a7c;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', sans-serif; background: var(--creme); min-height: 100vh; overflow-x: hidden; }
+.header { background: var(--verde); padding: 36px 24px 48px; text-align: center; position: relative; overflow: hidden; }
+.header::before { content: ''; position: absolute; top: -60px; right: -60px; width: 200px; height: 200px; border-radius: 50%; background: rgba(93,222,116,0.08); }
+.header::after { content: ''; position: absolute; bottom: -40px; left: -40px; width: 150px; height: 150px; border-radius: 50%; background: rgba(93,222,116,0.05); }
+.logo-icon { font-size: 44px; display: block; margin-bottom: 8px; animation: float 3s ease-in-out infinite; }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 36px; color: white; letter-spacing: -0.5px; }
+.header h1 span { color: var(--verde-neon); }
+.header .sub { color: rgba(255,255,255,0.55); font-size: 13px; margin-top: 6px; letter-spacing: 0.5px; text-transform: uppercase; }
+.regiao-tag { display: inline-block; margin-top: 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 4px 12px; font-size: 12px; color: rgba(255,255,255,0.75); }
+.wave { display: block; background: var(--verde); height: 40px; clip-path: ellipse(55% 100% at 50% 0%); margin-bottom: -2px; }
+.corpo { max-width: 420px; margin: 0 auto; padding: 24px 20px 40px; display: flex; flex-direction: column; gap: 14px; }
+.btn-foto { background: linear-gradient(135deg, var(--verde-claro), var(--verde)); color: white; border: none; border-radius: 18px; padding: 22px 28px; font-family: 'DM Sans', sans-serif; font-size: 17px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: transform 0.15s, box-shadow 0.15s; box-shadow: 0 4px 20px rgba(26,92,42,0.3); width: 100%; }
+.btn-foto:active { transform: scale(0.97); }
+.btn-galeria { background: white; color: var(--verde); border: 2px solid #c8ddc8; border-radius: 18px; padding: 16px 28px; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: transform 0.15s; width: 100%; }
+.btn-galeria:active { transform: scale(0.97); }
+.btn-icon { font-size: 26px; flex-shrink: 0; }
+.btn-text { text-align: left; line-height: 1.3; }
+.btn-text small { display: block; font-weight: 400; font-size: 12px; opacity: 0.7; margin-top: 2px; }
+input { display: none; }
+.dica { background: white; border-radius: 14px; padding: 14px 16px; display: flex; align-items: flex-start; gap: 10px; border-left: 3px solid var(--verde-neon); }
+.dica-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.dica p { font-size: 13px; color: var(--cinza); line-height: 1.5; }
+.dica strong { color: var(--marrom); }
+#spinner { display: none; background: white; border-radius: 20px; padding: 32px 20px; text-align: center; box-shadow: 0 2px 16px rgba(0,0,0,0.07); }
+.spinner-folha { font-size: 40px; animation: spin-pulse 1.2s ease-in-out infinite; display: block; margin-bottom: 12px; }
+@keyframes spin-pulse { 0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; } 50% { transform: scale(1.15) rotate(10deg); opacity: 0.7; } }
+#spinner p { color: var(--verde); font-weight: 700; font-size: 16px; }
+#spinner small { color: var(--cinza); font-size: 12px; margin-top: 4px; display: block; }
+#resultado { display: none; }
+.card-resultado { background: white; border-radius: 24px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.1); animation: slideUp 0.4s ease; }
+@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.card-topo { padding: 24px 20px 20px; display: flex; align-items: center; gap: 16px; }
+.card-emoji { font-size: 52px; flex-shrink: 0; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15)); }
+.card-titulo h2 { font-family: 'Playfair Display', serif; font-size: 22px; color: var(--marrom); text-transform: capitalize; }
+.card-titulo .categoria { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-top: 2px; }
+.badges { padding: 0 20px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+.badge { border-radius: 30px; padding: 5px 12px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
+.badge-estagio { background: #fff3e0; color: #e65100; }
+.badge-confianca-alta { background: #e8f5e9; color: #2e7d32; }
+.badge-confianca-media { background: #fff8e1; color: #f57f17; }
+.badge-confianca-baixa { background: #fce4ec; color: #c62828; }
+.badge-regiao { background: #e3f2fd; color: #1565c0; }
+.visto-box { margin: 0 20px 16px; background: var(--creme); border-radius: 12px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; }
+.visto-box .visto-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.visto-box p { font-size: 13px; color: #555; line-height: 1.5; font-style: italic; }
+.divisor { height: 1px; background: #f0f0f0; margin: 0 20px; }
+.acao-box { padding: 16px 20px; }
+.acao-box h3 { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-bottom: 8px; }
+.acao-box p { font-size: 15px; color: var(--marrom); line-height: 1.6; font-weight: 500; }
+.estagio-box { padding: 0 20px 16px; }
+.estagio-box h3 { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-bottom: 8px; }
+.estagio-bar { display: flex; gap: 4px; }
+.estagio-seg { flex: 1; height: 8px; border-radius: 4px; background: #e8e8e8; transition: background 0.3s; }
+.btns-resultado { padding: 0 20px 20px; display: flex; gap: 10px; }
+.btn-voz { flex: 1; background: var(--verde); color: white; border: none; border-radius: 14px; padding: 14px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-nova { flex: 1; background: var(--creme); color: var(--verde); border: 2px solid #c8ddc8; border-radius: 14px; padding: 14px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
 </style>
 </head>
 <body>
 <div class="header">
-  <div class="titulo">Doutor <span>Café</span></div>
-  <div class="subtitulo">O agrônomo no seu bolso 🌿</div>
+  <span class="logo-icon">🌿</span>
+  <h1>Doutor <span>Café</span></h1>
+  <div class="sub">O agrônomo no seu bolso</div>
+  <div class="regiao-tag" id="regiaoTag">📍 Localizando...</div>
 </div>
+<div class="wave"></div>
 <div class="corpo">
-  <input type="file" id="cam" accept="image/*" capture="environment">
-  <input type="file" id="gal" accept="image/*">
-  <button class="btn-foto" onclick="document.getElementById('cam').click()">📷 FOTOGRAFAR A FOLHA</button>
-  <button class="btn-gal" onclick="document.getElementById('gal').click()">🖼️ Escolher da Galeria</button>
-  <div class="spinner" id="spinner">🔍 Analisando a folha...</div>
-  <div class="resultado" id="resultado"></div>
+  <input id="cam" type="file" accept="image/*" capture="environment">
+  <input id="gal" type="file" accept="image/*">
+  <button class="btn-foto" id="btnCam">
+    <span class="btn-icon">📷</span>
+    <span class="btn-text">Fotografar a Folha<small>Abra a câmera e fotografe</small></span>
+  </button>
+  <button class="btn-galeria" id="btnGal">
+    <span class="btn-icon">🖼️</span>
+    <span class="btn-text">Escolher da Galeria<small>Use uma foto já tirada</small></span>
+  </button>
+  <div class="dica">
+    <span class="dica-icon">💡</span>
+    <p><strong>Dica:</strong> Fotografe a face inferior da folha também. A ferrugem aparece embaixo com pó alaranjado.</p>
+  </div>
+  <div id="spinner">
+    <span class="spinner-folha">🔬</span>
+    <p>Analisando a folha...</p>
+    <small>Identificando sintomas e comparando padrões</small>
+  </div>
+  <div id="resultado"></div>
 </div>
 <script>
-const SERVIDOR = "https://doutor-cafe-production.up.railway.app";
+var EMOJIS = {
+  ferrugem:"🟠",bicho:"🪲",cercosporiose:"🔵",aureolada:"🟣",
+  phoma:"⚫",antracnose:"🫙",ascochyta:"🟤",manteigosa:"🫧",
+  roseliniose:"💀",helmintosporiose:"🔴",broca:"🕳️",acaro:"🟫",
+  acaro_ferrugem:"🟥",cigarra:"🦗",cochonilha:"🤍",lagarta:"🐛",
+  nematoide:"🪱",nitrogenio:"🌿",magnesio:"🟡",potassio:"🔥",
+  fosforo:"💜",calcio:"🦴",enxofre:"🌕",boro:"🟦",
+  zinco:"🫧",ferro:"🫨",manganes:"🟤",cobre:"🧡",
+  estresse_hidrico:"💧",fitotoxicidade:"⚗️",escaldadura:"☀️",saudavel:"✅"
+};
+var NOMES_VOZ = {
+  ferrugem:"Ferrugem do café",bicho:"Bicho mineiro",cercosporiose:"Cercosporiose",
+  aureolada:"Mancha aureolada",phoma:"Phoma",antracnose:"Antracnose",
+  ascochyta:"Mancha Ascochyta",manteigosa:"Mancha manteigosa",roseliniose:"Roseliniose",
+  helmintosporiose:"Helmintosporiose",broca:"Broca do café",acaro:"Ácaro vermelho",
+  acaro_ferrugem:"Ácaro ferrugem falsa",cigarra:"Cigarra do cafeeiro",cochonilha:"Cochonilha",
+  lagarta:"Lagarta das rosetas",nematoide:"Nematoide das galhas",nitrogenio:"Deficiência de nitrogênio",
+  magnesio:"Deficiência de magnésio",potassio:"Deficiência de potássio",fosforo:"Deficiência de fósforo",
+  calcio:"Deficiência de cálcio",enxofre:"Deficiência de enxofre",boro:"Deficiência de boro",
+  zinco:"Deficiência de zinco",ferro:"Deficiência de ferro",manganes:"Deficiência de manganês",
+  cobre:"Deficiência de cobre",estresse_hidrico:"Estresse hídrico",fitotoxicidade:"Fitotoxicidade",
+  escaldadura:"Escaldadura solar",saudavel:"Planta saudável"
+};
+var CATEGORIAS = {
+  ferrugem:"Doença Fúngica",bicho:"Praga",cercosporiose:"Doença Fúngica",
+  aureolada:"Doença Bacteriana",phoma:"Doença Fúngica",antracnose:"Doença Fúngica",
+  ascochyta:"Doença Fúngica",manteigosa:"Doença Fúngica",roseliniose:"Doença Fúngica",
+  helmintosporiose:"Doença Fúngica",broca:"Praga",acaro:"Praga",
+  acaro_ferrugem:"Praga",cigarra:"Praga",cochonilha:"Praga",
+  lagarta:"Praga",nematoide:"Praga",nitrogenio:"Deficiência Nutricional",
+  magnesio:"Deficiência Nutricional",potassio:"Deficiência Nutricional",
+  fosforo:"Deficiência Nutricional",calcio:"Deficiência Nutricional",
+  enxofre:"Deficiência Nutricional",boro:"Deficiência Nutricional",
+  zinco:"Deficiência Nutricional",ferro:"Deficiência Nutricional",
+  manganes:"Deficiência Nutricional",cobre:"Deficiência Nutricional",
+  estresse_hidrico:"Estresse Ambiental",fitotoxicidade:"Estresse Ambiental",
+  escaldadura:"Estresse Ambiental",saudavel:"Planta Saudável"
+};
+var CORES_ESTAGIO = ["#4caf50","#8bc34a","#ffc107","#ff9800","#f44336"];
+
+var dadosGPS = { lat: null, lon: null, regiao: null, altitude: null };
+function identificarRegiao(lat, lon) {
+  if (lat >= -20.5 && lat <= -15.0 && lon >= -50.0 && lon <= -44.0) return "Cerrado Mineiro";
+  if (lat >= -22.5 && lat <= -19.5 && lon >= -46.5 && lon <= -43.5) return "Sul de Minas";
+  if (lat >= -21.5 && lat <= -19.0 && lon >= -48.5 && lon <= -46.0) return "Mogiana";
+  if (lat >= -20.0 && lat <= -17.0 && lon >= -42.5 && lon <= -40.0) return "Matas de Minas";
+  if (lat >= -15.0 && lat <= -10.0 && lon >= -41.5 && lon <= -38.5) return "Chapada Diamantina";
+  if (lat >= -12.0 && lat <= -8.0  && lon >= -40.0 && lon <= -36.0) return "Planalto da Bahia";
+  if (lat >= -12.0 && lat <= -6.0  && lon >= -62.0 && lon <= -56.0) return "Rondônia";
+  if (lat >= -22.0 && lat <= -19.0 && lon >= -52.0 && lon <= -48.0) return "Alta Paulista";
+  if (lat >= -25.0 && lat <= -21.0 && lon >= -54.0 && lon <= -49.0) return "Norte do Paraná";
+  if (lat >= -21.0 && lat <= -17.0 && lon >= -41.5 && lon <= -39.0) return "Espírito Santo";
+  return "Região Cafeeira";
+}
+function obterGPS() {
+  if (!navigator.geolocation) { document.getElementById("regiaoTag").textContent = "📍 GPS não disponível"; return; }
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      dadosGPS.lat = pos.coords.latitude;
+      dadosGPS.lon = pos.coords.longitude;
+      dadosGPS.altitude = pos.coords.altitude ? Math.round(pos.coords.altitude) : null;
+      dadosGPS.regiao = identificarRegiao(dadosGPS.lat, dadosGPS.lon);
+      var tag = "📍 " + dadosGPS.regiao;
+      if (dadosGPS.altitude) tag += " · " + dadosGPS.altitude + "m";
+      document.getElementById("regiaoTag").textContent = tag;
+    },
+    function() { document.getElementById("regiaoTag").textContent = "📍 Localização não obtida"; },
+    { timeout: 8000, enableHighAccuracy: false }
+  );
+}
+obterGPS();
+
+document.getElementById("btnCam").addEventListener("click", function() { document.getElementById("cam").click(); });
+document.getElementById("btnGal").addEventListener("click", function() { document.getElementById("gal").click(); });
+document.getElementById("cam").addEventListener("change", function(e) { if (e.target.files[0]) processar(e.target.files[0]); });
+document.getElementById("gal").addEventListener("change", function(e) { if (e.target.files[0]) processar(e.target.files[0]); });
 
 function processar(file) {
-  if (!file) return;
   document.getElementById("spinner").style.display = "block";
   document.getElementById("resultado").style.display = "none";
-  const reader = new FileReader();
-  reader.onload = async function(e) {
-    const b64 = e.target.result.split(",")[1];
-    try {
-      const res = await fetch(SERVIDOR + "/diagnostico", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({imagem: b64, tipo: file.type})
-      });
-      const data = await res.json();
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var b64 = e.target.result.split(",")[1];
+    var body = { imagem: b64, tipo: file.type };
+    if (dadosGPS.regiao) body.regiao = dadosGPS.regiao;
+    if (dadosGPS.altitude) body.altitude = dadosGPS.altitude;
+    fetch("https://doutor-cafe-production.up.railway.app/diagnostico", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
       document.getElementById("spinner").style.display = "none";
-      const div = document.getElementById("resultado");
+      mostrarResultado(data);
+    })
+    .catch(function() {
+      document.getElementById("spinner").style.display = "none";
+      var div = document.getElementById("resultado");
       div.style.display = "block";
-      div.innerHTML = "<h2>" + (data.diagnostico || "Erro") + "</h2><p>" + (data.acao || data.erro || "") + "</p>";
-      if (window.speechSynthesis && data.acao) {
-        const msg = new SpeechSynthesisUtterance(data.acao);
-        msg.lang = "pt-BR";
-        window.speechSynthesis.speak(msg);
-      }
-    } catch(err) {
-      document.getElementById("spinner").style.display = "none";
-      document.getElementById("resultado").innerHTML = "<p>Erro ao analisar. Tente novamente.</p>";
-      document.getElementById("resultado").style.display = "block";
-    }
+      div.innerHTML = '<div class="card-resultado"><div class="acao-box"><p>⚠️ Erro ao analisar. Verifique sua conexão e tente novamente.</p></div><div class="btns-resultado"><button class="btn-nova" onclick="resetar()">📷 Tentar novamente</button></div></div>';
+    });
   };
   reader.readAsDataURL(file);
 }
 
-document.getElementById("cam").onchange = function(e) { processar(e.target.files[0]); };
-document.getElementById("gal").onchange = function(e) { processar(e.target.files[0]); };
+function mostrarResultado(data) {
+  var div = document.getElementById("resultado");
+  div.style.display = "block";
+  var diag = data.diagnostico || "saudavel";
+  var emoji = EMOJIS[diag] || "🌿";
+  var cat = CATEGORIAS[diag] || "Análise";
+  var nomeVoz = NOMES_VOZ[diag] || diag;
+  var estagio = data.estagio || 1;
+  var confianca = data.confianca || "media";
+  var visto = data.visto || "";
+  var acao = data.acao || "Tente novamente.";
+  var nome = diag.replace(/_/g, " ");
+  var badgeClass = "badge-confianca-" + confianca;
+  var badgeTexto = confianca === "alta" ? "✓ Alta confiança" : confianca === "media" ? "~ Média confiança" : "! Baixa confiança";
+  var barras = "";
+  for (var i = 1; i <= 5; i++) {
+    var cor = i <= estagio ? CORES_ESTAGIO[estagio - 1] : "#e8e8e8";
+    barras += '<div class="estagio-seg" style="background:' + cor + '"></div>';
+  }
+  var textoVoz = nomeVoz + ". " + acao;
+  var html = '<div class="card-resultado">';
+  html += '<div class="card-topo"><span class="card-emoji">' + emoji + '</span>';
+  html += '<div class="card-titulo"><h2>' + nome + '</h2><div class="categoria">' + cat + '</div></div></div>';
+  html += '<div class="badges">';
+  html += '<span class="badge badge-estagio">📊 Estágio ' + estagio + '/5</span>';
+  html += '<span class="badge ' + badgeClass + '">' + badgeTexto + '</span>';
+  if (dadosGPS.regiao) html += '<span class="badge badge-regiao">📍 ' + dadosGPS.regiao + '</span>';
+  html += '</div>';
+  if (visto) html += '<div class="visto-box"><span class="visto-icon">👁️</span><p>"' + visto + '"</p></div>';
+  html += '<div class="divisor"></div>';
+  html += '<div class="estagio-box" style="padding-top:16px"><h3>Gravidade</h3><div class="estagio-bar">' + barras + '</div></div>';
+  html += '<div class="divisor"></div>';
+  html += '<div class="acao-box"><h3>O que fazer agora</h3><p>' + acao + '</p></div>';
+  html += '<div class="btns-resultado">';
+  html += '<button class="btn-voz" onclick="falar(\'' + textoVoz.replace(/'/g, "\\'") + '\')">🔊 Ouvir</button>';
+  html += '<button class="btn-nova" onclick="resetar()">📷 Nova análise</button>';
+  html += '</div></div>';
+  div.innerHTML = html;
+  falar(textoVoz);
+}
+
+function falar(texto) {
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+    var msg = new SpeechSynthesisUtterance(texto);
+    msg.lang = "pt-BR";
+    msg.rate = 0.85;
+    window.speechSynthesis.speak(msg);
+  }
+}
+
+function resetar() {
+  document.getElementById("resultado").style.display = "none";
+  document.getElementById("cam").value = "";
+  document.getElementById("gal").value = "";
+  window.scrollTo(0, 0);
+}
 </script>
 </body>
 </html>

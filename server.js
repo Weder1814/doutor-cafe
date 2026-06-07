@@ -12,8 +12,37 @@ app.get("/", function(req, res) {
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem;
   var tipo = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
-  var prompt =  "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira. Analise esta folha com MAXIMA ATENCAO. Responda SOMENTE JSON sem texto extra: {\"diagnostico\":\"ferrugem|bicho|cercosporiose|aureolada|phoma|antracnose|nitrogenio|magnesio|potassio|fosforo|calcio|boro|zinco|ferro|acaro|estresse_hidrico|saudavel\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"o que viu na folha\",\"acao\":\"o que fazer agora em linguagem simples\"} CRITERIOS OBRIGATORIOS: ferrugem=po ou pustulas ALARANJADAS na face INFERIOR da folha. bicho=TRILHAS SERPENTINAS ou galerias dentro da folha aspecto raspagem minas claras. cercosporiose=manchas CIRCULARES PEQUENAS centro cinza-claro halo amarelo FINO bem definido face inferior. aureolada=manchas GRANDES ESCURAS centro marrom-escuro HALO AMARELO GRANDE irregular bacteriana SECA PONTEIROS E RAMOS. phoma=manchas escuras irregulares bordas folhas novas topo planta. antracnose=lesoes escuras afundadas quase pretas necrose. nitrogenio=folha TODA AMARELA uniforme folhas velhas primeiro. magnesio=nervuras VERDES tecido entre elas AMARELO internerval folhas velhas. potassio=QUEIMA bordas e pontas folhas velhas. fosforo=coloracao ROXA avermelhada bordas folhas velhas. calcio=folhas NOVAS deformadas encurvadas ponteiros mortos. boro=folhas NOVAS pequenas quebradicas ponteiros mortos cabeleira brotos. zinco=folhas NOVAS pequenas estreitas encarquilhadas roseta. ferro=folhas NOVAS amarelo-claras esbranquicadas NERVURAS VERDES solos alcalinos. acaro=folha BRONZEADA salpicada sem brilho sem galerias sem pustulas. estresse_hidrico=folha MURCHA opaca sem brilho bordas secas. saudavel=verde escuro uniforme sem nenhum problema. DIFERENCAS IMPORTANTES: aureolada TEM halo amarelo GRANDE e IRREGULAR e causa seca de ramos. cercosporiose TEM halo amarelo PEQUENO e UNIFORME circular. SE HALO GRANDE E SECA DE RAMOS = aureolada. SE MANCHA CIRCULAR PEQUENA = cercosporiose.";
+
+  // Contexto regional dinâmico
+  var contextoRegional = "";
+  if (regiao) {
+    var deficienciasRegiao = {
+      "Cerrado Mineiro": "solos acidos com deficiencia frequente de Calcio, Magnesio e Boro. Alta incidencia de ferrugem em anos umidos.",
+      "Sul de Minas": "altitudes acima de 800m favorecem Phoma e Cercosporiose. Solos com boa fertilidade mas risco de deficiencia de Zinco.",
+      "Mogiana": "regiao quente com risco de acaro vermelho em periodos secos. Deficiencia de Potassio comum.",
+      "Matas de Minas": "alta umidade favorece ferrugem e bicho-mineiro. Solos com deficiencia de Fosforo e Magnesio.",
+      "Chapada Diamantina": "altitude elevada favorece Phoma. Solos rasos com deficiencia de Nitrogenio e Boro.",
+      "Planalto da Bahia": "clima seco favorece acaro e estresse hidrico. Deficiencia de Ferro em solos alcalinos.",
+      "Rondonia": "alta umidade e temperatura favorecem ferrugem e antracnose. Solos acidos com deficiencia de Calcio.",
+      "Norte do Parana": "geadas podem causar fitotoxicidade. Solos ferteis mas risco de deficiencia de Manganes.",
+      "Espirito Santo": "cafeeiros conillon predominantes. Alta umidade favorece cercosporiose e cochonilha.",
+      "Alta Paulista": "clima quente e seco favorece acaro vermelho. Deficiencia de Zinco frequente."
+    };
+    var info = deficienciasRegiao[regiao] || "regiao cafeeira brasileira.";
+    contextoRegional = "\n\nCONTEXTO REGIONAL IMPORTANTE: O produtor esta na regiao " + regiao + ". Caracteristicas: " + info;
+    if (altitude) {
+      contextoRegional += " Altitude aproximada: " + altitude + "m.";
+      if (altitude > 900) contextoRegional += " Altitude acima de 900m aumenta risco de Phoma.";
+      if (altitude < 600) contextoRegional += " Altitude baixa aumenta risco de ferrugem e acaro.";
+    }
+    contextoRegional += " Considere essas caracteristicas regionais ao diagnosticar deficiencias nutricionais e doenças.";
+  }
+
+  var prompt = "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira com 20 anos de experiencia." + contextoRegional + "\n\nAnalise esta imagem com MAXIMA ATENCAO. Pode ser folha OU fruto de cafe.\n\nSE FOR FOLHA - CRITERIOS OBRIGATORIOS:\nferrugem=po ou pustulas ALARANJADAS na face INFERIOR.\nbicho=TRILHAS SERPENTINAS ou galerias dentro da folha.\ncercosporiose=manchas CIRCULARES PEQUENAS centro cinza halo amarelo FINO uniforme.\naureolada=manchas GRANDES ESCURAS HALO AMARELO GRANDE irregular SECA DE RAMOS - SE HALO GRANDE E SECA RAMOS = aureolada.\nphoma=manchas escuras SEM halo grande em FOLHAS NOVAS no TOPO da planta - SE FOLHA NOVA TOPO SEM HALO = phoma NAO aureolada.\nantracnose=lesoes escuras afundadas quase pretas.\nnitrogenio=folha TODA AMARELA uniforme folhas VELHAS.\nmagnesio=nervuras VERDES tecido AMARELO internerval folhas VELHAS.\npotassio=QUEIMA bordas e pontas folhas VELHAS.\nfosforo=coloracao ROXA bordas folhas VELHAS.\ncalcio=folhas NOVAS deformadas encurvadas.\nboro=folhas NOVAS pequenas quebradicas ponteiros mortos.\nzinco=folhas NOVAS pequenas estreitas roseta.\nferro=folhas NOVAS esbranquicadas NERVURAS VERDES.\nacaro=folha BRONZEADA sem brilho SEM galerias SEM pustulas.\nestresse_hidrico=folha MURCHA opaca bordas secas.\n\nSE FOR FRUTO - CRITERIOS:\nbroca=FURO CIRCULAR no fruto orificio central po fino.\nantracnose=lesoes escuras afundadas no fruto.\nfruto_verde=fruto verde sem problema aparente.\nfruto_maduro=fruto cereja vermelho ou amarelo pronto colheita.\nfruto_passado=fruto seco passa escuro apos ponto ideal.\n\nDIFERENCAS CRITICAS PHOMA vs AUREOLADA:\nPhoma: folha NOVA no TOPO, mancha escura SEM halo amarelo grande.\nAureolada: qualquer folha, HALO AMARELO GRANDE IRREGULAR, SECA DE RAMOS.\nSE nao tem halo grande e esta no topo em folha nova = PHOMA.\nSE tem halo grande e seca ramos = AUREOLADA.\n\nResponda SOMENTE JSON sem texto extra:\n{\"diagnostico\":\"ferrugem|bicho|cercosporiose|aureolada|phoma|antracnose|ascochyta|manteigosa|roseliniose|helmintosporiose|broca|acaro|acaro_ferrugem|cigarra|cochonilha|lagarta|nematoide|nitrogenio|magnesio|potassio|fosforo|calcio|enxofre|boro|zinco|ferro|manganes|cobre|estresse_hidrico|fitotoxicidade|escaldadura|fruto_verde|fruto_maduro|fruto_passado|saudavel\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descreva em 1 frase o principal sinal visual observado\",\"acao\":\"o que o produtor deve fazer agora em linguagem simples e direta\"}";
+
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -23,7 +52,7 @@ app.post("/diagnostico", function(req, res) {
     },
     body: JSON.stringify({
       model: "claude-opus-4-5",
-      max_tokens: 300,
+      max_tokens: 400,
       messages: [{
         role: "user",
         content: [
@@ -40,7 +69,7 @@ app.post("/diagnostico", function(req, res) {
     if (m) {
       res.json(JSON.parse(m[0]));
     } else {
-      res.json({ diagnostico: "saudavel", acao: "Tente novamente." });
+      res.json({ diagnostico: "saudavel", acao: "Nao foi possivel analisar. Tente novamente." });
     }
   })
   .catch(function(e) {

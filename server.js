@@ -1,4 +1,3 @@
-
 var express = require("express");
 var cors = require("cors");
 var app = express();
@@ -7,136 +6,129 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
 app.get("/", function(req, res) {
- res.json({ status: "online", app: "Doutor Cafe API" });
+  res.json({ status: "online", app: "Doutor Cafe API" });
 });
 
 // ============ ENDPOINT FOTO ============
 app.post("/diagnostico", function(req, res) {
- var imagem = req.body.imagem;
- var tipo = req.body.tipo || "image/jpeg";
- var regiao = req.body.regiao || null;
- var altitude = req.body.altitude || null;
- var KEY = process.env.ANTHROPIC_API_KEY;
-
- var prompt = buildPrompt(regiao, altitude, false);
-
- fetch("https://api.anthropic.com/v1/messages", {
-   method: "POST",
-   headers: {
-     "Content-Type": "application/json",
-     "x-api-key": KEY,
-     "anthropic-version": "2023-06-01"
-   },
-   body: JSON.stringify({
-     model: "claude-opus-4-5",
-     max_tokens: 400,
-     messages: [{
-       role: "user",
-       content: [
-         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
-         { type: "text", text: prompt }
-       ]
-     }]
-   })
- })
- .then(function(r) { return r.json(); })
- .then(function(d) {
-   var txt = d.content && d.content[0] ? d.content[0].text : "";
-   var m = txt.match(/\{[\s\S]*\}/);
-   if (m) {
-     res.json(JSON.parse(m[0]));
-   } else {
-     res.json({ diagnostico: "saudavel", acao: "Nao foi possivel analisar. Tente novamente." });
-   }
- })
- .catch(function(e) {
-   res.status(500).json({ erro: e.message });
- });
+  var imagem = req.body.imagem;
+  var tipo = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  var KEY = process.env.ANTHROPIC_API_KEY;
+  var prompt = buildPrompt(regiao, altitude, false);
+  fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-opus-4-5",
+      max_tokens: 400,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
+        { type: "text", text: prompt }
+      ]}]
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var m = txt.match(/\{[\s\S]*\}/);
+    if (m) { res.json(JSON.parse(m[0])); }
+    else { res.json({ diagnostico: "saudavel", acao: "Nao foi possivel analisar. Tente novamente." }); }
+  })
+  .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
 // ============ ENDPOINT VIDEO ============
 app.post("/diagnostico-video", function(req, res) {
- var frames = req.body.frames;
- var regiao = req.body.regiao || null;
- var altitude = req.body.altitude || null;
- var KEY = process.env.ANTHROPIC_API_KEY;
+  var frames = req.body.frames;
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  var KEY = process.env.ANTHROPIC_API_KEY;
+  if (!frames || frames.length === 0) return res.status(400).json({ erro: "Nenhum frame recebido." });
+  var prompt = buildPrompt(regiao, altitude, true);
+  var content = [];
+  frames.forEach(function(frame, i) {
+    content.push({ type: "text", text: "Frame " + (i+1) + " de " + frames.length + ":" });
+    content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: frame }});
+  });
+  content.push({ type: "text", text: prompt });
+  fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-opus-4-5", max_tokens: 500, messages: [{ role: "user", content: content }] })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var m = txt.match(/\{[\s\S]*\}/);
+    if (m) { res.json(JSON.parse(m[0])); }
+    else { res.json({ diagnostico: "saudavel", acao: "Nao foi possivel analisar. Tente novamente." }); }
+  })
+  .catch(function(e) { res.status(500).json({ erro: e.message }); });
+});
 
- if (!frames || frames.length === 0) {
-   return res.status(400).json({ erro: "Nenhum frame recebido." });
- }
+// ============ ENDPOINT ANALISE SOLO ============
+app.post("/analise-solo", function(req, res) {
+  var imagem = req.body.imagem;
+  var tipo = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var KEY = process.env.ANTHROPIC_API_KEY;
 
- var prompt = buildPrompt(regiao, altitude, true);
+  var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
 
- var content = [];
- frames.forEach(function(frame, i) {
-   content.push({ type: "text", text: "Frame " + (i + 1) + " de " + frames.length + ":" });
-   content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: frame }});
- });
- content.push({ type: "text", text: prompt });
+  var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com 20 anos de experiencia." + contexto + "\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nLeia todos os valores visiveis no laudo: pH, Materia Organica, Fosforo (P), Potassio (K), Calcio (Ca), Magnesio (Mg), Aluminio (Al), CTC, Saturacao de Bases (V%), Boro (B), Zinco (Zn), Ferro (Fe), Manganes (Mn), Cobre (Cu), Enxofre (S).\n\nPARAMETROS IDEAIS PARA CAFE ARABICA:\npH: 5.8 a 6.5\nMateria Organica: acima de 3%\nFosforo: acima de 20 mg/dm3\nPotassio: 80 a 150 mg/dm3\nCalcio: acima de 2.0 cmolc/dm3\nMagnesio: acima de 0.5 cmolc/dm3\nAluminio: zero ou proximo de zero\nSaturacao de Bases V%: 50 a 70%\nBoro: acima de 0.5 mg/dm3\nZinco: acima de 1.5 mg/dm3\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples para o produtor incluindo calagem se necessario e adubacao NPK recomendada por hectare\",\"valores\":{\"pH\":{\"valor\":\"valor lido\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor lido\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor lido\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor lido\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor lido\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor lido\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor lido\",\"status\":\"ok|baixo|alto\"}}}";
 
- fetch("https://api.anthropic.com/v1/messages", {
-   method: "POST",
-   headers: {
-     "Content-Type": "application/json",
-     "x-api-key": KEY,
-     "anthropic-version": "2023-06-01"
-   },
-   body: JSON.stringify({
-     model: "claude-opus-4-5",
-     max_tokens: 500,
-     messages: [{
-       role: "user",
-       content: content
-     }]
-   })
- })
- .then(function(r) { return r.json(); })
- .then(function(d) {
-   var txt = d.content && d.content[0] ? d.content[0].text : "";
-   var m = txt.match(/\{[\s\S]*\}/);
-   if (m) {
-     res.json(JSON.parse(m[0]));
-   } else {
-     res.json({ diagnostico: "saudavel", acao: "Nao foi possivel analisar. Tente novamente." });
-   }
- })
- .catch(function(e) {
-   res.status(500).json({ erro: e.message });
- });
+  fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-opus-4-5",
+      max_tokens: 800,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
+        { type: "text", text: prompt }
+      ]}]
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var m = txt.match(/\{[\s\S]*\}/);
+    if (m) { res.json(JSON.parse(m[0])); }
+    else { res.json({ acao: "Nao foi possivel ler o laudo. Verifique a foto e tente novamente." }); }
+  })
+  .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
 // ============ FUNÇÃO PROMPT ============
 function buildPrompt(regiao, altitude, isVideo) {
- var contextoRegional = "";
- if (regiao) {
-   var deficienciasRegiao = {
-     "Cerrado Mineiro": "solos acidos com deficiencia frequente de Calcio, Magnesio e Boro. Alta incidencia de ferrugem em anos umidos.",
-     "Sul de Minas": "altitudes acima de 800m favorecem Phoma e Cercosporiose. Solos com boa fertilidade mas risco de deficiencia de Zinco.",
-     "Mogiana": "regiao quente com risco de acaro vermelho em periodos secos. Deficiencia de Potassio comum.",
-     "Matas de Minas": "alta umidade favorece ferrugem e bicho-mineiro. Solos com deficiencia de Fosforo e Magnesio.",
-     "Chapada Diamantina": "altitude elevada favorece Phoma. Solos rasos com deficiencia de Nitrogenio e Boro.",
-     "Planalto da Bahia": "clima seco favorece acaro e estresse hidrico. Deficiencia de Ferro em solos alcalinos.",
-     "Rondonia": "alta umidade e temperatura favorecem ferrugem e antracnose. Solos acidos com deficiencia de Calcio.",
-     "Norte do Parana": "geadas podem causar fitotoxicidade. Solos ferteis mas risco de deficiencia de Manganes.",
-     "Espirito Santo": "cafeeiros conillon predominantes. Alta umidade favorece cercosporiose e cochonilha.",
-     "Alta Paulista": "clima quente e seco favorece acaro vermelho. Deficiencia de Zinco frequente."
-   };
-   var info = deficienciasRegiao[regiao] || "regiao cafeeira brasileira.";
-   contextoRegional = "\n\nCONTEXTO REGIONAL: Produtor na regiao " + regiao + ". " + info;
-   if (altitude) {
-     contextoRegional += " Altitude: " + altitude + "m.";
-     if (altitude > 900) contextoRegional += " Altitude alta aumenta risco de Phoma.";
-     if (altitude < 600) contextoRegional += " Altitude baixa aumenta risco de ferrugem e acaro.";
-   }
- }
-
- var introVideo = isVideo
-   ? "Voce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto para um diagnostico mais preciso. Use os diferentes angulos para confirmar ou descartar sintomas.\n\n"
-   : "";
-
- return "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira com 20 anos de experiencia." + contextoRegional + "\n\n" + introVideo + "Analise esta imagem com MAXIMA ATENCAO. Pode ser folha OU fruto de cafe.\n\nSE FOR FOLHA - CRITERIOS OBRIGATORIOS:\nferrugem=po ou pustulas ALARANJADAS na face INFERIOR.\nbicho=TRILHAS SERPENTINAS ou galerias dentro da folha - SO diagnostique bicho se ver CLARAMENTE trilhas serpentinas reais. ATENCAO CRITICA: folha ENROLADA ou DOBRADA cria sombras internas que SIMULAM trilhas mas NAO SAO trilhas de bicho mineiro. Se a folha estiver enrolada ou dobrada com mancha escura = PHOMA ou CALCIO, NUNCA bicho mineiro.\ncercosporiose=manchas CIRCULARES PEQUENAS centro cinza halo amarelo FINO uniforme.\naureolada=manchas GRANDES ESCURAS HALO AMARELO GRANDE irregular SECA DE RAMOS.\nphoma=manchas escuras SEM halo grande em FOLHAS NOVAS no TOPO da planta. FOLHA NOVA ENROLADA COM MANCHA ESCURA NA PONTA = PHOMA.\nantracnose=lesoes escuras afundadas quase pretas.\ncalcio=folhas NOVAS deformadas ENCURVADAS ponteiros mortos - folha nova enrolada sem doenca aparente pode ser calcio.\nnitrogenio=folha TODA AMARELA uniforme folhas VELHAS.\nmagnesio=nervuras VERDES tecido AMARELO internerval folhas VELHAS.\npotassio=QUEIMA bordas e pontas folhas VELHAS.\nfosforo=coloracao ROXA bordas folhas VELHAS.\nboro=folhas NOVAS pequenas quebradicas ponteiros mortos.\nzinco=folhas NOVAS pequenas estreitas roseta.\nferro=folhas NOVAS esbranquicadas NERVURAS VERDES.\nacaro=folha BRONZEADA sem brilho SEM galerias SEM pustulas.\nestresse_hidrico=folha MURCHA opaca bordas secas.\n\nSE FOR FRUTO:\nbroca=FURO CIRCULAR no fruto.\nfruto_verde=fruto verde saudavel.\nfruto_maduro=fruto cereja pronto colheita.\nfruto_passado=fruto seco apos ponto ideal.\n\nDIFERENCAS CRITICAS:\nPhoma vs Aureolada: Phoma = folha NOVA TOPO mancha escura SEM halo. Aureolada = HALO AMARELO GRANDE IRREGULAR SECA DE RAMOS.\nBicho vs Folha enrolada: Bicho = trilhas serpentinas REAIS dentro da folha PLANA. Folha enrolada com sombras = PHOMA ou CALCIO.\nREGRA ESPECIAL FOLHA ENROLADA: Se a folha estiver ENROLADA ou DOBRADA com mancha escura na ponta ou borda = diagnostique PHOMA ou CALCIO. Jamais diagnostique bicho mineiro em folha enrolada pois as sombras internas SIMULAM trilhas mas NAO SAO trilhas reais.\n\nREGRA DE OURO: Sem evidencia CLARA use confianca BAIXA. NUNCA diagnostique por exclusao.\n\nResponda SOMENTE JSON:\n{\"diagnostico\":\"ferrugem|bicho|cercosporiose|aureolada|phoma|antracnose|ascochyta|manteigosa|roseliniose|helmintosporiose|broca|acaro|acaro_ferrugem|cigarra|cochonilha|lagarta|nematoide|nitrogenio|magnesio|potassio|fosforo|calcio|enxofre|boro|zinco|ferro|manganes|cobre|estresse_hidrico|fitotoxicidade|escaldadura|fruto_verde|fruto_maduro|fruto_passado|saudavel\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descreva em 1 frase o principal sinal visual observado\",\"acao\":\"o que o produtor deve fazer agora em linguagem simples e direta\"}";
+  var contextoRegional = "";
+  if (regiao) {
+    var deficienciasRegiao = {
+      "Cerrado Mineiro": "solos acidos com deficiencia frequente de Calcio, Magnesio e Boro. Alta incidencia de ferrugem em anos umidos.",
+      "Sul de Minas": "altitudes acima de 800m favorecem Phoma e Cercosporiose. Solos com boa fertilidade mas risco de deficiencia de Zinco.",
+      "Mogiana": "regiao quente com risco de acaro vermelho em periodos secos. Deficiencia de Potassio comum.",
+      "Matas de Minas": "alta umidade favorece ferrugem e bicho-mineiro. Solos com deficiencia de Fosforo e Magnesio.",
+      "Chapada Diamantina": "altitude elevada favorece Phoma. Solos rasos com deficiencia de Nitrogenio e Boro.",
+      "Planalto da Bahia": "clima seco favorece acaro e estresse hidrico. Deficiencia de Ferro em solos alcalinos.",
+      "Rondonia": "alta umidade e temperatura favorecem ferrugem e antracnose. Solos acidos com deficiencia de Calcio.",
+      "Norte do Parana": "geadas podem causar fitotoxicidade. Solos ferteis mas risco de deficiencia de Manganes.",
+      "Espirito Santo": "cafeeiros conillon predominantes. Alta umidade favorece cercosporiose e cochonilha.",
+      "Alta Paulista": "clima quente e seco favorece acaro vermelho. Deficiencia de Zinco frequente."
+    };
+    var info = deficienciasRegiao[regiao] || "regiao cafeeira brasileira.";
+    contextoRegional = "\n\nCONTEXTO REGIONAL: Produtor na regiao " + regiao + ". " + info;
+    if (altitude) {
+      contextoRegional += " Altitude: " + altitude + "m.";
+      if (altitude > 900) contextoRegional += " Altitude alta aumenta risco de Phoma.";
+      if (altitude < 600) contextoRegional += " Altitude baixa aumenta risco de ferrugem e acaro.";
+    }
+  }
+  var introVideo = isVideo ? "Voce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto para um diagnostico mais preciso.\n\n" : "";
+  return "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira com 20 anos de experiencia." + contextoRegional + "\n\n" + introVideo + "Analise esta imagem com MAXIMA ATENCAO. Pode ser folha OU fruto de cafe.\n\nSE FOR FOLHA - CRITERIOS OBRIGATORIOS:\nferrugem=po ou pustulas ALARANJADAS na face INFERIOR.\nbicho=TRILHAS SERPENTINAS ou galerias dentro da folha - SO diagnostique bicho se ver CLARAMENTE trilhas serpentinas reais. ATENCAO CRITICA: folha ENROLADA ou DOBRADA cria sombras internas que SIMULAM trilhas mas NAO SAO trilhas de bicho mineiro. Se a folha estiver enrolada ou dobrada com mancha escura = PHOMA ou CALCIO, NUNCA bicho mineiro.\ncercosporiose=manchas CIRCULARES PEQUENAS centro cinza halo amarelo FINO uniforme.\naureolada=manchas GRANDES ESCURAS HALO AMARELO GRANDE irregular SECA DE RAMOS.\nphoma=manchas escuras SEM halo grande em FOLHAS NOVAS no TOPO da planta. FOLHA NOVA ENROLADA COM MANCHA ESCURA NA PONTA = PHOMA.\nantracnose=lesoes escuras afundadas quase pretas.\ncalcio=folhas NOVAS deformadas ENCURVADAS ponteiros mortos.\nnitrogenio=folha TODA AMARELA uniforme folhas VELHAS.\nmagnesio=nervuras VERDES tecido AMARELO internerval folhas VELHAS.\npotassio=QUEIMA bordas e pontas folhas VELHAS.\nfosforo=coloracao ROXA bordas folhas VELHAS.\nboro=folhas NOVAS pequenas quebradicas ponteiros mortos.\nzinco=folhas NOVAS pequenas estreitas roseta.\nferro=folhas NOVAS esbranquicadas NERVURAS VERDES.\nacaro=folha BRONZEADA sem brilho SEM galerias SEM pustulas.\nestresse_hidrico=folha MURCHA opaca bordas secas.\n\nSE FOR FRUTO:\nbroca=FURO CIRCULAR no fruto.\nfruto_verde=fruto verde saudavel.\nfruto_maduro=fruto cereja pronto colheita.\nfruto_passado=fruto seco apos ponto ideal.\n\nDIFERENCAS CRITICAS:\nPhoma vs Aureolada: Phoma = folha NOVA TOPO mancha escura SEM halo. Aureolada = HALO AMARELO GRANDE IRREGULAR SECA DE RAMOS.\nBicho vs Folha enrolada: Bicho = trilhas serpentinas REAIS dentro da folha PLANA. Folha enrolada com sombras = PHOMA ou CALCIO.\nREGRA ESPECIAL FOLHA ENROLADA: Se a folha estiver ENROLADA ou DOBRADA com mancha escura na ponta ou borda = diagnostique PHOMA ou CALCIO. Jamais diagnostique bicho mineiro em folha enrolada.\n\nREGRA DE OURO: Sem evidencia CLARA use confianca BAIXA. NUNCA diagnostique por exclusao.\n\nResponda SOMENTE JSON:\n{\"diagnostico\":\"ferrugem|bicho|cercosporiose|aureolada|phoma|antracnose|ascochyta|manteigosa|roseliniose|helmintosporiose|broca|acaro|acaro_ferrugem|cigarra|cochonilha|lagarta|nematoide|nitrogenio|magnesio|potassio|fosforo|calcio|enxofre|boro|zinco|ferro|manganes|cobre|estresse_hidrico|fitotoxicidade|escaldadura|fruto_verde|fruto_maduro|fruto_passado|saudavel\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descreva em 1 frase o principal sinal visual observado\",\"acao\":\"o que o produtor deve fazer agora em linguagem simples e direta\"}";
 }
 
 app.listen(process.env.PORT || 8080, function() {
- console.log("Servidor ok");
+  console.log("Servidor ok");
 });

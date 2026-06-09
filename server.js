@@ -9,7 +9,6 @@ app.get("/", function(req, res) {
   res.json({ status: "online", app: "Doutor Cafe API" });
 });
 
-// ============ ENDPOINT FOTO ============
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem;
   var tipo = req.body.tipo || "image/jpeg";
@@ -22,7 +21,7 @@ app.post("/diagnostico", function(req, res) {
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-opus-4-5",
-      max_tokens: 400,
+      max_tokens: 800,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
         { type: "text", text: prompt }
@@ -34,12 +33,11 @@ app.post("/diagnostico", function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var m = txt.match(/\{[\s\S]*\}/);
     if (m) { res.json(JSON.parse(m[0])); }
-    else { res.json({ diagnostico: "saudavel", acao: "Nao foi possivel analisar. Tente novamente." }); }
+    else { res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente." }] }); }
   })
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
-// ============ ENDPOINT VIDEO ============
 app.post("/diagnostico-video", function(req, res) {
   var frames = req.body.frames;
   var regiao = req.body.regiao || null;
@@ -56,19 +54,18 @@ app.post("/diagnostico-video", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-opus-4-5", max_tokens: 500, messages: [{ role: "user", content: content }] })
+    body: JSON.stringify({ model: "claude-opus-4-5", max_tokens: 800, messages: [{ role: "user", content: content }] })
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var m = txt.match(/\{[\s\S]*\}/);
     if (m) { res.json(JSON.parse(m[0])); }
-    else { res.json({ diagnostico: "saudavel", acao: "Nao foi possivel analisar. Tente novamente." }); }
+    else { res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente." }] }); }
   })
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
-// ============ ENDPOINT ANALISE SOLO ============
 app.post("/analise-solo", function(req, res) {
   var imagem = req.body.imagem;
   var tipo = req.body.tipo || "image/jpeg";
@@ -98,7 +95,6 @@ app.post("/analise-solo", function(req, res) {
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
-// ============ FUNÇÃO PROMPT ============
 function buildPrompt(regiao, altitude, isVideo) {
   var contextoRegional = "";
   if (regiao) {
@@ -124,7 +120,7 @@ function buildPrompt(regiao, altitude, isVideo) {
   }
   var introVideo = isVideo ? "Voce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto para um diagnostico mais preciso.\n\n" : "";
 
-  return "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira com 20 anos de experiencia." + contextoRegional + "\n\n" + introVideo + "Analise esta imagem com MAXIMA ATENCAO. Pode ser folha OU fruto de cafe.\n\nSE FOR FOLHA - CRITERIOS OBRIGATORIOS:\nferrugem=po ou pustulas ALARANJADAS na face INFERIOR.\nbicho=TRILHAS SERPENTINAS ou galerias dentro da folha - SO diagnostique bicho se ver CLARAMENTE trilhas serpentinas reais. ATENCAO CRITICA: folha ENROLADA ou DOBRADA cria sombras internas que SIMULAM trilhas mas NAO SAO trilhas de bicho mineiro. Se a folha estiver enrolada ou dobrada com mancha escura = PHOMA ou CALCIO, NUNCA bicho mineiro.\ncercosporiose=manchas CIRCULARES PEQUENAS centro cinza halo amarelo FINO uniforme.\naureolada=manchas GRANDES ESCURAS HALO AMARELO GRANDE irregular SECA DE RAMOS.\nphoma=manchas escuras necroticas SEM halo grande em FOLHAS NOVAS no TOPO da planta. FOLHA NOVA ENROLADA COM MANCHA ESCURA NA PONTA = PHOMA.\nantracnose=lesoes escuras afundadas quase pretas necrose definida.\ncalcio=folhas NOVAS deformadas ENCURVADAS ponteiros mortos morte de apices.\nnitrogenio=folha TODA AMARELA UNIFORME clorose em folhas VELHAS primeiro.\nmagnesio=nervuras VERDES tecido AMARELO internerval clorose entre nervuras folhas VELHAS.\npotassio=QUEIMA bordas e PONTAS folhas VELHAS amarelamento marginal antes da necrose.\nfosforo=folhas ESCURECIDAS cor verde-escura a preta brilho opaco folhas VELHAS - NAO confundir com roxo.\ncobre=manchas NECROTICAS folhas pequenas deformadas bordas cloroticas folhas NOVAS.\nmanganes=PONTUACOES ou manchas cloroticas pequenas dispersas folhas NOVAS nervuras verdes.\nboro=folhas NOVAS pequenas QUEBRADICAS DEFORMADAS ponteiros mortos brotacoes deformadas.\nzinco=folhas NOVAS pequenas ESTREITAS aspecto ROSETA entrenós curtos.\nferro=folhas NOVAS amarelo-claras a ESBRANQUICADAS NERVURAS VERDES clorose internerval intensa.\nenxofre=folhas NOVAS amarelas UNIFORMES com nervuras verdes similar ao ferro mas folhas novas.\nmolibdenio=AMARELAMENTO nas MARGENS das folhas velhas aspecto de queima nas bordas.\nniquel=NECROSE DO APICE folhas novas ponta da folha morre primeiro.\nacaro=folha BRONZEADA acinzentada sem brilho SEM galerias SEM pustulas.\nestresse_hidrico=folha MURCHA opaca bordas secas enrolamento.\n\nSE FOR FRUTO:\nbroca=FURO CIRCULAR no fruto orificio central po fino.\nfruto_verde=fruto verde saudavel.\nfruto_maduro=fruto cereja vermelho ou amarelo pronto colheita.\nfruto_passado=fruto seco apos ponto ideal.\n\nDIFERENCAS CRITICAS:\nPhoma vs Aureolada: Phoma = folha NOVA TOPO mancha escura SEM halo. Aureolada = HALO AMARELO GRANDE IRREGULAR SECA DE RAMOS.\nBicho vs Folha enrolada: Bicho = trilhas serpentinas REAIS dentro da folha PLANA. Folha enrolada com sombras = PHOMA ou CALCIO.\nFosforo vs Roxo: Fosforo = folhas ESCURECIDAS verde-escuro a preto NAO roxo.\nNitrogenio vs Enxofre: Nitrogenio = amarelo folhas VELHAS. Enxofre = amarelo folhas NOVAS com nervuras verdes.\nFerro vs Manganes: Ferro = clorose internerval INTENSA folhas novas esbranquicadas. Manganes = pontuacoes cloroticas pequenas dispersas.\nREGRA ESPECIAL FOLHA ENROLADA: Se a folha estiver ENROLADA ou DOBRADA com mancha escura = PHOMA ou CALCIO. Jamais bicho mineiro em folha enrolada.\n\nREGRA DE OURO: Sem evidencia CLARA use confianca BAIXA. NUNCA diagnostique por exclusao.\n\nResponda SOMENTE JSON:\n{\"diagnostico\":\"ferrugem|bicho|cercosporiose|aureolada|phoma|antracnose|ascochyta|manteigosa|roseliniose|helmintosporiose|broca|acaro|acaro_ferrugem|cigarra|cochonilha|lagarta|nematoide|nitrogenio|magnesio|potassio|fosforo|calcio|enxofre|boro|zinco|ferro|manganes|cobre|molibdenio|niquel|estresse_hidrico|fitotoxicidade|escaldadura|fruto_verde|fruto_maduro|fruto_passado|saudavel\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descreva em 1 frase o principal sinal visual observado\",\"acao\":\"o que o produtor deve fazer agora em linguagem simples e direta\"}";
+  return "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira com 20 anos de experiencia." + contextoRegional + "\n\n" + introVideo + "Analise esta imagem com MAXIMA ATENCAO. Pode ser folha OU fruto de cafe.\n\nSE FOR FOLHA - CRITERIOS OBRIGATORIOS:\nferrugem=po ou pustulas ALARANJADAS na face INFERIOR.\nbicho=TRILHAS SERPENTINAS ou galerias dentro da folha.\ncercosporiose=manchas CIRCULARES PEQUENAS centro cinza halo amarelo FINO uniforme.\naureolada=manchas GRANDES ESCURAS HALO AMARELO GRANDE irregular SECA DE RAMOS.\nphoma=manchas escuras necroticas SEM halo grande em FOLHAS NOVAS no TOPO da planta.\nantracnose=lesoes escuras afundadas quase pretas necrose definida.\ncalcio=folhas NOVAS deformadas ENCURVADAS ponteiros mortos morte de apices.\nnitrogenio=folha TODA AMARELA UNIFORME clorose em folhas VELHAS primeiro.\nmagnesio=nervuras VERDES tecido AMARELO internerval clorose entre nervuras folhas VELHAS.\npotassio=QUEIMA bordas e PONTAS folhas VELHAS amarelamento marginal.\nfosforo=folhas ESCURECIDAS cor verde-escura a preta brilho opaco folhas VELHAS.\ncobre=manchas NECROTICAS folhas pequenas deformadas bordas cloroticas folhas NOVAS.\nmanganes=PONTUACOES ou manchas cloroticas pequenas dispersas folhas NOVAS.\nboro=folhas NOVAS pequenas QUEBRADICAS DEFORMADAS ponteiros mortos.\nzinco=folhas NOVAS pequenas ESTREITAS aspecto ROSETA entrenós curtos.\nferro=folhas NOVAS amarelo-claras a ESBRANQUICADAS NERVURAS VERDES clorose internerval intensa.\nenxofre=folhas NOVAS amarelas UNIFORMES com nervuras verdes.\nmolibdenio=AMARELAMENTO nas MARGENS das folhas velhas.\nniquel=NECROSE DO APICE folhas novas ponta da folha morre primeiro.\nacaro=folha BRONZEADA acinzentada sem brilho.\nestresse_hidrico=folha MURCHA opaca bordas secas enrolamento.\n\nSE FOR FRUTO:\nbroca=FURO CIRCULAR no fruto orificio central.\nantracnose=lesoes escuras AFUNDADAS necroticas nos frutos.\nfruto_verde=fruto verde saudavel.\nfruto_maduro=fruto cereja vermelho ou amarelo pronto colheita.\nfruto_passado=fruto seco mumificado apos ponto ideal.\n\nIMPORTANTE: Se houver MULTIPLOS problemas visiveis na imagem, liste TODOS. Retorne ate 3 diagnosticos ordenados por gravidade.\n\nResponda SOMENTE JSON:\n{\"diagnosticos\":[{\"diagnostico\":\"nome\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descreva em 1 frase o sinal visual\",\"acao\":\"o que fazer agora em linguagem simples\"},{\"diagnostico\":\"nome2\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual\",\"acao\":\"acao\"}]}";
 }
 
 app.listen(process.env.PORT || 8080, function() {

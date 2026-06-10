@@ -20,7 +20,7 @@ app.post("/diagnostico", function(req, res) {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6"
+      model: "claude-sonnet-4-6",
       max_tokens: 800,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},

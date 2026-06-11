@@ -129,3 +129,35 @@ function buildPrompt(regiao, altitude, isVideo) {
 app.listen(process.env.PORT || 8080, function() {
   console.log("Servidor Doutor Cafe ok");
 });
+
+// ── ROTA PLANTAS DANINHAS ──────────────────────────
+app.post("/identifica-daninha", function(req, res) {
+  var imagem = req.body.imagem;
+  var tipo = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var KEY = process.env.ANTHROPIC_API_KEY;
+  var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
+
+  var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira." + contexto + "\n\nAnalise a imagem desta planta daninha encontrada em uma lavoura de cafe e identifique:\n1. O nome popular da planta\n2. O que ela indica sobre o solo\n3. O que o produtor deve fazer\n\nCONHECIMENTO DE PLANTAS DANINHAS INDICADORAS:\nassapeixe=indica solo ACIDO com baixo calcio e magnesio. Corrigir com calcario dolomítico.\nguanxuma=indica solo COMPACTADO. Descompactar com subsolagem e materia organica.\ntiririca=indica solo ACIDO e deficiente em MAGNESIO. Corrigir calcario e sulfato de magnesio.\nbeldroega=indica EXCESSO DE UMIDADE e drenagem ruim. Melhorar drenagem e aeracao.\nfedegoso=indica solo DEGRADADO com baixo CALCIO e materia organica. Calagem e adubacao organica.\ncapim_marmelada=indica solo FERTIL bem estruturado. Sinal positivo mas controlar para nao competir.\ncaruru=indica solo fertil com excesso de NITROGENIO ou materia organica. Revisar adubacao nitrogenada.\npicao_preto=indica solo compactado e com baixo pH. Subsolagem e calcario.\nespinheiro=indica solo seco e degradado.\nmentrasto=indica solo acido com baixo fosforo.\ncordao_frade=indica solo compactado e com excesso de umidade.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"nome\":\"nome popular da planta\",\"nome_cientifico\":\"nome cientifico se souber\",\"indicador\":\"frase curta sobre o que indica no solo\",\"acao\":\"o que fazer para corrigir o problema em linguagem simples para o produtor rural\",\"urgencia\":\"alta|media|baixa\"}";
+
+  fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 600,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
+        { type: "text", text: prompt }
+      ]}]
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var m = txt.match(/\{[\s\S]*\}/);
+    if (m) { res.json(JSON.parse(m[0])); }
+    else { res.json({ nome: "Planta não identificada", indicador: "Não foi possível identificar", acao: "Tente uma foto mais clara da planta inteira.", urgencia: "baixa" }); }
+  })
+  .catch(function(e) { res.status(500).json({ erro: e.message }); });
+});

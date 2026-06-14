@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -16,40 +16,154 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'DM Sans', sans-serif; background: var(--creme); min-height: 100vh; overflow-x: hidden; }
-.header { background: var(--verde); padding: 36px 24px 48px; text-align: center; position: relative; overflow: hidden; }
-.header::before { content: ''; position: absolute; top: -60px; right: -60px; width: 200px; height: 200px; border-radius: 50%; background: rgba(93,222,116,0.08); }
-.header::after { content: ''; position: absolute; bottom: -40px; left: -40px; width: 150px; height: 150px; border-radius: 50%; background: rgba(93,222,116,0.05); }
-.logo-icon { font-size: 44px; display: block; margin-bottom: 8px; animation: float 3s ease-in-out infinite; }
-@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
-.header h1 { font-family: 'Playfair Display', serif; font-size: 36px; color: white; letter-spacing: -0.5px; }
+
+/* ── HEADER ── */
+.header { width: 100%; position: relative; overflow: hidden; padding: 28px 24px 40px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.header-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.header-overlay { position: absolute; inset: 0; background: linear-gradient(160deg, rgba(8,25,12,0.85) 0%, rgba(20,70,35,0.72) 50%, rgba(8,20,10,0.88) 100%); z-index: 1; }
+.header-content { position: relative; z-index: 2; }
+.logo-icon { font-size: 38px; display: block; margin-bottom: 6px; animation: float 3s ease-in-out infinite; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5)); }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 34px; color: white; letter-spacing: -0.5px; text-shadow: 0 2px 16px rgba(0,0,0,0.5); }
 .header h1 span { color: var(--verde-neon); }
-.header .sub { color: rgba(255,255,255,0.55); font-size: 13px; margin-top: 6px; letter-spacing: 0.5px; text-transform: uppercase; }
-.regiao-tag { display: inline-block; margin-top: 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 4px 12px; font-size: 12px; color: rgba(255,255,255,0.75); }
-.wave { display: block; background: var(--verde); height: 40px; clip-path: ellipse(55% 100% at 50% 0%); margin-bottom: -2px; }
-.corpo { max-width: 420px; margin: 0 auto; padding: 24px 20px 40px; display: flex; flex-direction: column; gap: 14px; }
-.btn-foto { background: linear-gradient(135deg, var(--verde-claro), var(--verde)); color: white; border: none; border-radius: 18px; padding: 22px 28px; font-family: 'DM Sans', sans-serif; font-size: 17px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: transform 0.15s, box-shadow 0.15s; box-shadow: 0 4px 20px rgba(26,92,42,0.3); width: 100%; }
+.header .sub { color: rgba(255,255,255,0.55); font-size: 12px; margin-top: 4px; letter-spacing: 1px; text-transform: uppercase; }
+.regiao-tag { display: inline-block; margin-top: 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 4px 14px; font-size: 12px; color: rgba(255,255,255,0.85); }
+
+/* ── CONTADOR ── */
+.contador-bar { margin-top: 10px; cursor: pointer; }
+.contador-txt { font-size: 12px; color: rgba(255,255,255,0.85); display: block; margin-bottom: 5px; }
+.contador-progresso { height: 5px; background: rgba(255,255,255,0.2); border-radius: 10px; overflow: hidden; }
+.contador-fill { height: 100%; border-radius: 10px; background: var(--verde-neon); transition: width 0.4s; }
+.contador-fill.amarelo { background: #ffd740; }
+.contador-fill.vermelho { background: #ff5252; }
+
+.wave { display: block; height: 36px; background: var(--creme); clip-path: ellipse(55% 100% at 50% 100%); margin-top: -1px; position: relative; z-index: 3; }
+.corpo { max-width: 420px; margin: 0 auto; padding: 16px 20px 40px; display: flex; flex-direction: column; gap: 12px; }
+.secao-titulo { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--cinza); padding: 4px 4px 0; }
+
+/* ── CLIMA ── */
+.card-clima { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 2px 16px rgba(0,0,0,0.08); }
+.clima-topo { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; }
+.clima-dados { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; border-top: 1px solid #f0f0f0; }
+.clima-item { padding: 12px 14px; text-align: center; border-right: 1px solid #f0f0f0; }
+.clima-item:last-child { border-right: none; }
+.clima-valor { font-size: 20px; font-weight: 700; color: var(--marrom); }
+.clima-label { font-size: 10px; color: var(--cinza); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+.risco-box { margin: 0 18px 14px; border-radius: 12px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
+.risco-baixo { background: #e8f5e9; }
+.risco-medio { background: #fff8e1; }
+.risco-alto { background: #fff3e0; }
+.risco-critico { background: #fce4ec; }
+.risco-icon { font-size: 20px; flex-shrink: 0; }
+.risco-info { flex: 1; }
+.risco-titulo { font-size: 13px; font-weight: 700; }
+.risco-baixo .risco-titulo { color: #2e7d32; }
+.risco-medio .risco-titulo { color: #f57f17; }
+.risco-alto .risco-titulo { color: #e65100; }
+.risco-critico .risco-titulo { color: #c62828; }
+.risco-desc { font-size: 11px; color: #666; margin-top: 2px; line-height: 1.4; }
+
+/* ── CALENDÁRIO ── */
+.card-calendario { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 2px 16px rgba(0,0,0,0.08); }
+.cal-header { padding: 16px 18px 12px; display: flex; align-items: center; justify-content: space-between; }
+.cal-mes { font-family: 'Playfair Display', serif; font-size: 18px; color: var(--marrom); font-weight: 700; }
+.cal-fase { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 20px; }
+.fase-florada { background: #fff8e1; color: #f57f17; }
+.fase-granacao { background: #e8f5e9; color: #2e7d32; }
+.fase-maturacao { background: #fff3e0; color: #e65100; }
+.fase-colheita { background: #fce4ec; color: #c62828; }
+.fase-pos { background: #e8eaf6; color: #283593; }
+.fase-repouso { background: #f3e5f5; color: #6a1b9a; }
+.cal-divisor { height: 1px; background: #f0f0f0; margin: 0 18px; }
+.cal-alertas { padding: 12px 18px; }
+.cal-alertas h4 { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-bottom: 8px; }
+.alerta-item { margin-bottom: 6px; }
+.alerta-alto { color: #c62828; font-weight: 600; font-size: 13px; }
+.alerta-medio { color: #e65100; font-weight: 600; font-size: 13px; }
+.cal-acoes { padding: 0 18px 14px; }
+.cal-acoes h4 { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-bottom: 8px; }
+.acao-item { font-size: 13px; color: #444; line-height: 1.4; margin-bottom: 5px; }
+
+/* ── BOTÕES PRINCIPAIS ── */
+.btn-foto { background: linear-gradient(135deg, var(--verde-claro), var(--verde)); color: white; border: none; border-radius: 16px; padding: 18px 24px; font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 12px; width: 100%; box-shadow: 0 4px 16px rgba(26,92,42,0.25); transition: transform 0.15s; }
 .btn-foto:active { transform: scale(0.97); }
-.btn-galeria { background: white; color: var(--verde); border: 2px solid #c8ddc8; border-radius: 18px; padding: 16px 28px; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: transform 0.15s; width: 100%; }
+.btn-video { background: linear-gradient(135deg, #1565c0, #0d47a1); color: white; border: none; border-radius: 16px; padding: 18px 24px; font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 12px; width: 100%; box-shadow: 0 4px 16px rgba(13,71,161,0.25); transition: transform 0.15s; }
+.btn-video:active { transform: scale(0.97); }
+.btn-galeria { background: white; color: var(--verde); border: 2px solid #c8ddc8; border-radius: 16px; padding: 14px 24px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 10px; width: 100%; transition: transform 0.15s; }
 .btn-galeria:active { transform: scale(0.97); }
-.btn-icon { font-size: 26px; flex-shrink: 0; }
+.solo-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.btn-solo { background: linear-gradient(135deg, #795548, #4e342e); color: white; border: none; border-radius: 16px; padding: 16px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; box-shadow: 0 4px 16px rgba(78,52,46,0.25); transition: transform 0.15s; }
+.btn-solo:active { transform: scale(0.97); }
+.btn-solo-gal { background: white; color: #4e342e; border: 2px solid #d7c4bb; border-radius: 16px; padding: 16px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; transition: transform 0.15s; }
+.btn-solo-gal:active { transform: scale(0.97); }
+.btn-daninha { background: linear-gradient(135deg, #558b2f, #33691e); color: white; border: none; border-radius: 16px; padding: 16px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; box-shadow: 0 4px 16px rgba(51,105,30,0.25); transition: transform 0.15s; }
+.btn-daninha:active { transform: scale(0.97); }
+.btn-daninha-gal { background: white; color: #33691e; border: 2px solid #c5e1a5; border-radius: 16px; padding: 16px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; transition: transform 0.15s; }
+.btn-daninha-gal:active { transform: scale(0.97); }
+.btn-icon { font-size: 22px; flex-shrink: 0; }
 .btn-text { text-align: left; line-height: 1.3; }
-.btn-text small { display: block; font-weight: 400; font-size: 12px; opacity: 0.7; margin-top: 2px; }
-input { display: none; }
-.dica { background: white; border-radius: 14px; padding: 14px 16px; display: flex; align-items: flex-start; gap: 10px; border-left: 3px solid var(--verde-neon); }
-.dica-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
-.dica p { font-size: 13px; color: var(--cinza); line-height: 1.5; }
+.btn-text small { display: block; font-weight: 400; font-size: 11px; opacity: 0.7; margin-top: 2px; }
+input[type="file"] { display: none; }
+
+/* ── DICA ── */
+.dica { background: white; border-radius: 14px; padding: 12px 14px; display: flex; align-items: flex-start; gap: 10px; border-left: 3px solid var(--verde-neon); }
+.dica p { font-size: 12px; color: var(--cinza); line-height: 1.5; }
 .dica strong { color: var(--marrom); }
+
+/* ── SPINNER ── */
 #spinner { display: none; background: white; border-radius: 20px; padding: 32px 20px; text-align: center; box-shadow: 0 2px 16px rgba(0,0,0,0.07); }
 .spinner-folha { font-size: 40px; animation: spin-pulse 1.2s ease-in-out infinite; display: block; margin-bottom: 12px; }
 @keyframes spin-pulse { 0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; } 50% { transform: scale(1.15) rotate(10deg); opacity: 0.7; } }
 #spinner p { color: var(--verde); font-weight: 700; font-size: 16px; }
 #spinner small { color: var(--cinza); font-size: 12px; margin-top: 4px; display: block; }
 #resultado { display: none; }
+
+/* ── RESULTADO ── */
 .card-resultado { background: white; border-radius: 24px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.1); animation: slideUp 0.4s ease; }
+.multi-header { padding: 16px 20px 8px; display: flex; align-items: center; gap: 12px; }
+.multi-foto { width: 60px; height: 60px; border-radius: 12px; object-fit: cover; flex-shrink: 0; border: 2px solid #f0f0f0; }
+.multi-foto-placeholder { width: 60px; height: 60px; border-radius: 12px; background: var(--creme); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.multi-titulo { flex: 1; }
+.multi-titulo h3 { font-family: 'Playfair Display', serif; font-size: 16px; color: var(--marrom); }
+.multi-titulo p { font-size: 11px; color: var(--cinza); margin-top: 2px; }
+.diag-item { border-top: 1px solid #f0f0f0; padding: 14px 20px; }
+.diag-item-topo { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.diag-nome { font-family: 'Playfair Display', serif; font-size: 17px; color: var(--marrom); text-transform: capitalize; font-weight: 700; }
+.diag-cat { font-size: 10px; color: var(--cinza); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+.diag-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.diag-visto { background: var(--creme); border-radius: 10px; padding: 8px 12px; font-size: 12px; color: #555; font-style: italic; line-height: 1.4; margin-bottom: 8px; }
+.diag-acao { font-size: 13px; color: var(--marrom); line-height: 1.5; font-weight: 500; }
+.diag-bar { display: flex; gap: 3px; margin-bottom: 8px; }
+.diag-seg { flex: 1; height: 6px; border-radius: 3px; background: #e8e8e8; }
+
+/* ── CALCULADORA FUNGICIDA ── */
+.calc-box { margin-top: 12px; background: #f0f7f0; border-radius: 14px; padding: 12px 14px; border: 1px solid #c8ddc8; }
+.calc-titulo { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--verde); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.calc-produto { background: white; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid #e0ede0; }
+.calc-produto-nome { font-size: 13px; font-weight: 700; color: var(--marrom); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.calc-tipo-badge { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
+.calc-tipo-protetor { background: #fff3e0; color: #e65100; }
+.calc-tipo-sistemico { background: #e8eaf6; color: #283593; }
+.calc-tipo-biologico { background: #e8f5e9; color: #2e7d32; }
+.calc-tipo-acaricida { background: #fce4ec; color: #c62828; }
+.calc-tipo-inseticida { background: #f3e5f5; color: #6a1b9a; }
+.calc-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.calc-input-group { display: flex; flex-direction: column; gap: 3px; }
+.calc-input-group label { font-size: 10px; color: var(--cinza); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.calc-input-group input { border: 1px solid #ddd; border-radius: 8px; padding: 7px 10px; font-size: 14px; font-family: 'DM Sans', sans-serif; color: var(--marrom); background: white; width: 100%; }
+.calc-input-group input:focus { outline: none; border-color: var(--verde-claro); }
+.calc-resultado { background: var(--verde); border-radius: 10px; padding: 10px 12px; color: white; }
+.calc-resultado-linha { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.calc-resultado-linha:last-child { margin-bottom: 0; }
+.calc-resultado-label { font-size: 11px; opacity: 0.8; }
+.calc-resultado-valor { font-size: 15px; font-weight: 700; }
+.calc-aviso { font-size: 10px; opacity: 0.7; margin-top: 6px; font-style: italic; }
+
 @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.card-topo { padding: 24px 20px 20px; display: flex; align-items: center; gap: 16px; }
-.card-emoji { font-size: 52px; flex-shrink: 0; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15)); }
-.card-titulo h2 { font-family: 'Playfair Display', serif; font-size: 22px; color: var(--marrom); text-transform: capitalize; }
+.card-topo { padding: 20px 20px 16px; display: flex; align-items: center; gap: 14px; }
+.card-foto-thumb { width: 72px; height: 72px; border-radius: 14px; object-fit: cover; flex-shrink: 0; border: 2px solid #f0f0f0; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.card-foto-thumb-placeholder { width: 72px; height: 72px; border-radius: 14px; background: var(--creme); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+.card-titulo h2 { font-family: 'Playfair Display', serif; font-size: 20px; color: var(--marrom); text-transform: capitalize; }
 .card-titulo .categoria { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-top: 2px; }
 .badges { padding: 0 20px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
 .badge { border-radius: 30px; padding: 5px 12px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
@@ -58,6 +172,9 @@ input { display: none; }
 .badge-confianca-media { background: #fff8e1; color: #f57f17; }
 .badge-confianca-baixa { background: #fce4ec; color: #c62828; }
 .badge-regiao { background: #e3f2fd; color: #1565c0; }
+.badge-video { background: #e8eaf6; color: #283593; }
+.badge-solo { background: #efebe9; color: #4e342e; }
+.badge-daninha { background: #f1f8e9; color: #33691e; }
 .visto-box { margin: 0 20px 16px; background: var(--creme); border-radius: 12px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; }
 .visto-box .visto-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
 .visto-box p { font-size: 13px; color: #555; line-height: 1.5; font-style: italic; }
@@ -65,46 +182,341 @@ input { display: none; }
 .acao-box { padding: 16px 20px; }
 .acao-box h3 { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-bottom: 8px; }
 .acao-box p { font-size: 15px; color: var(--marrom); line-height: 1.6; font-weight: 500; }
-.estagio-box { padding: 0 20px 16px; }
-.estagio-box h3 { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--cinza); margin-bottom: 8px; }
-.estagio-bar { display: flex; gap: 4px; }
-.estagio-seg { flex: 1; height: 8px; border-radius: 4px; background: #e8e8e8; transition: background 0.3s; }
-.btns-resultado { padding: 0 20px 20px; display: flex; gap: 10px; }
-.btn-voz { flex: 1; background: var(--verde); color: white; border: none; border-radius: 14px; padding: 14px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
-.btn-nova { flex: 1; background: var(--creme); color: var(--verde); border: 2px solid #c8ddc8; border-radius: 14px; padding: 14px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.btns-resultado { padding: 12px 20px 20px; display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-voz { flex: 1; min-width: 80px; background: var(--verde); color: white; border: none; border-radius: 14px; padding: 13px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
+.btn-nova { flex: 1; min-width: 80px; background: var(--creme); color: var(--verde); border: 2px solid #c8ddc8; border-radius: 14px; padding: 13px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
+.btn-share { flex: 1; min-width: 80px; background: #25D366; color: white; border: none; border-radius: 14px; padding: 13px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
+
+/* ── SOLO ── */
+.solo-grid { padding: 0 20px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.solo-item { background: var(--creme); border-radius: 10px; padding: 10px 12px; }
+.solo-item .solo-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--cinza); }
+.solo-item .solo-valor { font-size: 16px; font-weight: 700; color: var(--marrom); margin-top: 2px; }
+.solo-item .solo-status { font-size: 11px; margin-top: 2px; }
+.solo-ok { color: #2e7d32; }
+.solo-baixo { color: #c62828; }
+.solo-alto { color: #e65100; }
+
+/* ── DANINHAS ── */
+.daninha-alerta { margin: 0 20px 14px; border-radius: 12px; padding: 12px 14px; }
+.daninha-alerta-acido { background: #fff8e1; border-left: 4px solid #f57f17; }
+.daninha-alerta-compactado { background: #fff3e0; border-left: 4px solid #e65100; }
+.daninha-alerta-fertil { background: #e8f5e9; border-left: 4px solid #2e7d32; }
+.daninha-alerta-umidade { background: #e3f2fd; border-left: 4px solid #1565c0; }
+.daninha-alerta-degradado { background: #fce4ec; border-left: 4px solid #c62828; }
+.daninha-alerta-mag { background: #f3e5f5; border-left: 4px solid #6a1b9a; }
+.daninha-alerta-titulo { font-size: 13px; font-weight: 700; color: var(--marrom); margin-bottom: 4px; }
+.daninha-alerta-desc { font-size: 12px; color: #555; line-height: 1.5; }
+
+/* ── HISTÓRICO ── */
+.card-historico { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 2px 16px rgba(0,0,0,0.08); }
+.hist-header { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; }
+.hist-titulo { font-family: 'Playfair Display', serif; font-size: 16px; color: var(--marrom); font-weight: 700; }
+.hist-limpar { font-size: 11px; color: var(--cinza); cursor: pointer; text-decoration: underline; background: none; border: none; font-family: 'DM Sans', sans-serif; }
+.hist-lista { padding: 0 18px 14px; display: flex; flex-direction: column; gap: 8px; }
+.hist-item { display: flex; align-items: center; gap: 10px; background: var(--creme); border-radius: 12px; padding: 10px 12px; }
+.hist-thumb { width: 44px; height: 44px; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
+.hist-thumb-placeholder { width: 44px; height: 44px; border-radius: 10px; background: #e8e8e8; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+.hist-info { flex: 1; }
+.hist-nome { font-size: 13px; font-weight: 700; color: var(--marrom); text-transform: capitalize; }
+.hist-data { font-size: 11px; color: var(--cinza); margin-top: 2px; }
+.hist-vazio { padding: 16px 18px; font-size: 13px; color: var(--cinza); text-align: center; }
+
+/* ── FILA OFFLINE ── */
+.card-fila { background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 2px 20px rgba(230,81,0,0.15); border: 2px solid #ffe0b2; }
+.fila-header { padding: 14px 18px 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.fila-header-esq { flex: 1; }
+.fila-titulo { font-family: 'Playfair Display', serif; font-size: 16px; color: var(--marrom); font-weight: 700; }
+.fila-sub { font-size: 11px; color: #e65100; font-weight: 600; margin-top: 3px; display: flex; align-items: center; gap: 5px; }
+.fila-contagem { display: inline-flex; align-items: center; justify-content: center; background: #e65100; color: white; border-radius: 20px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+.fila-limpar { font-size: 11px; color: var(--cinza); cursor: pointer; text-decoration: underline; background: none; border: none; font-family: 'DM Sans', sans-serif; white-space: nowrap; padding-top: 2px; }
+.fila-divisor { height: 1px; background: #ffe0b2; margin: 0 18px; }
+.fila-grid { padding: 14px 18px 16px; display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; }
+.fila-item { position: relative; border-radius: 14px; overflow: hidden; aspect-ratio: 1; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,0.18); border: 2px solid #ffe0b2; transition: transform 0.15s, box-shadow 0.15s; background: #f5ebe0; }
+.fila-item:active { transform: scale(0.96); box-shadow: 0 1px 6px rgba(0,0,0,0.12); }
+.fila-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fila-item-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.18) 45%, transparent 70%); display: flex; flex-direction: column; justify-content: flex-end; padding: 10px 10px 9px; gap: 2px; }
+.fila-item-hora { font-size: 9px; color: rgba(255,255,255,0.85); font-weight: 600; line-height: 1.2; }
+.fila-item-tap { font-size: 9px; color: #ffd54f; font-weight: 800; letter-spacing: 0.1px; }
+.fila-item-num { position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,0.55); color: white; border-radius: 20px; padding: 1px 6px; font-size: 9px; font-weight: 700; }
+.fila-item-del { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.5); color: white; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0; font-family: 'DM Sans', sans-serif; }
+.offline-banner { margin: 0 18px 12px; background: #fff3e0; border-radius: 12px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
+.offline-banner-icon { font-size: 20px; flex-shrink: 0; }
+.offline-banner-txt { font-size: 12px; color: #bf360c; line-height: 1.4; font-weight: 500; }
+
+/* ── MODAL PLANOS ── */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 1000; align-items: flex-end; justify-content: center; }
+.modal-overlay.ativo { display: flex; }
+.modal-planos { background: var(--creme); border-radius: 28px 28px 0 0; padding: 24px 20px 48px; width: 100%; max-width: 480px; max-height: 92vh; overflow-y: auto; }
+.modal-titulo { font-family: 'Playfair Display', serif; font-size: 22px; color: var(--marrom); font-weight: 900; margin-bottom: 4px; }
+.modal-sub { font-size: 13px; color: var(--cinza); margin-bottom: 14px; line-height: 1.4; }
+.modal-esgotado { background: #fce4ec; border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: #c62828; font-weight: 600; line-height: 1.4; }
+
+/* toggle mensal/anual */
+.toggle-ciclo { display: flex; gap: 6px; background: white; border-radius: 14px; padding: 4px; margin-bottom: 16px; }
+.toggle-btn { flex: 1; border: none; border-radius: 10px; padding: 9px 6px; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; background: transparent; color: var(--cinza); transition: all 0.2s; }
+.toggle-btn.ativo { background: var(--verde); color: white; }
+.toggle-economia { background: #e8f5e9; color: #2e7d32; border-radius: 20px; padding: 2px 7px; font-size: 10px; font-weight: 700; margin-left: 4px; display: inline-block; }
+
+/* cards de plano */
+.plano-card { background: white; border-radius: 20px; padding: 18px; margin-bottom: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); position: relative; }
+.plano-card.destaque { border: 2px solid var(--verde-claro); box-shadow: 0 4px 20px rgba(45,138,62,0.2); }
+.plano-badge { font-size: 11px; font-weight: 700; color: var(--verde); background: #e8f5e9; border-radius: 20px; padding: 3px 10px; display: inline-block; margin-bottom: 8px; }
+.plano-nome { font-family: 'Playfair Display', serif; font-size: 18px; color: var(--marrom); font-weight: 700; margin-bottom: 4px; }
+.plano-preco { display: flex; align-items: baseline; gap: 4px; margin-bottom: 4px; }
+.plano-valor { font-size: 28px; font-weight: 900; color: var(--verde); }
+.plano-periodo { font-size: 13px; color: var(--cinza); }
+.plano-anual-desc { font-size: 11px; color: #2e7d32; background: #e8f5e9; border-radius: 8px; padding: 4px 10px; margin-bottom: 10px; display: inline-block; }
+.plano-features { list-style: none; margin: 12px 0 16px; display: flex; flex-direction: column; gap: 7px; }
+.plano-features li { font-size: 13px; color: #444; padding-left: 20px; position: relative; line-height: 1.4; }
+.plano-features li::before { content: "✓"; position: absolute; left: 0; color: var(--verde-claro); font-weight: 700; }
+.btn-assinar { width: 100%; padding: 13px; background: linear-gradient(135deg, var(--verde-claro), var(--verde)); color: white; border: none; border-radius: 14px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; margin-bottom: 6px; transition: opacity 0.15s; }
+.btn-assinar:active { opacity: 0.85; }
+.btn-fechar-modal { width: 100%; padding: 14px; background: transparent; color: var(--cinza); border: none; font-family: 'DM Sans', sans-serif; font-size: 13px; cursor: pointer; margin-top: 6px; text-decoration: underline; }
+
+/* ── MODAL PIX ── */
+.btn-pix-plano { width:100%; padding:12px; background:white; color:var(--verde); border:2px solid #c8ddc8; border-radius:14px; font-family:'DM Sans',sans-serif; font-size:14px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-top:6px; }
+.modal-pix { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:1100; align-items:center; justify-content:center; padding:20px; }
+.modal-pix.ativo { display:flex; }
+.modal-pix-box { background:white; border-radius:24px; padding:24px 20px; width:100%; max-width:360px; text-align:center; max-height:90vh; overflow-y:auto; }
+.modal-pix-titulo { font-family:'Playfair Display',serif; font-size:20px; color:var(--marrom); margin-bottom:4px; }
+.modal-pix-sub { font-size:13px; color:var(--cinza); margin-bottom:16px; line-height:1.4; }
+.pix-loading { display:flex; align-items:center; justify-content:center; gap:8px; font-size:13px; color:var(--cinza); padding:20px 0; }
+.pix-spinner { width:20px; height:20px; border:2px solid #e0e0e0; border-top-color:var(--verde); border-radius:50%; animation:pixspin 1s linear infinite; flex-shrink:0; }
+@keyframes pixspin { to { transform:rotate(360deg); } }
+.pix-form-label { font-size:11px; font-weight:700; color:var(--cinza); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:4px; text-align:left; }
+.pix-form-input { width:100%; border:1.5px solid #ddd; border-radius:10px; padding:10px 12px; font-size:14px; font-family:'DM Sans',sans-serif; color:var(--marrom); outline:none; margin-bottom:12px; display:block; }
+.pix-status { padding:12px; border-radius:12px; margin-bottom:12px; font-size:13px; font-weight:600; text-align:center; }
+.pix-status-aguardando { background:#fff8e1; color:#f57f17; }
+.pix-status-aprovado { background:#e8f5e9; color:#2e7d32; }
+.pix-status-erro { background:#fce4ec; color:#c62828; }
+.pix-qr-img { width:200px; height:200px; margin:0 auto 14px; border-radius:12px; overflow:hidden; border:3px solid #f0f0f0; }
+.pix-qr-img img { width:100%; height:100%; object-fit:contain; }
+.pix-codigo-box { background:#f5f0e8; border-radius:10px; padding:10px 12px; margin-bottom:12px; text-align:left; }
+.pix-codigo-label { font-size:10px; color:var(--cinza); font-weight:600; margin-bottom:4px; }
+.pix-codigo-txt { font-size:10px; color:var(--marrom); word-break:break-all; font-family:monospace; line-height:1.4; }
+.btn-copiar-pix { width:100%; padding:11px; background:var(--verde); color:white; border:none; border-radius:12px; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:700; cursor:pointer; margin-bottom:8px; }
+.btn-fechar-pix { width:100%; padding:11px; background:white; color:var(--cinza); border:2px solid #e8e8e8; border-radius:12px; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600; cursor:pointer; }
+
+canvas { display: none; }
 </style>
 </head>
 <body>
+
+<!-- MODAL PLANOS -->
+<div class="modal-overlay" id="modalPlanos">
+  <div class="modal-planos">
+    <div class="modal-titulo">🌿 Doutor Café Premium</div>
+    <div class="modal-sub" id="modalSubtitulo">Escolha o plano ideal para sua lavoura</div>
+    <div class="modal-esgotado" id="modalEsgotado" style="display:none"><p>🔒 Suas 20 análises gratuitas foram usadas. Assine para continuar!</p></div>
+    <div class="toggle-ciclo">
+      <button class="toggle-btn ativo" id="btnMensal" onclick="setCiclo('mensal')">Mensal</button>
+      <button class="toggle-btn" id="btnAnual" onclick="setCiclo('anual')">Anual <span class="toggle-economia">2 meses grátis</span></button>
+    </div>
+    <div class="plano-card">
+      <div class="plano-nome">🌱 Plano Básico</div>
+      <div class="plano-preco"><span class="plano-valor" id="precoBasico">R$32,90</span><span class="plano-periodo">/mês</span></div>
+      <div class="plano-anual-desc" id="descBasico" style="display:none">R$299,90/ano — equivale a 2 meses grátis!</div>
+      <ul class="plano-features">
+        <li>120 análises por mês</li><li>Diagnóstico de doenças e pragas</li><li>Calculadora de fungicida</li><li>Análise de solo</li><li>Plantas daninhas</li><li>Suporte via WhatsApp</li>
+      </ul>
+      <button class="btn-assinar" onclick="assinar('basico')">💳 Assinar com Cartão</button>
+      <button class="btn-pix-plano" onclick="abrirPix('basico')">⚡ Pagar via PIX</button>
+    </div>
+    <div class="plano-card destaque">
+      <div class="plano-badge">⭐ Mais Popular</div>
+      <div class="plano-nome">🚀 Plano Pro</div>
+      <div class="plano-preco"><span class="plano-valor" id="precoPro">R$49,90</span><span class="plano-periodo">/mês</span></div>
+      <div class="plano-anual-desc" id="descPro" style="display:none">R$499,90/ano — equivale a 2 meses grátis!</div>
+      <ul class="plano-features">
+        <li>300 análises por mês</li><li>Tudo do Básico</li><li>Histórico completo</li><li>Atendimento prioritário</li><li>Acesso a novos recursos primeiro</li>
+      </ul>
+      <button class="btn-assinar" onclick="assinar('pro')">💳 Assinar com Cartão</button>
+      <button class="btn-pix-plano" onclick="abrirPix('pro')">⚡ Pagar via PIX</button>
+    </div>
+    <div class="plano-card">
+      <div class="plano-nome">🏢 Empresarial</div>
+      <div class="plano-preco"><span class="plano-valor" style="font-size:20px">A combinar</span></div>
+      <ul class="plano-features"><li>Cooperativas e revendas</li><li>Multi-usuário</li><li>Dashboard e relatórios</li><li>Contrato personalizado</li><li>R$300 a R$2.000/mês</li></ul>
+      <button class="btn-assinar" onclick="contatoEmpresarial()" style="background:linear-gradient(135deg,#795548,#4e342e)">Falar com Gerente</button>
+    </div>
+    <button class="btn-fechar-modal" onclick="fecharModal()">Continuar com plano gratuito</button>
+  </div>
+</div>
+
 <div class="header">
-  <span class="logo-icon">🌿</span>
-  <h1>Doutor <span>Café</span></h1>
-  <div class="sub">O agrônomo no seu bolso</div>
-  <div class="regiao-tag" id="regiaoTag">📍 Localizando...</div>
+  <img class="header-img" src="cafe.jpg.jpeg" alt="Café">
+  <div class="header-overlay"></div>
+  <div class="header-content">
+    <span class="logo-icon">🌿</span>
+    <h1>Doutor <span>Café</span></h1>
+    <div class="sub">O agrônomo no seu bolso</div>
+    <div class="regiao-tag" id="regiaoTag">📍 Localizando...</div>
+    <div class="contador-bar" id="contadorBar" onclick="abrirModal(false)">
+      <span class="contador-txt" id="contadorTxt">20 análises grátis</span>
+      <div class="contador-progresso"><div class="contador-fill" id="contadorFill" style="width:100%"></div></div>
+    </div>
+  </div>
 </div>
 <div class="wave"></div>
+
 <div class="corpo">
   <input id="cam" type="file" accept="image/*" capture="environment">
-  <input id="gal" type="file" accept="image/*">
-  <button class="btn-foto" id="btnCam">
-    <span class="btn-icon">📷</span>
-    <span class="btn-text">Fotografar a Folha<small>Abra a câmera e fotografe</small></span>
-  </button>
-  <button class="btn-galeria" id="btnGal">
-    <span class="btn-icon">🖼️</span>
-    <span class="btn-text">Escolher da Galeria<small>Use uma foto já tirada</small></span>
-  </button>
-  <div class="dica">
-    <span class="dica-icon">💡</span>
-    <p><strong>Dica:</strong> Fotografe a face inferior da folha também. A ferrugem aparece embaixo com pó alaranjado.</p>
-  </div>
+  <input id="gal" type="file" accept="image/*,video/*">
+  <input id="vid" type="file" accept="video/*" capture="environment">
+  <input id="solo" type="file" accept="image/*" capture="environment">
+  <input id="soloGal" type="file" accept="image/*">
+  <input id="daninha" type="file" accept="image/*" capture="environment">
+  <input id="daninaGal" type="file" accept="image/*">
+  <canvas id="canvas"></canvas>
+
+  <div class="secao-titulo">🌿 Diagnóstico de Folhas e Frutos</div>
+  <button class="btn-foto" id="btnCam"><span class="btn-icon">📷</span><span class="btn-text">Fotografar a Folha<small>Análise por foto única</small></span></button>
+  <button class="btn-video" id="btnVid"><span class="btn-icon">🎥</span><span class="btn-text">Gravar Vídeo da Folha<small>Mais preciso — vários ângulos</small></span></button>
+  <button class="btn-galeria" id="btnGal"><span class="btn-icon">🖼️</span><span class="btn-text">Escolher da Galeria<small>Use uma foto já tirada</small></span></button>
+
   <div id="spinner">
     <span class="spinner-folha">🔬</span>
-    <p>Analisando a folha...</p>
-    <small>Identificando sintomas e comparando padrões</small>
+    <p id="spinnerTexto">Analisando...</p>
+    <small id="spinnerSub">Identificando sintomas e comparando padrões</small>
   </div>
   <div id="resultado"></div>
+
+  <div class="secao-titulo" style="margin-top:4px">🌱 Análise de Solo</div>
+  <div class="solo-row">
+    <button class="btn-solo" id="btnSolo"><span class="btn-icon">🧪</span><span class="btn-text">Fotografar Laudo<small>Câmera</small></span></button>
+    <button class="btn-solo-gal" id="btnSoloGal"><span class="btn-icon">📄</span><span class="btn-text">Laudo da Galeria<small>Foto já tirada</small></span></button>
+  </div>
+
+  <div class="secao-titulo" style="margin-top:4px">🌾 Plantas Daninhas — Leitura do Solo</div>
+  <div class="solo-row">
+    <button class="btn-daninha" id="btnDaninha"><span class="btn-icon">🔍</span><span class="btn-text">Fotografar Planta<small>Identifica e interpreta</small></span></button>
+    <button class="btn-daninha-gal" id="btnDaninhaGal"><span class="btn-icon">🌿</span><span class="btn-text">Da Galeria<small>Foto já tirada</small></span></button>
+  </div>
+
+  <div class="dica">
+    <span style="font-size:16px;flex-shrink:0;margin-top:1px">💡</span>
+    <p><strong>Dica:</strong> Fotografe a face inferior da folha também. A ferrugem aparece embaixo com pó alaranjado.</p>
+  </div>
+
+  <div class="secao-titulo" style="margin-top:4px">🌤️ Clima e Risco Agora</div>
+  <div class="card-clima" id="cardClima">
+    <div class="clima-topo"><span style="font-size:13px;color:var(--cinza)">Obtendo clima...</span></div>
+  </div>
+
+  <div class="secao-titulo" style="margin-top:4px">📅 Calendário Fitossanitário</div>
+  <div class="card-calendario" id="cardCalendario"></div>
+
+  <div class="secao-titulo" style="margin-top:4px" id="tituloSecaoHistorico">📋 Histórico de Análises</div>
+  <div id="areaHistorico"></div>
+
+  <div class="secao-titulo" style="margin-top:4px">💬 Fale Conosco</div>
+  <div class="dica" style="flex-direction:column;gap:10px">
+    <p style="font-size:13px;color:var(--marrom);font-weight:600">Tem dúvidas, sugestões ou encontrou algum problema?</p>
+    <p style="font-size:12px;color:var(--cinza);line-height:1.5">Nossa equipe responde em até 24 horas. Seu feedback ajuda a melhorar o Doutor Café para todos os produtores.</p>
+    <button onclick="enviarEmail()" style="background:linear-gradient(135deg,var(--verde-claro),var(--verde));color:white;border:none;border-radius:14px;padding:14px 20px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%;justify-content:center;"><span>✉️</span> Enviar Mensagem</button>
+    <button onclick="abrirWhatsapp()" style="background:#25D366;color:white;border:none;border-radius:14px;padding:14px 20px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%;justify-content:center;"><span>📲</span> WhatsApp</button>
+  </div>
+
+  <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--cinza)">
+    🌿 Doutor Café © 2025 · Todos os direitos reservados<br>
+    <span style="font-size:10px">CNPJ 67.223.948/0001-87</span>
+  </div>
 </div>
+
+<!-- MODAL PIX -->
+<div class="modal-pix" id="modalPix">
+  <div class="modal-pix-box">
+    <div class="modal-pix-titulo">⚡ Pagar via PIX</div>
+    <div class="modal-pix-sub" id="pixSubtitulo">Preencha seus dados</div>
+    <div id="pixArea"></div>
+    <button class="btn-fechar-pix" onclick="fecharPix()">Cancelar</button>
+  </div>
+</div>
+
 <script>
+
+// ── PLANOS E PAGAMENTO ──
+var PLANO_KEY="doutorcafe_plano",ANALISES_KEY="doutorcafe_analises",LIMITE_GRATIS=20,cicloAtual="mensal";
+
+function getPlano(){try{return JSON.parse(localStorage.getItem(PLANO_KEY))||{tipo:"gratuito"};}catch(e){return{tipo:"gratuito"};}}
+function salvarPlano(p){try{localStorage.setItem(PLANO_KEY,JSON.stringify(p));}catch(e){}}
+function getAnalisesUsadas(){return parseInt(localStorage.getItem(ANALISES_KEY)||"0");}
+function incrementarAnalise(){var u=getAnalisesUsadas()+1;localStorage.setItem(ANALISES_KEY,u.toString());atualizarContador();return u;}
+function podeanalisar(){var p=getPlano();if(p.tipo!=="gratuito")return true;return getAnalisesUsadas()<LIMITE_GRATIS;}
+function atualizarContador(){
+  var p=getPlano(),usado=getAnalisesUsadas(),txt=document.getElementById("contadorTxt"),fill=document.getElementById("contadorFill");
+  if(!txt||!fill)return;
+  if(p.tipo==="pro"){txt.textContent="Plano Pro — 300 análises/mês";fill.style.width="100%";fill.className="contador-fill";}
+  else if(p.tipo==="basico"){var r=120-(usado%120);txt.textContent=r+" análises restantes";fill.style.width=(r/120*100)+"%";fill.className="contador-fill";}
+  else{var r=Math.max(0,LIMITE_GRATIS-usado);txt.textContent=r+" análises grátis restantes";var pct=(r/LIMITE_GRATIS)*100;fill.style.width=pct+"%";fill.className="contador-fill"+(pct<=25?" vermelho":pct<=50?" amarelo":"");}
+}
+
+function abrirModal(esgotado){
+  document.getElementById("modalPlanos").classList.add("ativo");
+  document.getElementById("modalEsgotado").style.display=esgotado?"block":"none";
+  document.getElementById("modalSubtitulo").textContent=esgotado?"Continue diagnosticando sua lavoura sem limites":"Escolha o plano ideal para sua lavoura";
+}
+function fecharModal(){document.getElementById("modalPlanos").classList.remove("ativo");}
+function setCiclo(c){
+  cicloAtual=c;
+  document.getElementById("btnMensal").className="toggle-btn"+(c==="mensal"?" ativo":"");
+  document.getElementById("btnAnual").className="toggle-btn"+(c==="anual"?" ativo":"");
+  document.getElementById("precoBasico").textContent=c==="mensal"?"R$32,90":"R$24,92";
+  document.getElementById("precoPro").textContent=c==="mensal"?"R$49,90":"R$41,66";
+  document.getElementById("descBasico").style.display=c==="anual"?"block":"none";
+  document.getElementById("descPro").style.display=c==="anual"?"block":"none";
+}
+function assinar(tipo){
+  // Busca o botão que disparou o evento e mostra loading
+  var btns = document.querySelectorAll('.btn-assinar');
+  btns.forEach(function(b){ b.disabled=true; });
+  var btnTextoOriginal = event && event.target ? event.target.textContent : "💳 Assinar com Cartão";
+  if(event && event.target){ event.target.textContent = "Aguarde..."; }
+
+  fetch("https://doutor-cafe-production.up.railway.app/criar-assinatura", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plano: tipo + "_" + cicloAtual,
+      userId: obterUserId(),
+      email: "produtor@doutorcafe.app"
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if(d.url){
+      // Abre na mesma aba — o MP redireciona de volta via back_urls
+      window.location.href = d.url;
+    } else {
+      alert("Erro ao abrir checkout: " + (d.erro || "tente novamente"));
+      btns.forEach(function(b){ b.disabled=false; });
+      if(event && event.target){ event.target.textContent = btnTextoOriginal; }
+    }
+  })
+  .catch(function(e){
+    alert("Erro de conexão. Tente novamente.");
+    btns.forEach(function(b){ b.disabled=false; });
+    if(event && event.target){ event.target.textContent = btnTextoOriginal; }
+  });
+}
+function contatoEmpresarial(){window.open("https://wa.me/5535998823395?text="+encodeURIComponent("Olá! Tenho interesse no Plano Empresarial do Doutor Café."),"_blank");fecharModal();}
+function verificarRetornoPagamento(){
+  var params=new URLSearchParams(window.location.search),pagamento=params.get("pagamento"),planoId=params.get("plano");
+  if(pagamento==="sucesso"&&planoId){
+    var tipo=planoId.indexOf("pro")>-1?"pro":"basico";
+    salvarPlano({tipo:tipo,planoId:planoId,dataAssinatura:new Date().toISOString()});
+    localStorage.setItem(ANALISES_KEY,"0");
+    atualizarContador();
+    alert("Bem-vindo ao Plano "+(tipo==="pro"?"Pro":"Básico")+"! Suas análises estão liberadas.");
+    window.history.replaceState({},"",window.location.pathname);
+  }
+}
+
+var ultimaFotoBase64 = null;
+var HIST_KEY = "doutorcafe_hist";
+var FILA_MAX = 50;
+
 var EMOJIS = {
   ferrugem:"🟠",bicho:"🪲",cercosporiose:"🔵",aureolada:"🟣",
   phoma:"⚫",antracnose:"🫙",ascochyta:"🟤",manteigosa:"🫧",
@@ -113,7 +525,8 @@ var EMOJIS = {
   nematoide:"🪱",nitrogenio:"🌿",magnesio:"🟡",potassio:"🔥",
   fosforo:"💜",calcio:"🦴",enxofre:"🌕",boro:"🟦",
   zinco:"🫧",ferro:"🫨",manganes:"🟤",cobre:"🧡",
-  estresse_hidrico:"💧",fitotoxicidade:"⚗️",escaldadura:"☀️",saudavel:"✅"
+  estresse_hidrico:"💧",fitotoxicidade:"⚗️",escaldadura:"☀️",
+  fruto_verde:"🟢",fruto_maduro:"🔴",fruto_passado:"⚫",saudavel:"✅"
 };
 var NOMES_VOZ = {
   ferrugem:"Ferrugem do café",bicho:"Bicho mineiro",cercosporiose:"Cercosporiose",
@@ -126,7 +539,8 @@ var NOMES_VOZ = {
   calcio:"Deficiência de cálcio",enxofre:"Deficiência de enxofre",boro:"Deficiência de boro",
   zinco:"Deficiência de zinco",ferro:"Deficiência de ferro",manganes:"Deficiência de manganês",
   cobre:"Deficiência de cobre",estresse_hidrico:"Estresse hídrico",fitotoxicidade:"Fitotoxicidade",
-  escaldadura:"Escaldadura solar",saudavel:"Planta saudável"
+  escaldadura:"Escaldadura solar",fruto_verde:"Fruto verde saudável",fruto_maduro:"Fruto maduro para colheita",
+  fruto_passado:"Fruto passado do ponto",saudavel:"Planta saudável"
 };
 var CATEGORIAS = {
   ferrugem:"Doença Fúngica",bicho:"Praga",cercosporiose:"Doença Fúngica",
@@ -141,133 +555,571 @@ var CATEGORIAS = {
   zinco:"Deficiência Nutricional",ferro:"Deficiência Nutricional",
   manganes:"Deficiência Nutricional",cobre:"Deficiência Nutricional",
   estresse_hidrico:"Estresse Ambiental",fitotoxicidade:"Estresse Ambiental",
-  escaldadura:"Estresse Ambiental",saudavel:"Planta Saudável"
+  escaldadura:"Estresse Ambiental",fruto_verde:"Fruto",fruto_maduro:"Fruto",
+  fruto_passado:"Fruto",saudavel:"Planta Saudável"
 };
 var CORES_ESTAGIO = ["#4caf50","#8bc34a","#ffc107","#ff9800","#f44336"];
+var MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
-var dadosGPS = { lat: null, lon: null, regiao: null, altitude: null };
-function identificarRegiao(lat, lon) {
-  if (lat >= -20.5 && lat <= -15.0 && lon >= -50.0 && lon <= -44.0) return "Cerrado Mineiro";
-  if (lat >= -22.5 && lat <= -19.5 && lon >= -46.5 && lon <= -43.5) return "Sul de Minas";
-  if (lat >= -21.5 && lat <= -19.0 && lon >= -48.5 && lon <= -46.0) return "Mogiana";
-  if (lat >= -20.0 && lat <= -17.0 && lon >= -42.5 && lon <= -40.0) return "Matas de Minas";
-  if (lat >= -15.0 && lat <= -10.0 && lon >= -41.5 && lon <= -38.5) return "Chapada Diamantina";
-  if (lat >= -12.0 && lat <= -8.0  && lon >= -40.0 && lon <= -36.0) return "Planalto da Bahia";
-  if (lat >= -12.0 && lat <= -6.0  && lon >= -62.0 && lon <= -56.0) return "Rondônia";
-  if (lat >= -22.0 && lat <= -19.0 && lon >= -52.0 && lon <= -48.0) return "Alta Paulista";
-  if (lat >= -25.0 && lat <= -21.0 && lon >= -54.0 && lon <= -49.0) return "Norte do Paraná";
-  if (lat >= -21.0 && lat <= -17.0 && lon >= -41.5 && lon <= -39.0) return "Espírito Santo";
+// ── IndexedDB / Fila Offline ──
+var _db = null;
+function abrirDB(callback) {
+  if (_db) { callback(_db); return; }
+  var req = indexedDB.open("doutorcafe_db", 1);
+  req.onupgradeneeded = function(e) { var db = e.target.result; if (!db.objectStoreNames.contains("fila")) db.createObjectStore("fila", { keyPath: "id" }); };
+  req.onsuccess = function(e) { _db = e.target.result; callback(_db); };
+  req.onerror = function() { callback(null); };
+}
+function lerFila(callback) {
+  abrirDB(function(db) {
+    if (!db) { callback([]); return; }
+    var tx = db.transaction("fila", "readonly");
+    var req = tx.objectStore("fila").getAll();
+    req.onsuccess = function() { var arr = req.result || []; arr.sort(function(a,b){return a.id-b.id;}); callback(arr); };
+    req.onerror = function() { callback([]); };
+  });
+}
+function adicionarNaFila(fotoBase64, frames, callback) {
+  lerFila(function(fila) {
+    if (fila.length >= FILA_MAX) { alert("A fila já tem "+FILA_MAX+" itens."); if (callback) callback(false); return; }
+    var agora = new Date();
+    var item = { id: Date.now(), foto: fotoBase64, hora: agora.getHours()+":"+String(agora.getMinutes()).padStart(2,"0"), data: agora.getDate()+"/"+(agora.getMonth()+1)+"/"+agora.getFullYear() };
+    if (frames) { item.frames = frames; item.isVideo = true; }
+    abrirDB(function(db) {
+      if (!db) { if (callback) callback(false); return; }
+      var tx = db.transaction("fila", "readwrite");
+      tx.objectStore("fila").add(item);
+      tx.oncomplete = function() { if (callback) callback(true); };
+      tx.onerror = function() { if (callback) callback(false); };
+    });
+  });
+}
+function removerDaFila(id) {
+  abrirDB(function(db) {
+    if (!db) return;
+    var tx = db.transaction("fila", "readwrite");
+    tx.objectStore("fila").delete(id);
+    tx.oncomplete = function() { renderAreaHistorico(); };
+  });
+}
+function limparFila() {
+  lerFila(function(fila) {
+    if (!confirm("Limpar todas as "+fila.length+" fotos da fila?")) return;
+    abrirDB(function(db) {
+      if (!db) return;
+      var tx = db.transaction("fila", "readwrite");
+      tx.objectStore("fila").clear();
+      tx.oncomplete = function() { renderAreaHistorico(); };
+    });
+  });
+}
+function analisarDaFila(id) {
+  if (!navigator.onLine) { alert("Ainda sem sinal."); return; }
+  abrirDB(function(db) {
+    if (!db) return;
+    var tx = db.transaction("fila", "readwrite");
+    var store = tx.objectStore("fila");
+    var req = store.get(id);
+    req.onsuccess = function() {
+      var item = req.result; if (!item) return;
+      store.delete(id);
+      tx.oncomplete = function() {
+        ultimaFotoBase64 = item.foto;
+        document.getElementById("spinner").style.display = "block";
+        document.getElementById("resultado").style.display = "none";
+        renderAreaHistorico();
+        document.getElementById("spinner").scrollIntoView({behavior:"smooth",block:"start"});
+        if (item.isVideo && item.frames) {
+          document.getElementById("spinnerTexto").textContent = "Analisando "+item.frames.length+" ângulos...";
+          document.getElementById("spinnerSub").textContent = "Processando vídeo da fila offline";
+          var bodyV = { frames: item.frames, tipo: "image/jpeg" };
+          if (dadosGPS.regiao) bodyV.regiao = dadosGPS.regiao;
+          if (dadosGPS.altitude) bodyV.altitude = dadosGPS.altitude;
+          fetch("https://doutor-cafe-production.up.railway.app/diagnostico-video",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(bodyV)})
+          .then(function(r){return r.json();}).then(function(data){document.getElementById("spinner").style.display="none";mostrarResultado(data,true);})
+          .catch(function(){document.getElementById("spinner").style.display="none";mostrarErro();});
+        } else {
+          document.getElementById("spinnerTexto").textContent = "Analisando...";
+          document.getElementById("spinnerSub").textContent = "Identificando sintomas e comparando padrões";
+          var bodyF = { imagem: item.foto, tipo: "image/jpeg" };
+          if (dadosGPS.regiao) bodyF.regiao = dadosGPS.regiao;
+          if (dadosGPS.altitude) bodyF.altitude = dadosGPS.altitude;
+          fetch("https://doutor-cafe-production.up.railway.app/diagnostico",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(bodyF)})
+          .then(function(r){return r.json();}).then(function(data){document.getElementById("spinner").style.display="none";mostrarResultado(data,false);})
+          .catch(function(){document.getElementById("spinner").style.display="none";mostrarErro();});
+        }
+      };
+    };
+  });
+}
+
+function renderAreaHistorico() {
+  lerFila(function(fila) {
+    var tituloEl = document.getElementById("tituloSecaoHistorico");
+    var areaEl = document.getElementById("areaHistorico");
+    if (fila.length > 0) {
+      tituloEl.textContent = "📸 Fotos Aguardando Análise";
+      var online = navigator.onLine;
+      var html = '<div class="card-fila"><div class="fila-header"><div class="fila-header-esq"><div class="fila-titulo">📷 Fila Offline</div><div class="fila-sub"><span class="fila-contagem">'+fila.length+'</span> foto'+(fila.length>1?'s':'')+' aguardando sinal</div></div><button class="fila-limpar" onclick="limparFila()">Limpar tudo</button></div>';
+      if (!online) {
+        html += '<div class="offline-banner"><span class="offline-banner-icon">📵</span><span class="offline-banner-txt">Sem internet. As fotos ficam salvas aqui. Quando chegar no sinal, toque na foto para analisar.</span></div>';
+      } else {
+        html += '<div class="offline-banner" style="background:#e8f5e9;margin-bottom:0"><span class="offline-banner-icon">✅</span><span class="offline-banner-txt" style="color:#1b5e20">Internet disponível! Toque em uma foto para analisar agora.</span></div>';
+      }
+      html += '<div class="fila-divisor" style="margin-top:12px"></div><div class="fila-grid">';
+      fila.forEach(function(item,idx) {
+        html += '<div class="fila-item" onclick="analisarDaFila('+item.id+')"><img src="data:image/jpeg;base64,'+item.foto+'" alt="foto '+(idx+1)+'">';
+        html += '<div class="fila-item-overlay"><div class="fila-item-hora">📅 '+item.data+' '+item.hora+'</div><div class="fila-item-tap">'+(online?'▶ Toque para analisar':'⏳ Aguardando sinal')+'</div></div>';
+        html += '<div class="fila-item-num">'+(item.isVideo?'🎥':(idx+1))+'</div>';
+        html += '<button class="fila-item-del" onclick="event.stopPropagation();removerDaFila('+item.id+')" title="Remover">✕</button></div>';
+      });
+      html += '</div></div>';
+      areaEl.innerHTML = html;
+    } else {
+      tituloEl.textContent = "📋 Histórico de Análises";
+      renderHistoricoNaArea(areaEl);
+    }
+  });
+}
+function renderHistoricoNaArea(areaEl) {
+  try {
+    var hist = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
+    if (hist.length === 0) { areaEl.innerHTML = '<div class="card-historico"><div class="hist-vazio">Nenhuma análise ainda. Fotografe uma folha!</div></div>'; return; }
+    var html = '<div class="card-historico"><div class="hist-header"><div class="hist-titulo">📋 Últimas análises</div><button class="hist-limpar" onclick="limparHistorico()">Limpar</button></div><div class="hist-lista">';
+    hist.forEach(function(h) {
+      var thumbHtml = h.foto ? '<img class="hist-thumb" src="data:image/jpeg;base64,'+h.foto+'" alt="foto">' : '<div class="hist-thumb-placeholder">'+(h.emoji||"🌿")+'</div>';
+      var nomes = h.diags ? h.diags.map(function(d){return d.diagnostico.replace(/_/g," ");}).join(", ") : h.diag.replace(/_/g," ");
+      html += '<div class="hist-item">'+thumbHtml+'<div class="hist-info"><div class="hist-nome">'+nomes+'</div><div class="hist-data">'+h.data+(h.regiao?" · "+h.regiao:"")+'</div></div></div>';
+    });
+    html += '</div></div>';
+    areaEl.innerHTML = html;
+  } catch(e) { areaEl.innerHTML = '<div class="card-historico"><div class="hist-vazio">Histórico não disponível.</div></div>'; }
+}
+function limparHistorico() {
+  try { localStorage.removeItem(HIST_KEY); } catch(e) {}
+  renderAreaHistorico();
+}
+
+// ── CLIMA ──
+function calcularRiscoFerrugem(temp, umidade, chuva) {
+  var pontos = 0;
+  if (temp>=18&&temp<=22) pontos+=3; else if (temp>=15&&temp<=25) pontos+=1;
+  if (umidade>=80) pontos+=3; else if (umidade>=70) pontos+=2; else if (umidade>=60) pontos+=1;
+  if (chuva>5) pontos+=2; else if (chuva>0) pontos+=1;
+  if (pontos>=7) return {nivel:"critico",txt:"Risco Crítico de Ferrugem",desc:"Condições ideais para infecção. Aplique fungicida imediatamente.",icon:"🔴"};
+  if (pontos>=5) return {nivel:"alto",txt:"Risco Alto de Ferrugem",desc:"Alta umidade e temperatura favorável. Aplique fungicida preventivo.",icon:"🟠"};
+  if (pontos>=3) return {nivel:"medio",txt:"Risco Médio de Ferrugem",desc:"Condições parcialmente favoráveis. Monitore as folhas.",icon:"🟡"};
+  return {nivel:"baixo",txt:"Risco Baixo de Ferrugem",desc:"Condições desfavoráveis para ferrugem hoje.",icon:"🟢"};
+}
+function obterClima(lat, lon) {
+  fetch("https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+"&current=temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m&timezone=America/Sao_Paulo")
+  .then(function(r){return r.json();}).then(function(d) {
+    var c=d.current,temp=Math.round(c.temperature_2m),umidade=Math.round(c.relative_humidity_2m),chuva=c.precipitation||0,wcode=c.weather_code;
+    var climaIcon=wcode<=1?"☀️":wcode<=3?"⛅":wcode<=49?"🌫️":wcode<=67?"🌧️":wcode<=77?"❄️":wcode<=82?"🌦️":"⛈️";
+    var risco=calcularRiscoFerrugem(temp,umidade,chuva);
+    var html='<div class="clima-topo"><span style="font-size:13px;font-weight:600;color:var(--marrom)">'+climaIcon+' Agora</span><span style="font-size:11px;color:var(--cinza)">Atualizado agora</span></div>';
+    html+='<div class="clima-dados"><div class="clima-item"><div class="clima-valor">'+temp+'°C</div><div class="clima-label">Temperatura</div></div>';
+    html+='<div class="clima-item"><div class="clima-valor">'+umidade+'%</div><div class="clima-label">Umidade</div></div>';
+    html+='<div class="clima-item"><div class="clima-valor">'+chuva.toFixed(1)+'mm</div><div class="clima-label">Chuva</div></div></div>';
+    html+='<div class="risco-box risco-'+risco.nivel+'"><span class="risco-icon">'+risco.icon+'</span><div class="risco-info"><div class="risco-titulo">'+risco.txt+'</div><div class="risco-desc">'+risco.desc+'</div></div></div>';
+    document.getElementById("cardClima").innerHTML=html;
+  }).catch(function(){document.getElementById("cardClima").innerHTML='<div class="clima-topo"><span style="font-size:13px;color:var(--cinza)">Clima não disponível</span></div>';});
+}
+
+// ── CALENDÁRIO ──
+var CALENDARIO = {
+  0:{fase:"granacao",faseTxt:"🟢 Granação",alertas:[{nivel:"alto",txt:"🟠 Ferrugem — alta umidade favorece infecção"},{nivel:"alto",txt:"🪲 Bicho-mineiro — pico populacional"},{nivel:"medio",txt:"🟣 Mancha aureolada — ventos e chuvas"}],acoes:["✅ Aplicar fungicida preventivo para ferrugem","✅ Monitorar folhas para trilhas de bicho-mineiro","✅ Adubação de cobertura — N e K parcelados"]},
+  1:{fase:"granacao",faseTxt:"🟢 Granação",alertas:[{nivel:"alto",txt:"🟠 Ferrugem — período crítico"},{nivel:"alto",txt:"🪲 Bicho-mineiro — alta incidência"},{nivel:"medio",txt:"🫙 Antracnose — chuvas intensas"}],acoes:["✅ Reaplicar fungicida (21 dias após última aplicação)","✅ Controle de bicho-mineiro se >30% folhas com minas","✅ Verificar adubação fosfatada"]},
+  2:{fase:"maturacao",faseTxt:"🔴 Maturação",alertas:[{nivel:"alto",txt:"🟠 Ferrugem — frutos pesados reduzem resistência"},{nivel:"medio",txt:"🕳️ Broca — monitorar frutos"},{nivel:"medio",txt:"🪲 Bicho-mineiro — continua ativo"}],acoes:["✅ Monitorar broca nos frutos","✅ Aplicar fungicida se necessário","✅ Preparar equipamentos para colheita"]},
+  3:{fase:"colheita",faseTxt:"☕ Colheita",alertas:[{nivel:"medio",txt:"🕳️ Broca — pico nos frutos maduros"},{nivel:"medio",txt:"🟠 Ferrugem — desfolha pós-colheita"},{nivel:"alto",txt:"⚠️ Colha no ponto certo — 80% frutos verdes = perda de 20 sacas a cada 100"}],acoes:["✅ Colheita seletiva — cereja e passa separados","✅ Controle biológico da broca (Beauveria bassiana)","✅ Processar café rapidamente após colheita","⚠️ Evite colheita antecipada — prejuízo no peso e qualidade"]},
+  4:{fase:"colheita",faseTxt:"☕ Colheita",alertas:[{nivel:"medio",txt:"🕳️ Broca — reinfestação em frutos remanescentes"},{nivel:"medio",txt:"🟠 Ferrugem — lesões visíveis pós-colheita"},{nivel:"alto",txt:"⚠️ 50% frutos verdes = perda de 13 sacas a cada 100"}],acoes:["✅ Recolher todos os frutos caídos (repasse)","✅ Aplicar fungicida curativo pós-colheita","✅ Iniciar poda de formação e limpeza","⚠️ Aguarde ponto ideal: mínimo 80% cereja/passa"]},
+  5:{fase:"pos",faseTxt:"🌿 Pós-colheita",alertas:[{nivel:"medio",txt:"🟠 Ferrugem — lesões tardias"},{nivel:"medio",txt:"🟡 Deficiência de Mg — período seco"}],acoes:["✅ Realizar poda e esqueletamento se necessário","✅ Calagem e adubação de solo","✅ Análise de solo para planejar próxima safra"]},
+  6:{fase:"pos",faseTxt:"🌿 Pós-colheita",alertas:[{nivel:"medio",txt:"🟫 Ácaro vermelho — período seco favorece"},{nivel:"medio",txt:"🟡 Deficiências nutricionais — solo seco"}],acoes:["✅ Monitorar ácaros (folha bronzeada)","✅ Adubação fosfatada e potássica","✅ Irrigação se disponível"]},
+  7:{fase:"repouso",faseTxt:"😴 Repouso vegetativo",alertas:[{nivel:"medio",txt:"🟫 Ácaro vermelho — pico em período seco"},{nivel:"medio",txt:"🤍 Cochonilha — favorecida pelo estresse hídrico"}],acoes:["✅ Aplicar acaricida se necessário","✅ Adubação foliar de micronutrientes","✅ Revisar sistema de irrigação"]},
+  8:{fase:"florada",faseTxt:"🌸 Florada",alertas:[{nivel:"alto",txt:"🌸 NÃO aplicar inseticidas na florada — proteger abelhas"},{nivel:"medio",txt:"🟠 Ferrugem — início das chuvas"},{nivel:"medio",txt:"⚫ Phoma — regiões acima de 900m"}],acoes:["⚠️ EVITAR agrotóxicos durante a florada","✅ Fungicida preventivo ANTES da florada","✅ Adubação nitrogenada de cobertura"]},
+  9:{fase:"florada",faseTxt:"🌸 Florada/Chumbinho",alertas:[{nivel:"alto",txt:"🟠 Ferrugem — chuvas reiniciadas, risco alto"},{nivel:"alto",txt:"🪲 Bicho-mineiro — nova geração"},{nivel:"medio",txt:"🟣 Aureolada — ventos e chuvas"}],acoes:["✅ Aplicar fungicida sistêmico para ferrugem","✅ Monitorar bicho-mineiro nas folhas novas","✅ Adubação NPK completa"]},
+  10:{fase:"granacao",faseTxt:"🟢 Granação",alertas:[{nivel:"alto",txt:"🟠 Ferrugem — período de máximo risco"},{nivel:"alto",txt:"🪲 Bicho-mineiro — alta infestação"},{nivel:"medio",txt:"⚫ Phoma — em regiões altas"}],acoes:["✅ Reaplicar fungicida (intervalo 21 dias)","✅ Controle de bicho-mineiro","✅ Monitorar deficiência de boro nos ponteiros"]},
+  11:{fase:"granacao",faseTxt:"🟢 Granação",alertas:[{nivel:"alto",txt:"🟠 Ferrugem — frutos em desenvolvimento"},{nivel:"alto",txt:"🪲 Bicho-mineiro — pico"},{nivel:"medio",txt:"🟣 Aureolada — ventos de verão"}],acoes:["✅ Fungicida preventivo — não deixar passar intervalo","✅ Adubação potássica para granação","✅ Monitorar broca nos primeiros frutos"]}
+};
+function renderCalendario() {
+  var mes=new Date().getMonth(),cal=CALENDARIO[mes];
+  var html='<div class="cal-header"><div class="cal-mes">📅 '+MESES[mes]+'</div><div class="cal-fase fase-'+cal.fase+'">'+cal.faseTxt+'</div></div>';
+  html+='<div class="cal-divisor"></div><div class="cal-alertas"><h4>⚠️ Alertas deste mês</h4>';
+  cal.alertas.forEach(function(a){html+='<div class="alerta-item"><span class="alerta-'+a.nivel+'">'+a.txt+'</span></div>';});
+  html+='</div><div class="cal-divisor"></div><div class="cal-acoes"><h4>📋 O que fazer agora</h4>';
+  cal.acoes.forEach(function(a){html+='<div class="acao-item">'+a+'</div>';});
+  html+='</div>';
+  document.getElementById("cardCalendario").innerHTML=html;
+}
+
+function salvarHistorico(diags, fotoBase64, regiao) {
+  try {
+    var hist=JSON.parse(localStorage.getItem(HIST_KEY)||"[]");
+    var agora=new Date();
+    var data=agora.getDate()+"/"+(agora.getMonth()+1)+"/"+agora.getFullYear()+" "+agora.getHours()+":"+String(agora.getMinutes()).padStart(2,"0");
+    var primeiro=diags[0];
+    hist.unshift({diag:primeiro.diagnostico,emoji:EMOJIS[primeiro.diagnostico]||"🌿",diags:diags,data:data,regiao:regiao||"",foto:fotoBase64||null});
+    if (hist.length>10) hist=hist.slice(0,10);
+    localStorage.setItem(HIST_KEY,JSON.stringify(hist));
+  } catch(e) {}
+  renderAreaHistorico();
+}
+
+// ── GPS ──
+var dadosGPS={lat:null,lon:null,regiao:null,altitude:null};
+function identificarRegiao(lat,lon) {
+  if (lat>=-20.5&&lat<=-15.0&&lon>=-50.0&&lon<=-44.0) return "Cerrado Mineiro";
+  if (lat>=-22.5&&lat<=-19.5&&lon>=-46.5&&lon<=-43.5) return "Sul de Minas";
+  if (lat>=-21.5&&lat<=-19.0&&lon>=-48.5&&lon<=-46.0) return "Mogiana";
+  if (lat>=-20.0&&lat<=-17.0&&lon>=-42.5&&lon<=-40.0) return "Matas de Minas";
+  if (lat>=-15.0&&lat<=-10.0&&lon>=-41.5&&lon<=-38.5) return "Chapada Diamantina";
+  if (lat>=-12.0&&lat<=-8.0&&lon>=-40.0&&lon<=-36.0) return "Planalto da Bahia";
+  if (lat>=-12.0&&lat<=-6.0&&lon>=-62.0&&lon<=-56.0) return "Rondônia";
+  if (lat>=-22.0&&lat<=-19.0&&lon>=-52.0&&lon<=-48.0) return "Alta Paulista";
+  if (lat>=-25.0&&lat<=-21.0&&lon>=-54.0&&lon<=-49.0) return "Norte do Paraná";
+  if (lat>=-21.0&&lat<=-17.0&&lon>=-41.5&&lon<=-39.0) return "Espírito Santo";
   return "Região Cafeeira";
 }
 function obterGPS() {
-  if (!navigator.geolocation) { document.getElementById("regiaoTag").textContent = "📍 GPS não disponível"; return; }
-  navigator.geolocation.getCurrentPosition(
-    function(pos) {
-      dadosGPS.lat = pos.coords.latitude;
-      dadosGPS.lon = pos.coords.longitude;
-      dadosGPS.altitude = pos.coords.altitude ? Math.round(pos.coords.altitude) : null;
-      dadosGPS.regiao = identificarRegiao(dadosGPS.lat, dadosGPS.lon);
-      var tag = "📍 " + dadosGPS.regiao;
-      if (dadosGPS.altitude) tag += " · " + dadosGPS.altitude + "m";
-      document.getElementById("regiaoTag").textContent = tag;
-    },
-    function() { document.getElementById("regiaoTag").textContent = "📍 Localização não obtida"; },
-    { timeout: 8000, enableHighAccuracy: false }
-  );
+  if (!navigator.geolocation) { document.getElementById("regiaoTag").textContent="📍 GPS não disponível"; return; }
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    dadosGPS.lat=pos.coords.latitude; dadosGPS.lon=pos.coords.longitude;
+    dadosGPS.altitude=pos.coords.altitude?Math.round(pos.coords.altitude):null;
+    dadosGPS.regiao=identificarRegiao(dadosGPS.lat,dadosGPS.lon);
+    var tag="📍 "+dadosGPS.regiao; if (dadosGPS.altitude) tag+=" · "+dadosGPS.altitude+"m";
+    document.getElementById("regiaoTag").textContent=tag;
+    obterClima(dadosGPS.lat,dadosGPS.lon);
+  }, function() {
+    document.getElementById("regiaoTag").textContent="📍 Localização não obtida";
+    document.getElementById("cardClima").innerHTML='<div class="clima-topo"><span style="font-size:13px;color:var(--cinza)">Ative o GPS para ver o clima</span></div>';
+  }, {timeout:8000,enableHighAccuracy:false});
 }
-obterGPS();
 
-document.getElementById("btnCam").addEventListener("click", function() { document.getElementById("cam").click(); });
-document.getElementById("btnGal").addEventListener("click", function() { document.getElementById("gal").click(); });
-document.getElementById("cam").addEventListener("change", function(e) { if (e.target.files[0]) processar(e.target.files[0]); });
-document.getElementById("gal").addEventListener("change", function(e) { if (e.target.files[0]) processar(e.target.files[0]); });
+// ── CALCULADORA FUNGICIDA ──
+function buildCalcFungicida(fungicidas, diagIdx) {
+  if (!fungicidas||fungicidas.length===0) return "";
+  var html='<div class="calc-box"><div class="calc-titulo">🧪 Calcular Dosagem</div>';
+  fungicidas.forEach(function(f,fi) {
+    var badgeClass="calc-tipo-"+(f.tipo||"protetor");
+    var badgeTxt=f.tipo==="sistemico"?"Sistêmico":f.tipo==="biologico"?"Biológico":f.tipo==="acaricida"?"Acaricida":f.tipo==="inseticida"?"Inseticida":"Protetor";
+    var inputId="calc_"+diagIdx+"_"+fi;
+    var resTanque=(f.proporcao_por_litro*20).toFixed(1);
+    html+='<div class="calc-produto"><div class="calc-produto-nome">🧴 '+f.nome+' <span class="calc-tipo-badge '+badgeClass+'">'+badgeTxt+'</span></div>';
+    html+='<div class="calc-inputs">';
+    html+='<div class="calc-input-group"><label>Área (hectares)</label><input type="number" id="'+inputId+'_ha" value="1" min="0.1" step="0.1" oninput="calcular(\''+inputId+'\','+f.dose_min+','+f.dose_max+','+f.proporcao_por_litro+',\''+f.unidade+'\',\''+(f.unidade_proporcao||'g')+'\')"></div>';
+    html+='<div class="calc-input-group"><label>Tanque (litros)</label><input type="number" id="'+inputId+'_tanque" value="20" min="1" step="1" oninput="calcular(\''+inputId+'\','+f.dose_min+','+f.dose_max+','+f.proporcao_por_litro+',\''+f.unidade+'\',\''+(f.unidade_proporcao||'g')+'\')"></div>';
+    html+='</div><div class="calc-resultado" id="'+inputId+'_res">';
+    html+='<div class="calc-resultado-linha"><span class="calc-resultado-label">Dose total no hectare</span><span class="calc-resultado-valor">'+f.dose_min+'–'+f.dose_max+' '+f.unidade+'</span></div>';
+    html+='<div class="calc-resultado-linha"><span class="calc-resultado-label">Por tanque de 20L</span><span class="calc-resultado-valor">'+resTanque+' '+(f.unidade_proporcao||'g')+'</span></div>';
+    html+='<div class="calc-aviso">⚠️ Confirme sempre no rótulo do produto comprado</div>';
+    html+='</div></div>';
+  });
+  html+='</div>';
+  return html;
+}
+function calcular(inputId,doseMin,doseMax,propPorLitro,unidade,unidadeProp) {
+  var haEl=document.getElementById(inputId+"_ha"),tanqueEl=document.getElementById(inputId+"_tanque"),resEl=document.getElementById(inputId+"_res");
+  if (!haEl||!tanqueEl||!resEl) return;
+  var ha=parseFloat(haEl.value)||1,tanque=parseFloat(tanqueEl.value)||20;
+  resEl.innerHTML=
+    '<div class="calc-resultado-linha"><span class="calc-resultado-label">Dose total ('+ha+' ha)</span><span class="calc-resultado-valor">'+(doseMin*ha).toFixed(2)+'–'+(doseMax*ha).toFixed(2)+' '+unidade+'</span></div>'+
+    '<div class="calc-resultado-linha"><span class="calc-resultado-label">Por tanque de '+tanque+'L</span><span class="calc-resultado-valor">'+(propPorLitro*tanque).toFixed(1)+' '+unidadeProp+'</span></div>'+
+    '<div class="calc-aviso">⚠️ Confirme sempre no rótulo do produto comprado</div>';
+}
 
-function processar(file) {
-  document.getElementById("spinner").style.display = "block";
-  document.getElementById("resultado").style.display = "none";
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    var b64 = e.target.result.split(",")[1];
-    var body = { imagem: b64, tipo: file.type };
-    if (dadosGPS.regiao) body.regiao = dadosGPS.regiao;
-    if (dadosGPS.altitude) body.altitude = dadosGPS.altitude;
-    fetch("https://doutor-cafe-production.up.railway.app/diagnostico", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(body)
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      document.getElementById("spinner").style.display = "none";
-      mostrarResultado(data);
-    })
-    .catch(function() {
-      document.getElementById("spinner").style.display = "none";
-      var div = document.getElementById("resultado");
-      div.style.display = "block";
-      div.innerHTML = '<div class="card-resultado"><div class="acao-box"><p>⚠️ Erro ao analisar. Verifique sua conexão e tente novamente.</p></div><div class="btns-resultado"><button class="btn-nova" onclick="resetar()">📷 Tentar novamente</button></div></div>';
-    });
+// ── PROCESSAR ARQUIVOS ──
+function processar(file, isVideo) {
+  document.getElementById("spinner").style.display="block";
+  document.getElementById("resultado").style.display="none";
+  document.getElementById("spinnerTexto").textContent="Analisando...";
+  document.getElementById("spinnerSub").textContent="Identificando sintomas e comparando padrões";
+  var reader=new FileReader();
+  reader.onload=function(e) {
+    var b64=e.target.result.split(",")[1]; ultimaFotoBase64=b64;
+    if (!navigator.onLine) {
+      document.getElementById("spinner").style.display="none";
+      adicionarNaFila(b64,null,function(ok){if(ok){renderAreaHistorico();document.getElementById("areaHistorico").scrollIntoView({behavior:"smooth",block:"start"});}});
+      return;
+    }
+    var body={imagem:b64,tipo:file.type};
+    if (dadosGPS.regiao) body.regiao=dadosGPS.regiao;
+    if (dadosGPS.altitude) body.altitude=dadosGPS.altitude;
+    fetch("https://doutor-cafe-production.up.railway.app/diagnostico",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(data){document.getElementById("spinner").style.display="none";mostrarResultado(data,isVideo);})
+    .catch(function(){document.getElementById("spinner").style.display="none";adicionarNaFila(b64,null,function(ok){if(ok){renderAreaHistorico();document.getElementById("areaHistorico").scrollIntoView({behavior:"smooth",block:"start"});alert("Sem conexão. Foto salva na fila!");}});});
   };
   reader.readAsDataURL(file);
 }
-
-function mostrarResultado(data) {
-  var div = document.getElementById("resultado");
-  div.style.display = "block";
-  var diag = data.diagnostico || "saudavel";
-  var emoji = EMOJIS[diag] || "🌿";
-  var cat = CATEGORIAS[diag] || "Análise";
-  var nomeVoz = NOMES_VOZ[diag] || diag;
-  var estagio = data.estagio || 1;
-  var confianca = data.confianca || "media";
-  var visto = data.visto || "";
-  var acao = data.acao || "Tente novamente.";
-  var nome = diag.replace(/_/g, " ");
-  var badgeClass = "badge-confianca-" + confianca;
-  var badgeTexto = confianca === "alta" ? "✓ Alta confiança" : confianca === "media" ? "~ Média confiança" : "! Baixa confiança";
-  var barras = "";
-  for (var i = 1; i <= 5; i++) {
-    var cor = i <= estagio ? CORES_ESTAGIO[estagio - 1] : "#e8e8e8";
-    barras += '<div class="estagio-seg" style="background:' + cor + '"></div>';
+function processarSolo(file) {
+  document.getElementById("spinner").style.display="block";
+  document.getElementById("resultado").style.display="none";
+  document.getElementById("spinnerTexto").textContent="Lendo laudo de solo...";
+  document.getElementById("spinnerSub").textContent="Interpretando valores e calculando recomendações";
+  var reader=new FileReader();
+  reader.onload=function(e) {
+    var b64=e.target.result.split(",")[1]; ultimaFotoBase64=b64;
+    var body={imagem:b64,tipo:file.type};
+    if (dadosGPS.regiao) body.regiao=dadosGPS.regiao;
+    fetch("https://doutor-cafe-production.up.railway.app/analise-solo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(data){document.getElementById("spinner").style.display="none";mostrarResultadoSolo(data);})
+    .catch(function(){document.getElementById("spinner").style.display="none";mostrarErro();});
+  };
+  reader.readAsDataURL(file);
+}
+function processarDaninha(file) {
+  document.getElementById("spinner").style.display="block";
+  document.getElementById("resultado").style.display="none";
+  document.getElementById("spinnerTexto").textContent="Identificando planta daninha...";
+  document.getElementById("spinnerSub").textContent="Lendo o que ela revela sobre o seu solo";
+  var reader=new FileReader();
+  reader.onload=function(e) {
+    var b64=e.target.result.split(",")[1]; ultimaFotoBase64=b64;
+    var body={imagem:b64,tipo:file.type};
+    if (dadosGPS.regiao) body.regiao=dadosGPS.regiao;
+    fetch("https://doutor-cafe-production.up.railway.app/identifica-daninha",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(data){document.getElementById("spinner").style.display="none";mostrarResultadoDaninha(data);})
+    .catch(function(){document.getElementById("spinner").style.display="none";mostrarErro();});
+  };
+  reader.readAsDataURL(file);
+}
+function processarVideo(file) {
+  document.getElementById("spinner").style.display="block";
+  document.getElementById("resultado").style.display="none";
+  document.getElementById("spinnerTexto").textContent="Extraindo frames do vídeo...";
+  document.getElementById("spinnerSub").textContent="Analisando múltiplos ângulos";
+  var video=document.createElement("video"),canvas=document.getElementById("canvas"),ctx=canvas.getContext("2d"),url=URL.createObjectURL(file);
+  video.src=url; video.muted=true;
+  video.addEventListener("loadedmetadata",function() {
+    var duration=video.duration,frames=[],tempos=[duration*0.15,duration*0.35,duration*0.60,duration*0.85],idx=0;
+    function capturarFrame(){if(idx>=tempos.length){URL.revokeObjectURL(url);enviarFrames(frames);return;}video.currentTime=tempos[idx];}
+    video.addEventListener("seeked",function(){canvas.width=640;canvas.height=480;ctx.drawImage(video,0,0,640,480);var frameB64=canvas.toDataURL("image/jpeg",0.7).split(",")[1];if(idx===0)ultimaFotoBase64=frameB64;frames.push(frameB64);idx++;capturarFrame();});
+    capturarFrame();
+  });
+  video.load();
+}
+function enviarFrames(frames) {
+  if (!navigator.onLine) {
+    document.getElementById("spinner").style.display="none";
+    adicionarNaFila(frames[0],frames,function(ok){if(ok){renderAreaHistorico();document.getElementById("areaHistorico").scrollIntoView({behavior:"smooth",block:"start"});}});
+    return;
   }
-  var textoVoz = nomeVoz + ". " + acao;
-  var html = '<div class="card-resultado">';
-  html += '<div class="card-topo"><span class="card-emoji">' + emoji + '</span>';
-  html += '<div class="card-titulo"><h2>' + nome + '</h2><div class="categoria">' + cat + '</div></div></div>';
-  html += '<div class="badges">';
-  html += '<span class="badge badge-estagio">📊 Estágio ' + estagio + '/5</span>';
-  html += '<span class="badge ' + badgeClass + '">' + badgeTexto + '</span>';
-  if (dadosGPS.regiao) html += '<span class="badge badge-regiao">📍 ' + dadosGPS.regiao + '</span>';
-  html += '</div>';
-  if (visto) html += '<div class="visto-box"><span class="visto-icon">👁️</span><p>"' + visto + '"</p></div>';
-  html += '<div class="divisor"></div>';
-  html += '<div class="estagio-box" style="padding-top:16px"><h3>Gravidade</h3><div class="estagio-bar">' + barras + '</div></div>';
-  html += '<div class="divisor"></div>';
-  html += '<div class="acao-box"><h3>O que fazer agora</h3><p>' + acao + '</p></div>';
-  html += '<div class="btns-resultado">';
-  html += '<button class="btn-voz" onclick="falar(\'' + textoVoz.replace(/'/g, "\\'") + '\')">🔊 Ouvir</button>';
-  html += '<button class="btn-nova" onclick="resetar()">📷 Nova análise</button>';
-  html += '</div></div>';
-  div.innerHTML = html;
-  falar(textoVoz);
+  document.getElementById("spinnerTexto").textContent="Analisando "+frames.length+" ângulos...";
+  var body={frames:frames,tipo:"image/jpeg"};
+  if (dadosGPS.regiao) body.regiao=dadosGPS.regiao;
+  if (dadosGPS.altitude) body.altitude=dadosGPS.altitude;
+  fetch("https://doutor-cafe-production.up.railway.app/diagnostico-video",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+  .then(function(r){return r.json();}).then(function(data){document.getElementById("spinner").style.display="none";mostrarResultado(data,true);})
+  .catch(function(){document.getElementById("spinner").style.display="none";adicionarNaFila(frames[0],frames,function(ok){if(ok){renderAreaHistorico();document.getElementById("areaHistorico").scrollIntoView({behavior:"smooth",block:"start"});alert("Sem conexão. Vídeo salvo na fila!");}});});
 }
 
+// ── COMPARTILHAR ──
+function compartilhar(diagsJson,regiao) {
+  var diags=JSON.parse(diagsJson),texto="🌿 *Doutor Café — Diagnóstico*\n\n";
+  if (regiao) texto+="📍 "+regiao+"\n\n";
+  diags.forEach(function(d){texto+=(EMOJIS[d.diagnostico]||"🌿")+" *"+(NOMES_VOZ[d.diagnostico]||d.diagnostico)+"*\n📋 "+d.acao+"\n\n";});
+  texto+="_Diagnóstico realizado pelo app Doutor Café_";
+  window.open("https://wa.me/?text="+encodeURIComponent(texto),"_blank");
+}
+
+// ── MOSTRAR RESULTADOS ──
+function mostrarResultado(data, isVideo) {
+  var div=document.getElementById("resultado"); div.style.display="block";
+  var diags=data.diagnosticos||[{diagnostico:data.diagnostico||"saudavel",estagio:data.estagio||1,confianca:data.confianca||"media",visto:data.visto||"",acao:data.acao||"Tente novamente.",fungicidas:[]}];
+  var regiao=dadosGPS.regiao||"";
+  salvarHistorico(diags,ultimaFotoBase64,regiao);
+  var thumbHtml=ultimaFotoBase64?'<img class="multi-foto" src="data:image/jpeg;base64,'+ultimaFotoBase64+'" alt="foto">':"<div class='multi-foto-placeholder'>🌿</div>";
+  var qtd=diags.length>1?diags.length+" problemas detectados":"1 diagnóstico";
+  var html='<div class="card-resultado"><div class="multi-header">'+thumbHtml+'<div class="multi-titulo"><h3>Resultado da Análise</h3><p>'+qtd;
+  if (regiao) html+=' · 📍 '+regiao;
+  if (isVideo) html+=' · 🎥 Vídeo';
+  html+='</p></div></div>';
+  diags.forEach(function(d,diagIdx) {
+    var diag=d.diagnostico||"saudavel",estagio=d.estagio||1,confianca=d.confianca||"media";
+    var badgeTexto=confianca==="alta"?"✓ Alta":confianca==="media"?"~ Média":"! Baixa";
+    var barras=""; for(var i=1;i<=5;i++) barras+='<div class="diag-seg" style="background:'+(i<=estagio?CORES_ESTAGIO[estagio-1]:"#e8e8e8")+'"></div>';
+    html+='<div class="diag-item"><div class="diag-item-topo"><span style="font-size:28px">'+(EMOJIS[diag]||"🌿")+'</span><div><div class="diag-nome">'+diag.replace(/_/g," ")+'</div><div class="diag-cat">'+(CATEGORIAS[diag]||"Análise")+'</div></div></div>';
+    html+='<div class="diag-badges"><span class="badge badge-estagio">📊 Estágio '+estagio+'/5</span><span class="badge badge-confianca-'+confianca+'">'+badgeTexto+' confiança</span></div>';
+    html+='<div class="diag-bar">'+barras+'</div>';
+    if (d.visto) html+='<div class="diag-visto">"'+d.visto+'"</div>';
+    html+='<div class="diag-acao">'+(d.acao||"")+'</div>';
+    if (d.fungicidas&&d.fungicidas.length>0) html+=buildCalcFungicida(d.fungicidas,diagIdx);
+    html+='</div>';
+  });
+  var textoVoz=diags.map(function(d){return(NOMES_VOZ[d.diagnostico]||d.diagnostico)+". "+d.acao;}).join(". ");
+  html+='<div class="btns-resultado"><button class="btn-voz" onclick="falar(\''+textoVoz.replace(/'/g,"\\'").replace(/\n/g," ")+'\')">🔊 Ouvir</button>';
+  html+='<button class="btn-share" onclick="compartilhar(\''+JSON.stringify(diags).replace(/'/g,"\\'")+'\',\''+regiao+'\')">📤 WhatsApp</button>';
+  html+='<button class="btn-nova" onclick="resetar()">📷 Nova</button></div></div>';
+  div.innerHTML=html; falar(textoVoz); div.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+function mostrarResultadoSolo(data) {
+  var div=document.getElementById("resultado"); div.style.display="block";
+  var acao=data.acao||"Consulte um agrônomo para mais detalhes.";
+  var textoVoz="Análise de solo. "+acao;
+  var thumbHtml=ultimaFotoBase64?'<img class="card-foto-thumb" src="data:image/jpeg;base64,'+ultimaFotoBase64+'" alt="laudo">':"<div class='card-foto-thumb-placeholder'>🧪</div>";
+  var html='<div class="card-resultado"><div class="card-topo">'+thumbHtml+'<div class="card-titulo"><h2>Análise de Solo</h2><div class="categoria">Recomendação para Café</div></div></div>';
+  html+='<div class="badges"><span class="badge badge-solo">🌱 Laudo Interpretado</span>';
+  if (dadosGPS.regiao) html+='<span class="badge badge-regiao">📍 '+dadosGPS.regiao+'</span>';
+  html+='</div>';
+  if (data.valores) {
+    html+='<div class="solo-grid">';
+    for (var k in data.valores) { var v=data.valores[k],sc=v.status==="ok"?"solo-ok":v.status==="baixo"?"solo-baixo":"solo-alto",st=v.status==="ok"?"✓ Adequado":v.status==="baixo"?"↓ Baixo":"↑ Alto"; html+='<div class="solo-item"><div class="solo-label">'+k+'</div><div class="solo-valor">'+v.valor+'</div><div class="solo-status '+sc+'">'+st+'</div></div>'; }
+    html+='</div>';
+  }
+  html+='<div class="divisor"></div><div class="acao-box"><h3>Recomendação</h3><p>'+acao+'</p></div>';
+  html+='<div class="btns-resultado"><button class="btn-voz" onclick="falar(\''+textoVoz.replace(/'/g,"\\'")+'\')">🔊 Ouvir</button><button class="btn-nova" onclick="resetar()">📷 Nova análise</button></div></div>';
+  div.innerHTML=html; falar(textoVoz); div.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+function mostrarResultadoDaninha(data) {
+  var div=document.getElementById("resultado"); div.style.display="block";
+  var nome=data.nome||"Planta não identificada",indicador=data.indicador||"",acao=data.acao||"";
+  var alertaClass="daninha-alerta-compactado";
+  if (indicador.indexOf("cido")>-1||indicador.indexOf("ACIDO")>-1) alertaClass="daninha-alerta-acido";
+  else if (indicador.indexOf("rtil")>-1||indicador.indexOf("fertil")>-1) alertaClass="daninha-alerta-fertil";
+  else if (indicador.indexOf("umidade")>-1||indicador.indexOf("encharcado")>-1) alertaClass="daninha-alerta-umidade";
+  else if (indicador.indexOf("degradado")>-1||indicador.indexOf("calcio")>-1) alertaClass="daninha-alerta-degradado";
+  else if (indicador.indexOf("magnesio")>-1||indicador.indexOf("Mg")>-1) alertaClass="daninha-alerta-mag";
+  var textoVoz="Planta identificada: "+nome+". "+indicador+". "+acao;
+  var thumbHtml=ultimaFotoBase64?'<img class="card-foto-thumb" src="data:image/jpeg;base64,'+ultimaFotoBase64+'" alt="planta">':"<div class='card-foto-thumb-placeholder'>🌾</div>";
+  var html='<div class="card-resultado"><div class="card-topo">'+thumbHtml+'<div class="card-titulo"><h2>'+nome+'</h2><div class="categoria">Planta Daninha Indicadora</div></div></div>';
+  html+='<div class="badges"><span class="badge badge-daninha">🌾 Leitura do Solo</span>';
+  if (dadosGPS.regiao) html+='<span class="badge badge-regiao">📍 '+dadosGPS.regiao+'</span>';
+  html+='</div>';
+  html+='<div class="daninha-alerta '+alertaClass+'"><div class="daninha-alerta-titulo">🔍 '+indicador+'</div><div class="daninha-alerta-desc">'+acao+'</div></div>';
+  html+='<div class="btns-resultado"><button class="btn-voz" onclick="falar(\''+textoVoz.replace(/'/g,"\\'")+'\')">🔊 Ouvir</button><button class="btn-nova" onclick="resetar()">📷 Nova análise</button></div></div>';
+  div.innerHTML=html; falar(textoVoz); div.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
+function mostrarErro() {
+  var div=document.getElementById("resultado"); div.style.display="block";
+  div.innerHTML='<div class="card-resultado"><div class="acao-box"><p>⚠️ Erro ao analisar. Verifique sua conexão e tente novamente.</p></div><div class="btns-resultado"><button class="btn-nova" onclick="resetar()">📷 Tentar novamente</button></div></div>';
+}
+
+// ── VOZ ──
 function falar(texto) {
-  if (window.speechSynthesis) {
-    window.speechSynthesis.cancel();
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  function executarFala(vozes) {
     var msg = new SpeechSynthesisUtterance(texto);
-    msg.lang = "pt-BR";
-    msg.rate = 0.85;
+    msg.lang = "pt-BR"; msg.rate = 1.1; msg.pitch = 1.0;
+    var melhor = vozes.find(function(v){ return v.name.indexOf("Google") > -1 && v.lang === "pt-BR"; });
+    if (!melhor) melhor = vozes.find(function(v){ return v.name.indexOf("Francisca") > -1; });
+    if (!melhor) melhor = vozes.find(function(v){ return v.name.indexOf("Luciana") > -1; });
+    if (!melhor) melhor = vozes.find(function(v){ return v.lang === "pt-BR" && v.localService; });
+    if (!melhor) melhor = vozes.find(function(v){ return v.lang === "pt-BR"; });
+    if (!melhor) melhor = vozes.find(function(v){ return v.lang.startsWith("pt"); });
+    if (melhor) msg.voice = melhor;
     window.speechSynthesis.speak(msg);
   }
+  var vozes = window.speechSynthesis.getVoices();
+  if (vozes.length > 0) { executarFala(vozes); }
+  else { window.speechSynthesis.onvoiceschanged = function() { executarFala(window.speechSynthesis.getVoices()); window.speechSynthesis.onvoiceschanged = null; }; }
 }
 
-function resetar() {
-  document.getElementById("resultado").style.display = "none";
-  document.getElementById("cam").value = "";
-  document.getElementById("gal").value = "";
-  window.scrollTo(0, 0);
+function resetar() { ultimaFotoBase64=null; document.getElementById("resultado").style.display="none"; window.scrollTo(0,0); }
+
+function enviarEmail() {
+  var assunto="Contato via app Doutor Café";
+  var corpo="Olá equipe Doutor Café,%0A%0AEscrevo para...%0A%0ARegião: "+(dadosGPS.regiao||"não informada");
+  window.open("mailto:doutorcafe.app@gmail.com?subject="+encodeURIComponent(assunto)+"&body="+corpo);
 }
+function abrirWhatsapp() {
+  var texto="Olá! Estou usando o app Doutor Café e gostaria de tirar uma dúvida.";
+  window.open("https://wa.me/5535998823395?text="+encodeURIComponent(texto),"_blank");
+}
+
+// ── INPUTS DE ARQUIVO ──
+function criarInput(id,accept,capture) {
+  var old=document.getElementById(id),novo=document.createElement("input");
+  novo.type="file"; novo.id=id; novo.accept=accept;
+  if (capture) novo.setAttribute("capture",capture);
+  novo.style.display="none"; old.parentNode.replaceChild(novo,old); return novo;
+}
+function bindCam(){var inp=criarInput("cam","image/*","environment");inp.addEventListener("change",function(e){if(e.target.files[0])processar(e.target.files[0],false);bindCam();});}
+function bindGal(){var inp=criarInput("gal","image/*,video/*",null);inp.addEventListener("change",function(e){if(!e.target.files[0]){bindGal();return;}var file=e.target.files[0];if(file.type.startsWith("video/"))processarVideo(file);else processar(file,false);bindGal();});}
+function bindVid(){var inp=criarInput("vid","video/*","environment");inp.addEventListener("change",function(e){if(e.target.files[0])processarVideo(e.target.files[0]);bindVid();});}
+function bindSolo(){var inp=criarInput("solo","image/*","environment");inp.addEventListener("change",function(e){if(e.target.files[0])processarSolo(e.target.files[0]);bindSolo();});}
+function bindSoloGal(){var inp=criarInput("soloGal","image/*",null);inp.addEventListener("change",function(e){if(e.target.files[0])processarSolo(e.target.files[0]);bindSoloGal();});}
+function bindDaninha(){var inp=criarInput("daninha","image/*","environment");inp.addEventListener("change",function(e){if(e.target.files[0])processarDaninha(e.target.files[0]);bindDaninha();});}
+function bindDaninhaGal(){var inp=criarInput("daninaGal","image/*",null);inp.addEventListener("change",function(e){if(e.target.files[0])processarDaninha(e.target.files[0]);bindDaninhaGal();});}
+
+document.getElementById("btnCam").addEventListener("click",function(){document.getElementById("cam").click();});
+document.getElementById("btnGal").addEventListener("click",function(){document.getElementById("gal").click();});
+document.getElementById("btnVid").addEventListener("click",function(){document.getElementById("vid").click();});
+document.getElementById("btnSolo").addEventListener("click",function(){document.getElementById("solo").click();});
+document.getElementById("btnSoloGal").addEventListener("click",function(){document.getElementById("soloGal").click();});
+document.getElementById("btnDaninha").addEventListener("click",function(){document.getElementById("daninha").click();});
+document.getElementById("btnDaninhaGal").addEventListener("click",function(){document.getElementById("daninaGal").click();});
+
+bindCam(); bindGal(); bindVid(); bindSolo(); bindSoloGal(); bindDaninha(); bindDaninhaGal();
+window.addEventListener("online",function(){renderAreaHistorico();});
+window.addEventListener("offline",function(){renderAreaHistorico();});
+
+// ── PIX ──
+var planoPixAtual='',pixPaymentId=null,pixCheckInterval=null;
+function obterUserId(){var u=localStorage.getItem('doutorcafe_uid');if(!u){u='user_'+Date.now()+'_'+Math.random().toString(36).substr(2,9);localStorage.setItem('doutorcafe_uid',u);}return u;}
+function abrirPix(tipo){
+  planoPixAtual=tipo; fecharModal();
+  document.getElementById('modalPix').classList.add('ativo');
+  var nomes={basico_mensal:'Básico Mensal - R$ 32,90/mês',basico_anual:'Básico Anual - R$ 299,90/ano',pro_mensal:'Pro Mensal - R$ 49,90/mês',pro_anual:'Pro Anual - R$ 499,90/ano'};
+  document.getElementById('pixSubtitulo').textContent='Plano '+(nomes[tipo+'_'+cicloAtual]||tipo);
+  document.getElementById('pixArea').innerHTML='<label class="pix-form-label">Nome completo *</label><input class="pix-form-input" id="pixNome" type="text" placeholder="Ex: João da Silva"><label class="pix-form-label">CPF *</label><input class="pix-form-input" id="pixCpf" type="tel" placeholder="000.000.000-00" maxlength="14" oninput="mascararCpf(this)"><label class="pix-form-label">Email (opcional)</label><input class="pix-form-input" id="pixEmail" type="email" placeholder="seuemail@gmail.com"><button onclick="confirmarPix()" style="width:100%;padding:14px;background:linear-gradient(135deg,#2d8a3e,#1a5c2a);color:white;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px">Gerar QR Code PIX</button>';
+}
+function mascararCpf(input){var v=input.value.replace(/[^0-9]/g,'');if(v.length>3)v=v.slice(0,3)+'.'+v.slice(3);if(v.length>7)v=v.slice(0,7)+'.'+v.slice(7);if(v.length>11)v=v.slice(0,11)+'-'+v.slice(11,13);input.value=v;}
+function confirmarPix(){
+  var nome=document.getElementById('pixNome').value.trim(),cpf=document.getElementById('pixCpf').value.replace(/[^0-9]/g,''),email=document.getElementById('pixEmail').value.trim()||'produtor@doutorcafe.app';
+  if(!nome){alert('Informe seu nome completo.');return;}
+  if(cpf.length!==11){alert('CPF inválido. Digite os 11 dígitos.');return;}
+  document.getElementById('pixArea').innerHTML='<div class="pix-loading"><div class="pix-spinner"></div> Gerando QR Code...</div>';
+  fetch('https://doutor-cafe-production.up.railway.app/gerar-pix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plano:planoPixAtual+'_'+cicloAtual,userId:obterUserId(),nome:nome,cpf:cpf,email:email})})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.qr_code_base64){
+      pixPaymentId=d.id;
+      document.getElementById('pixArea').innerHTML='<div class="pix-qr-img"><img src="data:image/png;base64,'+d.qr_code_base64+'" alt="QR Code PIX"></div><div class="pix-codigo-box"><div class="pix-codigo-label">Código PIX:</div><div class="pix-codigo-txt" id="pixCodigoTxt">'+d.qr_code+'</div></div><div class="pix-status pix-status-aguardando" id="pixStatusTxt">Aguardando pagamento...</div><button class="btn-copiar-pix" onclick="copiarCodigoPix()">Copiar código PIX</button>';
+      iniciarVerificacaoPix();
+    } else {
+      document.getElementById('pixArea').innerHTML='<div class="pix-status pix-status-erro">Erro: '+(d.erro||'Tente novamente.')+'</div>';
+    }
+  })
+  .catch(function(){document.getElementById('pixArea').innerHTML='<div class="pix-status pix-status-erro">Erro de conexão. Tente novamente.</div>';});
+}
+function iniciarVerificacaoPix(){
+  if(pixCheckInterval)clearInterval(pixCheckInterval);
+  var t=0;
+  pixCheckInterval=setInterval(function(){
+    t++; if(t>72){clearInterval(pixCheckInterval);return;}
+    if(!pixPaymentId)return;
+    fetch('https://doutor-cafe-production.up.railway.app/verificar-pix/'+pixPaymentId)
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.aprovado){
+        clearInterval(pixCheckInterval);
+        var tipo=d.plano_id&&d.plano_id.indexOf('pro')>-1?'pro':'basico';
+        salvarPlano({tipo:tipo,planoId:d.plano_id,dataAssinatura:new Date().toISOString()});
+        localStorage.setItem(ANALISES_KEY,'0');
+        atualizarContador();
+        document.getElementById('pixArea').innerHTML='<div class="pix-status pix-status-aprovado">✅ Pagamento aprovado! Plano '+(tipo==='pro'?'Pro':'Básico')+' liberado!</div>';
+        setTimeout(function(){fecharPix();},3000);
+      }
+    }).catch(function(){});
+  },5000);
+}
+function copiarCodigoPix(){
+  var txt=document.getElementById('pixCodigoTxt');
+  if(!txt)return;
+  if(navigator.clipboard){navigator.clipboard.writeText(txt.textContent).then(function(){alert('Código PIX copiado!');});}
+  else{var el=document.createElement('textarea');el.value=txt.textContent;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);alert('Código PIX copiado!');}
+}
+function fecharPix(){if(pixCheckInterval)clearInterval(pixCheckInterval);pixPaymentId=null;document.getElementById('modalPix').classList.remove('ativo');}
+
+// ── INICIALIZAÇÃO ──
+atualizarContador();
+verificarRetornoPagamento();
+renderCalendario();
+renderAreaHistorico();
+obterGPS();
 </script>
 </body>
 </html>

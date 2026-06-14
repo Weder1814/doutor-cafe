@@ -30,6 +30,8 @@ app.post("/gerar-pix", function(req, res) {
   var userId = req.body.userId;
   var email = req.body.email || "produtor@doutorcafe.app";
   var plano = PLANOS[planoId];
+  var nome = req.body.nome || "Produtor Rural";
+  var cpf = req.body.cpf || "00000000000";
 
   if (!plano) return res.status(400).json({ erro: "Plano inválido" });
 
@@ -39,9 +41,9 @@ app.post("/gerar-pix", function(req, res) {
     payment_method_id: "pix",
     payer: {
       email: email,
-      first_name: "Produtor",
-      last_name: "Rural",
-      identification: { type: "CPF", number: "00000000000" }
+      first_name: nome ? nome.split(' ')[0] : "Produtor",
+      last_name: nome ? nome.split(' ').slice(1).join(' ') || "Rural" : "Rural",
+      identification: { type: "CPF", number: cpf || "00000000000" }
     },
     metadata: { plano_id: planoId, user_id: userId, analises: plano.analises },
     notification_url: BASE_URL + "/webhook-pagamento"

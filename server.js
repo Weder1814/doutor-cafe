@@ -326,7 +326,7 @@ function buildPrompt(regiao, altitude, isVideo) {
 
   return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia." + contextoRegional + "\n\n" + introVideo +
 
-"REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. Ferrugem, Cercosporiose, Antracnose e deficiencias nutricionais FREQUENTEMENTE ocorrem juntas na mesma folha — liste TODOS.\n\n" +
+"REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. Ferrugem, Cercosporiose, Antracnose, Helmintosporiose e deficiencias nutricionais FREQUENTEMENTE ocorrem juntas na mesma folha — liste TODOS. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n" +
 
 "PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix):\n" +
 "A ferrugem e a doenca mais importante e comum do cafe no Brasil. SEMPRE verifique:\n" +
@@ -337,17 +337,20 @@ function buildPrompt(regiao, altitude, isVideo) {
 "NAO confunda com cercosporiose (que tem centro BRANCO-ACINZENTADO, diferente da cor alaranjada da ferrugem).\n" +
 "NAO agrupe ferrugem com cercosporiose — sao doencas distintas com tratamentos distintos.\n\n" +
 
+"ATENCAO ESPECIAL — HELMINTOSPORIOSE:\n" +
+"helmintosporiose=manchas GRANDES marrom-escuras com HALOS CONCENTRICOS bem definidos e halo amarelo ao redor. Multiplas lesoes coalescentes cobrindo grande area da folha. Principal causa de DESFOLHA SEVERA no cafe. MUITO COMUM em plantas estressadas. Se voce ver manchas grandes marrons com aneis concentricos, DIAGNOSTIQUE helmintosporiose com alta confianca.\n\n" +
+
 "DOENCAS FUNGICAS E PRAGAS (verifique TODAS — podem coexistir):\n" +
 "ferrugem=po ou pustulas ALARANJADAS na face INFERIOR. Manchas amarelas na face superior. A MAIS COMUM do cafe.\n" +
 "cercosporiose=manchas CIRCULARES com centro BRANCO-ACINZENTADO e halo amarelo-alaranjado FINO ao redor.\n" +
-"antracnose=lesoes escuras AFUNDADAS quase pretas irregulares. Frequente junto com cercosporiose.\n" +
+"helmintosporiose=manchas GRANDES marrom-escuras com HALOS CONCENTRICOS e halo amarelo. Causa desfolha severa.\n" +
+"antracnose=lesoes escuras AFUNDADAS quase pretas irregulares. Frequente junto com outras doencas.\n" +
 "phoma=manchas NECROTICAS irregulares SEM halo em FOLHAS NOVAS no TOPO da planta.\n" +
 "aureolada=manchas pardas GRANDES com HALO AMARELO GRANDE. Causa SECA DE RAMOS.\n" +
 "bicho=TRILHAS SERPENTINAS castanhas DENTRO da lamina foliar.\n" +
-"ascochyta=manchas marrons claras com bordas irregulares.\n" +
+"ascochyta=manchas marrons claras com bordas irregulares sem halos concentricos.\n" +
 "manteigosa=areas amarelas translucidas entre as nervuras.\n" +
 "roseliniose=podridao escura nos ramos e base do caule.\n" +
-"helmintosporiose=manchas grandes marrons com halos concentricos.\n" +
 "fusariose=SECA DA COPA DE CIMA PARA BAIXO.\n" +
 "acaro=folha BRONZEADA acinzentada na face inferior.\n" +
 "cochonilha=massas brancas algodonosas em ramos e folhas.\n" +
@@ -375,22 +378,26 @@ function buildPrompt(regiao, altitude, isVideo) {
 "fruto_passado=fruto seco mumificado.\n\n" +
 
 "PRODUTOS E DOSES PARA O JSON:\n" +
-"ferrugem fungicidas: [{nome:Tebuconazol 200SC,nome_comercial:Folicur,tipo:sistemico,dose_min:0.75,dose_max:1.0,unidade:L,por:hectare,proporcao_por_litro:0.05,unidade_proporcao:mL,intervalo_reaplicacao:21,carencia_dias:7},{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.0,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
-"cercosporiose fungicidas: [{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.0,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7},{nome:Tebuconazol 200SC,nome_comercial:Folicur,tipo:sistemico,dose_min:0.75,dose_max:1.0,unidade:L,por:hectare,proporcao_por_litro:0.05,unidade_proporcao:mL,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
+"ferrugem fungicidas: [{nome:Tebuconazol 200SC,nome_comercial:Folicur,tipo:sistemico,dose_min:0.75,dose_max:1.0,unidade:L,por:hectare,proporcao_por_litro:0.05,unidade_proporcao:L,intervalo_reaplicacao:21,carencia_dias:7},{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.0,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
+"cercosporiose fungicidas: [{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.0,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7},{nome:Tebuconazol 200SC,nome_comercial:Folicur,tipo:sistemico,dose_min:0.75,dose_max:1.0,unidade:L,por:hectare,proporcao_por_litro:0.05,unidade_proporcao:L,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
+"helmintosporiose fungicidas: [{nome:Tebuconazol 200SC,nome_comercial:Folicur,tipo:sistemico,dose_min:0.75,dose_max:1.0,unidade:L,por:hectare,proporcao_por_litro:0.05,unidade_proporcao:L,intervalo_reaplicacao:14,carencia_dias:7},{nome:Tiofanato Metilico 700WP,nome_comercial:Cercobin,tipo:protetor,dose_min:1.0,dose_max:1.5,unidade:kg,por:hectare,proporcao_por_litro:1.25,unidade_proporcao:g,intervalo_reaplicacao:14,carencia_dias:7}]\n" +
 "antracnose fungicidas: [{nome:Azoxistrobina+Difenoconazol,nome_comercial:Amistar Top,tipo:sistemico,dose_min:0.3,dose_max:0.4,unidade:L,por:hectare,proporcao_por_litro:0.3,unidade_proporcao:mL,intervalo_reaplicacao:14,carencia_dias:7}]\n" +
 "phoma fungicidas: [{nome:Tiofanato Metilico 700WP,nome_comercial:Cercobin,tipo:protetor,dose_min:1.0,dose_max:1.5,unidade:kg,por:hectare,proporcao_por_litro:1.25,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
+"aureolada fungicidas: [{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.5,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
 "bicho fungicidas: [{nome:Thiamethoxam 250WG,nome_comercial:Actara,tipo:inseticida,dose_min:0.1,dose_max:0.2,unidade:kg,por:hectare,proporcao_por_litro:0.15,unidade_proporcao:g,intervalo_reaplicacao:30,carencia_dias:14}]\n" +
 "acaro fungicidas: [{nome:Abamectina 18EC,nome_comercial:Vertimec,tipo:acaricida,dose_min:0.5,dose_max:0.75,unidade:L,por:hectare,proporcao_por_litro:0.0625,unidade_proporcao:mL,intervalo_reaplicacao:21,carencia_dias:14}]\n" +
-"broca fungicidas: [{nome:Clorpirifos 480EC,nome_comercial:Lorsban,tipo:inseticida,dose_min:1.5,dose_max:2.0,unidade:L,por:hectare,proporcao_por_litro:1.75,unidade_proporcao:mL,intervalo_reaplicacao:30,carencia_dias:14}]\n" +
-"aureolada fungicidas: [{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.5,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n\n" +
+"broca fungicidas: [{nome:Clorpirifos 480EC,nome_comercial:Lorsban,tipo:inseticida,dose_min:1.5,dose_max:2.0,unidade:L,por:hectare,proporcao_por_litro:1.75,unidade_proporcao:mL,intervalo_reaplicacao:30,carencia_dias:14}]\n\n" +
 
 "INSTRUCOES FINAIS OBRIGATORIAS:\n" +
 "1. Liste TODOS os problemas encontrados no array diagnosticos — sem limite de quantidade.\n" +
 "2. Ordene do mais grave para o menos grave.\n" +
 "3. Se houver manchas alaranjadas na face inferior, ferrugem DEVE obrigatoriamente aparecer no array.\n" +
-"4. Se a folha tiver coloracao geral palida ou clorotica sem brilho, inclua a deficiencia nutricional correspondente.\n" +
-"5. Diagnosticos diferentes na mesma folha sao normais e esperados — LISTE TODOS SEM EXCECAO.\n" +
-"6. Deficiencias nutricionais nao tem fungicidas — retorne fungicidas:[] para elas.\n\n" +
+"4. Se houver manchas grandes marrons com halos concentricos, helmintosporiose DEVE aparecer no array.\n" +
+"5. Se a folha tiver coloracao geral palida ou clorotica sem brilho, inclua a deficiencia nutricional correspondente.\n" +
+"6. Diagnosticos diferentes na mesma folha sao normais e esperados — LISTE TODOS SEM EXCECAO.\n" +
+"7. Deficiencias nutricionais nao tem fungicidas — retorne fungicidas:[] para elas.\n" +
+"8. Se a imagem mostrar MUITAS FOLHAS SECAS CAIDAS no chao ou ramos desfolhados ao fundo, inclua helmintosporiose ou ferrugem avancada como diagnostico pois sao as principais causas de desfolha severa no cafe.\n" +
+"9. NUNCA retorne saudavel se houver qualquer mancha, lesao, necrose, descoloracao ou sintoma visivel na folha ou no contexto da imagem.\n\n" +
 
 "RESPONDA SOMENTE JSON, sem texto antes ou depois:\n" +
 "{\"diagnosticos\":[{\"diagnostico\":\"nome_exato_da_lista_acima\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descricao do sinal visual observado na imagem\",\"acao\":\"o que o produtor deve fazer em linguagem simples e direta\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"exemplo de marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":1.5,\"dose_max\":2.5,\"unidade\":\"kg|L|mL\",\"por\":\"hectare\",\"proporcao_por_litro\":2.5,\"unidade_proporcao\":\"g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";

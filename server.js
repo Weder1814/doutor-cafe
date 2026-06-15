@@ -292,7 +292,40 @@ app.post("/identifica-daninha", function(req, res) {
   var regiao = req.body.regiao || null;
   var KEY    = process.env.ANTHROPIC_API_KEY;
   var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
-  var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira." + contexto + "\n\nAnalise a imagem desta planta daninha e identifique nome, o que indica no solo e como controlar.\n\nRESPONDA SOMENTE JSON:\n{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica no solo\",\"acao\":\"como controlar com produtos e doses\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\"}";
+  var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro." + contexto + "\n\n" +
+"Analise a imagem e identifique a planta daninha com precisao. Use o banco de dados abaixo.\n\n" +
+"=== PLANTAS DANINHAS DO CAFE ===\n\n" +
+"1. PICAO-PRETO (Bidens pilosa): folha larga, sementes com espinhos, flores amarelas. Solo fertil com manejo deficiente. Hospedeira de pragas. 6.000 sementes/planta. PRE: Goal BR 5-6L/ha, Ametrina 800 1,5-2,5kg/ha, Flumyzin 500 150-180mL/ha. POS: Goal BR 6L/ha, Ametrina 800 2,5kg/ha. Controlar ANTES do florescimento.\n\n" +
+"2. CAPIM-AMARGOSO (Digitaria insularis): gramínea perene 50-100cm, touceiras, sementes pilosas. Solo degradado com excesso de glifosato. Resistente ao glifosato. Multiplica por rizomas. Plantas antes do florescimento: Glifosato + ACCase + Oleo. Plantas florescidas: rocar, aguardar rebrota, aplicar ACCase. Produtos ACCase: Fusilade 250EW, Gallant Max, Verdict Max 0,2-0,4L/ha, Cletodim/Select 240EC/Poquer 0,45L/ha, Kennox 0,5-0,7L/ha.\n\n" +
+"3. CAPIM-PE-DE-GALINHA (Eleusine indica): gramínea anual 30-50cm, touceiras densas. Solo COMPACTADO. 40.000-120.000 sementes/planta. Resistente a multiplos herbicidas. POS: ACCase (fluazifop, haloxifop) + glifosato. Flumioxazin. Galigan 240 3L/ha, Goal BR 2L/ha. Controlar com maximo 1 perfilho.\n\n" +
+"4. BUVA/VOADEIRA (Conyza spp.): planta anual ereta ate 2m, pelos, sementes que voam. Solo com excesso de glifosato. Resistente ao glifosato. 200.000 sementes/planta. Controlar com MENOS de 25cm. PROTOX: Oxyfluorfen (Galigan 240EC, Goal BR 240EC), Saflufenacil (Heat 700WG), Carfentrazona (Aurora 400EC). ALS: Metsulfuron (Ally 600WG). Aplicacao sequencial recomendada.\n\n" +
+"5. CARURU (Amaranthus spp.): planta anual 20cm-2m, inflorescencias verdes/roxas. Solo fertil com alto N. Hospedeiro de nematoide Meloidogyne. 100.000 sementes/planta. Resistente a multiplos herbicidas. Saflufenacil (Heat 700WG) em plantas ate 5cm. Arranquio manual preventivo.\n\n" +
+"6. TIRIRICA (Cyperus rotundus): planta perene 10-60cm, folhas triangulares, flores marrom-escuras. Solo com DRENAGEM RUIM ou compactacao. Multiplica por tuberculos subterraneos. Glifosato + Diurom (Diuron Nortox 800WP). Halosulfuron, imazapic, imazapir, triclopir. Pulverizacao SEQUENCIAL. Arar/gradar para expor tuberculos antes de plantar.\n\n" +
+"7. CORDA-DE-VIOLA (Ipomoea spp.): trepadeira ate 3m, flores roxas/rosas/brancas em trompete, folhas coracao. Solo fertil e umido. Tolerante ao glifosato. Enrola nos cafeeiros impedindo fotossintese. Inicio das chuvas: glifosato + 2,4-D. Aurora 400EC, Ally 600WG, Flumizyn 500SC. NAO puxar quando nos cafeeiros — derruba frutos.\n\n" +
+"8. CAPIM-BRAQUIARIA (Urochloa/Brachiaria spp.): gramínea robusta. ALIADA nas entrelinhas quando bem manejada. Problema quando chega na linha do cafe. Manter 1 metro de distancia da linha. Rocar antes do florescimento. Urochloa decumbens e U. ruziziensis sao as melhores para entrelinhas. ACCase para controle quimico.\n\n" +
+"9. POAIA-BRANCA (Richardia brasiliensis): planta anual rasteira, flores brancas minusculas estreladas, folhas pilosas. Solo umido em regioes quentes. Hospedeira de pragas. Cobertura do solo com palhada. Goal BR, Ametrina em pos-emergencia.\n\n" +
+"10. CAPIM-MARMELADA (Urochloa plantaginea): gramínea anual, folhas largas com pelos, ate 80cm. Solo fertil e umido. ACCase em pos-emergencia. Cobertura do solo preventiva.\n\n" +
+"11. TRAPOERABA (Commelina benghalensis): planta rasteira suculenta, flores azuis/roxas com 3 petalas. Solo UMIDO, encharcamento. TOLERANTE ao glifosato. Controle: 2,4-D, carfentrazina. Nao usar so glifosato.\n\n" +
+"12. GUANXUMA (Sida spp.): arbusto 0,5-1,5m, flores amarelas, folhas dentadas. Solo DEGRADADO e compactado. 2,4-D, metsulfurom em pos-emergencia.\n\n" +
+"13. ERVA-QUENTE (Spermacoce latifolia): planta ereta 20-60cm, flores brancas minusculas, folhas opostas. Solo ACIDO com baixo pH. Correcao do pH reduz infestacao. Metsulfurom, glifosato.\n\n" +
+"14. CAPIM-DE-BURRO (Cynodon dactylon): gramínea perene rasteira, estoloes, forma tapete verde. Solo COMPACTADO e pisoteado. ACCase em pos-emergencia. Dificil erradicacao — rizomas e estoloes.\n\n" +
+"15. MARIA-PRETINHA (Solanum americanum): planta 30-80cm, flores brancas, frutos redondos verdes ficando pretos. Solo fertil e umido. Hospedeira de virus e nematoides. FRUTOS TOXICOS para humanos e animais. Glifosato, 2,4-D em pos-emergencia. Arranquio antes da frutificacao.\n\n" +
+"=== INDICADORES DE SOLO ===\n" +
+"Solo ACIDO: erva-quente, tiririca, capim-pe-de-galinha.\n" +
+"Solo COMPACTADO: capim-pe-de-galinha, tiririca, capim-de-burro, guanxuma.\n" +
+"Solo FERTIL: picao-preto, caruru, corda-de-viola, poaia-branca, maria-pretinha.\n" +
+"Solo UMIDO/drenagem ruim: tiririca, trapoeraba, poaia-branca.\n" +
+"Excesso de GLIFOSATO: buva, capim-amargoso (ambas resistentes).\n" +
+"Solo DEGRADADO: buva, capim-amargoso, guanxuma.\n\n" +
+"=== MANEJO INTEGRADO ===\n" +
+"Preventivo: limpar maquinas para nao disseminar sementes.\n" +
+"Cultural: braquiaria nas entrelinhas suprime daninhas.\n" +
+"Mecanico: rocadas antes do florescimento.\n" +
+"Fisico: palhada de casca de cafe nas linhas.\n" +
+"Quimico: rotacionar mecanismos de acao — nunca usar sempre o mesmo herbicida.\n" +
+"Regra de ouro: controlar quando plantas sao JOVENS E PEQUENAS.\n\n" +
+"RESPONDA SOMENTE JSON sem texto extra:\n" +
+"{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que esta planta indica sobre o solo em linguagem simples para produtor rural\",\"acao\":\"orientacao de manejo integrado em linguagem simples e direta\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"nome comercial\",\"ingrediente_ativo\":\"i.a.\",\"dose\":\"dose por hectare\",\"momento\":\"pre-emergencia|pos-emergencia\",\"observacao\":\"quando usar\"}],\"alerta\":\"observacao critica para o produtor\",\"manejo_preventivo\":\"como evitar a disseminacao\"}"
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },

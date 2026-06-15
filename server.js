@@ -16,21 +16,77 @@ var PLANOS = {
   pro_anual:      { nome: "Doutor Café Pro Anual",      valor: 499.90, analises: 999999 }
 };
 
-// ── BANCO DE DADOS SIMPLES (em memória) ──────────
+// ── BANCO DE DADOS EM MEMÓRIA ────────────────────
+// Em produção migrar para PostgreSQL
 var usuarios = {};
+var cadastros = [];
 
 app.get("/", function(req, res) {
   res.json({ status: "online", app: "Doutor Cafe API" });
 });
 
+// ── CADASTRAR USUÁRIO ────────────────────────────
+app.post("/cadastrar-usuario", function(req, res) {
+  var userId   = req.body.userId;
+  var nome     = req.body.nome;
+  var celular  = req.body.celular;
+  var regiao   = req.body.regiao || "";
+  var email    = req.body.email  || "";
+
+  if (!userId || !nome || !celular) {
+    return res.status(400).json({ erro: "Nome e celular são obrigatórios." });
+  }
+
+  // Verifica se já existe cadastro para esse userId
+  var jaExiste = cadastros.find(function(c){ return c.userId === userId; });
+  if (jaExiste) {
+    return res.json({ sucesso: true, jaExistia: true, analises_bonus: 10 });
+  }
+
+  var cadastro = {
+    userId:      userId,
+    nome:        nome,
+    celular:     celular,
+    regiao:      regiao,
+    email:       email,
+    dataCadastro: new Date().toISOString(),
+    analises_bonus: 10
+  };
+
+  cadastros.push(cadastro);
+  console.log("✅ Novo cadastro:", nome, celular, regiao);
+
+  res.json({ sucesso: true, jaExistia: false, analises_bonus: 10 });
+});
+
+// ── LISTAR USUÁRIOS (painel admin) ───────────────
+app.get("/usuarios", function(req, res) {
+  var senha = req.query.senha;
+  if (senha !== "doutorcafe2026") {
+    return res.status(401).json({ erro: "Acesso negado." });
+  }
+  res.json({
+    total: cadastros.length,
+    cadastros: cadastros.map(function(c) {
+      return {
+        nome:        c.nome,
+        celular:     c.celular,
+        regiao:      c.regiao,
+        email:       c.email,
+        dataCadastro: c.dataCadastro
+      };
+    })
+  });
+});
+
 // ── GERAR PIX DINÂMICO ───────────────────────────
 app.post("/gerar-pix", function(req, res) {
   var planoId = req.body.plano;
-  var userId = req.body.userId;
-  var email = req.body.email || "produtor@doutorcafe.app";
-  var plano = PLANOS[planoId];
-  var nome = req.body.nome || "Produtor Rural";
-  var cpf = req.body.cpf || "00000000000";
+  var userId  = req.body.userId;
+  var email   = req.body.email || "produtor@doutorcafe.app";
+  var plano   = PLANOS[planoId];
+  var nome    = req.body.nome || "Produtor Rural";
+  var cpf     = req.body.cpf  || "00000000000";
 
   if (!plano) return res.status(400).json({ erro: "Plano inválido" });
 
@@ -41,7 +97,7 @@ app.post("/gerar-pix", function(req, res) {
     payer: {
       email: email,
       first_name: nome ? nome.split(' ')[0] : "Produtor",
-      last_name: nome ? nome.split(' ').slice(1).join(' ') || "Rural" : "Rural",
+      last_name:  nome ? nome.split(' ').slice(1).join(' ') || "Rural" : "Rural",
       identification: { type: "CPF", number: cpf || "00000000000" }
     },
     metadata: { plano_id: planoId, user_id: userId, analises: plano.analises },
@@ -78,19 +134,14 @@ app.post("/gerar-pix", function(req, res) {
 // ── CRIAR PREFERÊNCIA (CARTÃO) ───────────────────
 app.post("/criar-assinatura", function(req, res) {
   var planoId = req.body.plano;
-  var email = req.body.email || "produtor@doutorcafe.app";
-  var userId = req.body.userId;
-  var plano = PLANOS[planoId];
+  var email   = req.body.email || "produtor@doutorcafe.app";
+  var userId  = req.body.userId;
+  var plano   = PLANOS[planoId];
 
   if (!plano) return res.status(400).json({ erro: "Plano inválido" });
 
   var body = {
-    items: [{
-      title: plano.nome,
-      quantity: 1,
-      unit_price: plano.valor,
-      currency_id: "BRL"
-    }],
+    items: [{ title: plano.nome, quantity: 1, unit_price: plano.valor, currency_id: "BRL" }],
     payer: { email: email },
     back_urls: {
       success: "https://doutor-cafe-app.vercel.app?pagamento=sucesso&plano=" + planoId + "&user=" + userId,
@@ -104,20 +155,13 @@ app.post("/criar-assinatura", function(req, res) {
 
   fetch("https://api.mercadopago.com/checkout/preferences", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + MP_TOKEN
-    },
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MP_TOKEN },
     body: JSON.stringify(body)
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
-    if (d.id) {
-      res.json({ url: d.init_point, id: d.id });
-    } else {
-      console.error("Erro MP Cartão:", JSON.stringify(d));
-      res.status(500).json({ erro: "Erro ao criar preferência", detalhe: d.message || d.error });
-    }
+    if (d.id) { res.json({ url: d.init_point, id: d.id }); }
+    else { console.error("Erro MP Cartão:", JSON.stringify(d)); res.status(500).json({ erro: "Erro ao criar preferência", detalhe: d.message || d.error }); }
   })
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
@@ -125,18 +169,12 @@ app.post("/criar-assinatura", function(req, res) {
 // ── VERIFICAR STATUS DO PIX ──────────────────────
 app.get("/verificar-pix/:paymentId", function(req, res) {
   var paymentId = req.params.paymentId;
-
   fetch("https://api.mercadopago.com/v1/payments/" + paymentId, {
     headers: { "Authorization": "Bearer " + MP_TOKEN }
   })
   .then(function(r) { return r.json(); })
   .then(function(p) {
-    res.json({
-      status: p.status,
-      aprovado: p.status === "approved",
-      plano_id: p.metadata && p.metadata.plano_id,
-      user_id: p.metadata && p.metadata.user_id
-    });
+    res.json({ status: p.status, aprovado: p.status === "approved", plano_id: p.metadata && p.metadata.plano_id, user_id: p.metadata && p.metadata.user_id });
   })
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
@@ -144,12 +182,9 @@ app.get("/verificar-pix/:paymentId", function(req, res) {
 // ── WEBHOOK MERCADO PAGO ─────────────────────────
 app.post("/webhook-pagamento", function(req, res) {
   var tipo = req.body.type;
-  var id = req.body.data && req.body.data.id;
-
+  var id   = req.body.data && req.body.data.id;
   res.status(200).send("OK");
-
   if (tipo !== "payment" || !id) return;
-
   fetch("https://api.mercadopago.com/v1/payments/" + id, {
     headers: { "Authorization": "Bearer " + MP_TOKEN }
   })
@@ -157,17 +192,9 @@ app.post("/webhook-pagamento", function(req, res) {
   .then(function(p) {
     if (p.status === "approved") {
       var meta = p.metadata || {};
-      var userId = meta.user_id;
-      var planoId = meta.plano_id;
-      var analises = meta.analises || 120;
-
+      var userId = meta.user_id, planoId = meta.plano_id, analises = meta.analises || 120;
       if (userId) {
-        usuarios[userId] = {
-          plano: planoId,
-          analises: analises,
-          dataAssinatura: new Date().toISOString(),
-          paymentId: id
-        };
+        usuarios[userId] = { plano: planoId, analises: analises, dataAssinatura: new Date().toISOString(), paymentId: id };
         console.log("✅ Plano liberado:", userId, planoId);
       }
     }
@@ -177,40 +204,24 @@ app.post("/webhook-pagamento", function(req, res) {
 
 // ── VERIFICAR PLANO DO USUÁRIO ───────────────────
 app.get("/plano/:userId", function(req, res) {
-  var userId = req.params.userId;
+  var userId  = req.params.userId;
   var usuario = usuarios[userId];
-
-  if (usuario) {
-    res.json({
-      plano: usuario.plano,
-      analises: usuario.analises,
-      dataAssinatura: usuario.dataAssinatura,
-      ativo: true
-    });
-  } else {
-    res.json({ plano: "gratuito", analises: 20, ativo: false });
-  }
+  if (usuario) { res.json({ plano: usuario.plano, analises: usuario.analises, dataAssinatura: usuario.dataAssinatura, ativo: true }); }
+  else { res.json({ plano: "gratuito", analises: 20, ativo: false }); }
 });
 
 // ── DIAGNÓSTICO ──────────────────────────────────
 app.post("/diagnostico", function(req, res) {
-  var imagem = req.body.imagem;
-  var tipo = req.body.tipo || "image/jpeg";
-  var regiao = req.body.regiao || null;
+  var imagem   = req.body.imagem;
+  var tipo     = req.body.tipo || "image/jpeg";
+  var regiao   = req.body.regiao   || null;
   var altitude = req.body.altitude || null;
-  var KEY = process.env.ANTHROPIC_API_KEY;
-  var prompt = buildPrompt(regiao, altitude, false);
+  var KEY      = process.env.ANTHROPIC_API_KEY;
+  var prompt   = buildPrompt(regiao, altitude, false);
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      messages: [{ role: "user", content: [
-        { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
-        { type: "text", text: prompt }
-      ]}]
-    })
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]})
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
@@ -224,10 +235,10 @@ app.post("/diagnostico", function(req, res) {
 
 // ── DIAGNÓSTICO VÍDEO ────────────────────────────
 app.post("/diagnostico-video", function(req, res) {
-  var frames = req.body.frames;
-  var regiao = req.body.regiao || null;
+  var frames   = req.body.frames;
+  var regiao   = req.body.regiao   || null;
   var altitude = req.body.altitude || null;
-  var KEY = process.env.ANTHROPIC_API_KEY;
+  var KEY      = process.env.ANTHROPIC_API_KEY;
   if (!frames || frames.length === 0) return res.status(400).json({ erro: "Nenhum frame recebido." });
   var prompt = buildPrompt(regiao, altitude, true);
   var content = [];
@@ -239,7 +250,7 @@ app.post("/diagnostico-video", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: content }] })
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: content }]})
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
@@ -254,9 +265,9 @@ app.post("/diagnostico-video", function(req, res) {
 // ── ANÁLISE DE SOLO ──────────────────────────────
 app.post("/analise-solo", function(req, res) {
   var imagem = req.body.imagem;
-  var tipo = req.body.tipo || "image/jpeg";
+  var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
-  var KEY = process.env.ANTHROPIC_API_KEY;
+  var KEY    = process.env.ANTHROPIC_API_KEY;
   var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
   var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper e Embrapa." + contexto + "\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}}}";
   fetch("https://api.anthropic.com/v1/messages", {
@@ -277,9 +288,9 @@ app.post("/analise-solo", function(req, res) {
 // ── IDENTIFICA DANINHA ───────────────────────────
 app.post("/identifica-daninha", function(req, res) {
   var imagem = req.body.imagem;
-  var tipo = req.body.tipo || "image/jpeg";
+  var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
-  var KEY = process.env.ANTHROPIC_API_KEY;
+  var KEY    = process.env.ANTHROPIC_API_KEY;
   var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
   var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira." + contexto + "\n\nAnalise a imagem desta planta daninha e identifique nome, o que indica no solo e como controlar.\n\nRESPONDA SOMENTE JSON:\n{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica no solo\",\"acao\":\"como controlar com produtos e doses\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\"}";
   fetch("https://api.anthropic.com/v1/messages", {

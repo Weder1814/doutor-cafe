@@ -324,8 +324,23 @@ app.post("/identifica-daninha", function(req, res) {
 "Fisico: palhada de casca de cafe nas linhas.\n" +
 "Quimico: rotacionar mecanismos de acao — nunca usar sempre o mesmo herbicida.\n" +
 "Regra de ouro: controlar quando plantas sao JOVENS E PEQUENAS.\n\n" +
+"INSTRUCOES PARA OS CAMPOS DO JSON:\n" +
+"- nome: nome popular que o produtor conhece (ex: Buva, Tiririca, Capim-amargoso)\n" +
+"- nome_cientifico: nome cientifico entre parenteses\n" +
+"- indicador: o que essa planta diz sobre o solo em 1-2 frases simples (ex: Esse mato aparece quando o solo foi tratado com muito glifosato por varios anos.)\n" +
+"- acao: o que o produtor deve fazer agora em linguagem de conversa (ex: Arranque ou roce as plantas grandes antes de jogar produto. Depois aplique o herbicida quando as plantas novas tiverem pequenas.)\n" +
+"- urgencia: alta|media|baixa\n" +
+"- tipo_controle: quimico|mecanico|cultural|integrado\n" +
+"- produtos: lista dos produtos recomendados com linguagem SIMPLES\n" +
+"  - nome: nome comercial do produto (ex: Galigan 240EC)\n" +
+"  - dose: quantidade por hectare em linguagem simples (ex: 3 litros por hectare, ou seja, 60 mL por tanque de 20 litros)\n" +
+"  - momento: quando aplicar em linguagem simples (ex: Antes de nascer, ainda no solo | Depois que nasceu, ainda pequena menos de 25cm | Depois que nasceu, em qualquer tamanho)\n" +
+"  - como_usar: instrucao pratica de como aplicar (ex: Misture no tanque com agua e pulverize direto nas plantas. Use junto com oleo agricola para pegar melhor.)\n" +
+"- alerta: aviso pratico mais importante em linguagem simples (ex: Essa planta nao morre com glifosato. Nunca use so glifosato nela.)\n" +
+"- manejo_preventivo: dica pratica para evitar que se espalhe (ex: Limpe o trator antes de entrar em outro talhao — as sementes grudam na maquina e se espalham.)\n\n" +
+"IMPORTANTE: Use linguagem de conversa com o produtor rural. Evite termos tecnicos como ACCase, PROTOX, ALS, mecanismo de acao, ingrediente ativo. Fale como um agrônomo conversando no campo.\n\n" +
 "RESPONDA SOMENTE JSON sem texto extra:\n" +
-"{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que esta planta indica sobre o solo em linguagem simples para produtor rural\",\"acao\":\"orientacao de manejo integrado em linguagem simples e direta\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"nome comercial\",\"ingrediente_ativo\":\"i.a.\",\"dose\":\"dose por hectare\",\"momento\":\"pre-emergencia|pos-emergencia\",\"observacao\":\"quando usar\"}],\"alerta\":\"observacao critica para o produtor\",\"manejo_preventivo\":\"como evitar a disseminacao\"}"
+"{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo em linguagem simples\",\"acao\":\"o que fazer agora em linguagem simples\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"nome comercial do produto\",\"dose\":\"quantidade em linguagem simples ex: 3 litros por hectare ou 60mL por tanque de 20L\",\"momento\":\"quando aplicar em linguagem simples\",\"como_usar\":\"instrucao pratica de como aplicar\"}],\"alerta\":\"aviso mais importante em linguagem simples\",\"manejo_preventivo\":\"dica pratica para evitar que se espalhe\"}"
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },

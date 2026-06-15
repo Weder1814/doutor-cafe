@@ -329,15 +329,21 @@ app.post("/identifica-daninha", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 800, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]})
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1500, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]})
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
-    var m = txt.match(/\{[\s\S]*\}/);
+    // Limpar texto antes de parsear
+    var txtLimpo = txt.replace(/```json/g,"").replace(/```/g,"").trim();
+    // Pegar o primeiro objeto JSON valido
+    var m = txtLimpo.match(/\{[\s\S]*\}/);
     if (m) {
       try {
-        var resultado = JSON.parse(m[0]);
+        var jsonStr = m[0];
+        // Remover caracteres problematicos
+        jsonStr = jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+        var resultado = JSON.parse(jsonStr);
         // Garantir campos minimos
         if (!resultado.nome || resultado.nome === "") resultado.nome = "Planta nao identificada";
         if (!resultado.indicador) resultado.indicador = "Nao foi possivel determinar indicador";

@@ -17,7 +17,6 @@ var PLANOS = {
 };
 
 // ── BANCO DE DADOS SIMPLES (em memória) ──────────
-// Em produção use um banco real como PostgreSQL
 var usuarios = {};
 
 app.get("/", function(req, res) {
@@ -223,6 +222,7 @@ app.post("/diagnostico", function(req, res) {
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
+// ── DIAGNÓSTICO VÍDEO ────────────────────────────
 app.post("/diagnostico-video", function(req, res) {
   var frames = req.body.frames;
   var regiao = req.body.regiao || null;
@@ -251,6 +251,7 @@ app.post("/diagnostico-video", function(req, res) {
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
+// ── ANÁLISE DE SOLO ──────────────────────────────
 app.post("/analise-solo", function(req, res) {
   var imagem = req.body.imagem;
   var tipo = req.body.tipo || "image/jpeg";
@@ -273,6 +274,7 @@ app.post("/analise-solo", function(req, res) {
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
+// ── IDENTIFICA DANINHA ───────────────────────────
 app.post("/identifica-daninha", function(req, res) {
   var imagem = req.body.imagem;
   var tipo = req.body.tipo || "image/jpeg";
@@ -295,6 +297,7 @@ app.post("/identifica-daninha", function(req, res) {
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
 
+// ── BUILD PROMPT ─────────────────────────────────
 function buildPrompt(regiao, altitude, isVideo) {
   var contextoRegional = "";
   if (regiao) {
@@ -318,8 +321,79 @@ function buildPrompt(regiao, altitude, isVideo) {
       if (altitude < 600) contextoRegional += " Altitude baixa: maior risco de ferrugem acaro vermelho e broca.";
     }
   }
+
   var introVideo = isVideo ? "Voce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto.\n\n" : "";
-  return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia." + contextoRegional + "\n\n" + introVideo + "Analise esta imagem com MAXIMA ATENCAO.\n\nDOENÇAS FUNGICAS:\nferrugem=po ou pustulas ALARANJADAS na face INFERIOR da folha.\nbicho=TRILHAS SERPENTINAS castanhas DENTRO da folha.\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nphoma=manchas NECROTICAS irregulares SEM halo em FOLHAS NOVAS no TOPO.\nantracnose=lesoes escuras AFUNDADAS quase pretas.\nascochyta=manchas marrons claras bordas irregulares.\nmanteigosa=areas amarelas translucidas entre as nervuras.\nroseliniose=podridao escura nos ramos e base do caule.\nhelmintosporiose=manchas grandes marrons com halos concentricos.\nfusariose=SECA DA COPA DE CIMA PARA BAIXO.\naureolada=manchas pardas GRANDES com HALO AMARELO GRANDE. SECA DE RAMOS.\n\nDEFICIENCIAS NUTRICIONAIS:\ncalcio=folhas NOVAS deformadas ENCURVADAS ponteiros mortos.\nnitrogenio=folha TODA AMARELA UNIFORME folhas VELHAS.\nmagnesio=nervuras VERDES tecido AMARELO internerval folhas VELHAS.\npotassio=QUEIMA de bordas e PONTAS folhas VELHAS.\nfosforo=folhas ESCURECIDAS verde-escura a preta.\ncobre=manchas NECROTICAS folhas NOVAS deformadas.\nmanganes=PONTUACOES cloroticas pequenas folhas NOVAS.\nboro=folhas NOVAS QUEBRADICAS DEFORMADAS ponteiros mortos.\nzinco=folhas NOVAS ESTREITAS aspecto ROSETA.\nferro=folhas NOVAS ESBRANQUICADAS NERVURAS VERDES.\nenxofre=folhas NOVAS amarelas UNIFORMES.\nacaro=folha BRONZEADA acinzentada face inferior.\nestresse_hidrico=folha MURCHA bordas secas enrolamento.\nescaldadura=manchas amarelas irregulares por excesso de sol.\nfitotoxicidade=manchas necroticas pos aplicacao.\n\nSE FOR FRUTO:\nbroca=FURO CIRCULAR pequeno e preciso.\nantracnose=lesoes escuras AFUNDADAS nos frutos.\nfruto_verde=fruto verde saudavel.\nfruto_maduro=fruto cereja no ponto ideal.\nfruto_passado=fruto seco mumificado.\n\nPRODUTOS E DOSES:\nferrugem: Tebuconazol 200SC (0,75-1,0L/ha a cada 21 dias) OU Oxicloreto de Cobre 840WP (2,0-2,5kg/ha).\ncercosporiose: Oxicloreto de Cobre 840WP (2,0-2,5kg/ha) OU Tebuconazol (0,75-1,0L/ha).\nphoma: Tiofanato Metilico 700WP (1,0-1,5kg/ha).\nantracnose: Azoxistrobina+Difenoconazol (0,3L/ha).\nbicho: Thiamethoxam 250WG (0,1-0,2kg/ha).\nbroca: Clorpirifos 480EC (1,5-2,0L/ha) OU Beauveria bassiana (1,0kg/ha).\nacaro: Abamectina 18EC (0,5-0,75L/ha).\ncochonilha: Clorpirifos 480EC (1,5L/ha).\naureolada: Oxicloreto de Cobre (2,5kg/ha).\n\nRESPONDA SOMENTE JSON:\n{\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"exemplo de marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":1.5,\"dose_max\":2.5,\"unidade\":\"kg|L|mL\",\"por\":\"hectare\",\"proporcao_por_litro\":2.5,\"unidade_proporcao\":\"g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
+
+  return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia." + contextoRegional + "\n\n" + introVideo +
+
+"REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. Ferrugem, Cercosporiose, Antracnose e deficiencias nutricionais FREQUENTEMENTE ocorrem juntas na mesma folha — liste TODOS.\n\n" +
+
+"PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix):\n" +
+"A ferrugem e a doenca mais importante e comum do cafe no Brasil. SEMPRE verifique:\n" +
+"- Manchas AMARELO-ALARANJADAS arredondadas na face INFERIOR da folha\n" +
+"- Po ou pustulas alaranjadas (uredosporos) visiveis na face inferior\n" +
+"- Manchas cloroticas amarelas correspondentes na face SUPERIOR\n" +
+"Se encontrar QUALQUER sinal alaranjado ou amarelo-ferrugem: DIAGNOSTIQUE como ferrugem.\n" +
+"NAO confunda com cercosporiose (que tem centro BRANCO-ACINZENTADO, diferente da cor alaranjada da ferrugem).\n" +
+"NAO agrupe ferrugem com cercosporiose — sao doencas distintas com tratamentos distintos.\n\n" +
+
+"DOENCAS FUNGICAS E PRAGAS (verifique TODAS — podem coexistir):\n" +
+"ferrugem=po ou pustulas ALARANJADAS na face INFERIOR. Manchas amarelas na face superior. A MAIS COMUM do cafe.\n" +
+"cercosporiose=manchas CIRCULARES com centro BRANCO-ACINZENTADO e halo amarelo-alaranjado FINO ao redor.\n" +
+"antracnose=lesoes escuras AFUNDADAS quase pretas irregulares. Frequente junto com cercosporiose.\n" +
+"phoma=manchas NECROTICAS irregulares SEM halo em FOLHAS NOVAS no TOPO da planta.\n" +
+"aureolada=manchas pardas GRANDES com HALO AMARELO GRANDE. Causa SECA DE RAMOS.\n" +
+"bicho=TRILHAS SERPENTINAS castanhas DENTRO da lamina foliar.\n" +
+"ascochyta=manchas marrons claras com bordas irregulares.\n" +
+"manteigosa=areas amarelas translucidas entre as nervuras.\n" +
+"roseliniose=podridao escura nos ramos e base do caule.\n" +
+"helmintosporiose=manchas grandes marrons com halos concentricos.\n" +
+"fusariose=SECA DA COPA DE CIMA PARA BAIXO.\n" +
+"acaro=folha BRONZEADA acinzentada na face inferior.\n" +
+"cochonilha=massas brancas algodonosas em ramos e folhas.\n" +
+"broca=FURO CIRCULAR pequeno e preciso nos frutos.\n\n" +
+
+"DEFICIENCIAS NUTRICIONAIS (verifique TODAS — coexistem com doencas):\n" +
+"nitrogenio=folha TODA AMARELA UNIFORME nas folhas VELHAS.\n" +
+"magnesio=nervuras VERDES com tecido AMARELO internerval nas folhas VELHAS.\n" +
+"potassio=QUEIMA de bordas e PONTAS nas folhas VELHAS. Coloracao geral palida clorotica.\n" +
+"ferro=folhas NOVAS ESBRANQUICADAS com NERVURAS VERDES.\n" +
+"calcio=folhas NOVAS deformadas ENCURVADAS com ponteiros mortos.\n" +
+"boro=folhas NOVAS QUEBRADICAS DEFORMADAS com ponteiros mortos.\n" +
+"zinco=folhas NOVAS ESTREITAS aspecto ROSETA.\n" +
+"manganes=PONTUACOES cloroticas pequenas nas folhas NOVAS.\n" +
+"fosforo=folhas ESCURECIDAS verde-escura a preta.\n" +
+"enxofre=folhas NOVAS amarelas UNIFORMES.\n" +
+"cobre=manchas NECROTICAS em folhas NOVAS deformadas.\n" +
+"estresse_hidrico=folha MURCHA bordas secas com enrolamento.\n" +
+"escaldadura=manchas amarelas irregulares por excesso de sol direto.\n" +
+"fitotoxicidade=manchas necroticas apos aplicacao de produto.\n\n" +
+
+"SE FOR FRUTO:\n" +
+"fruto_verde=fruto verde saudavel.\n" +
+"fruto_maduro=fruto cereja no ponto ideal de colheita.\n" +
+"fruto_passado=fruto seco mumificado.\n\n" +
+
+"PRODUTOS E DOSES PARA O JSON:\n" +
+"ferrugem fungicidas: [{nome:Tebuconazol 200SC,nome_comercial:Folicur,tipo:sistemico,dose_min:0.75,dose_max:1.0,unidade:L,por:hectare,proporcao_por_litro:0.05,unidade_proporcao:mL,intervalo_reaplicacao:21,carencia_dias:7},{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.0,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
+"cercosporiose fungicidas: [{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.0,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7},{nome:Tebuconazol 200SC,nome_comercial:Folicur,tipo:sistemico,dose_min:0.75,dose_max:1.0,unidade:L,por:hectare,proporcao_por_litro:0.05,unidade_proporcao:mL,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
+"antracnose fungicidas: [{nome:Azoxistrobina+Difenoconazol,nome_comercial:Amistar Top,tipo:sistemico,dose_min:0.3,dose_max:0.4,unidade:L,por:hectare,proporcao_por_litro:0.3,unidade_proporcao:mL,intervalo_reaplicacao:14,carencia_dias:7}]\n" +
+"phoma fungicidas: [{nome:Tiofanato Metilico 700WP,nome_comercial:Cercobin,tipo:protetor,dose_min:1.0,dose_max:1.5,unidade:kg,por:hectare,proporcao_por_litro:1.25,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n" +
+"bicho fungicidas: [{nome:Thiamethoxam 250WG,nome_comercial:Actara,tipo:inseticida,dose_min:0.1,dose_max:0.2,unidade:kg,por:hectare,proporcao_por_litro:0.15,unidade_proporcao:g,intervalo_reaplicacao:30,carencia_dias:14}]\n" +
+"acaro fungicidas: [{nome:Abamectina 18EC,nome_comercial:Vertimec,tipo:acaricida,dose_min:0.5,dose_max:0.75,unidade:L,por:hectare,proporcao_por_litro:0.0625,unidade_proporcao:mL,intervalo_reaplicacao:21,carencia_dias:14}]\n" +
+"broca fungicidas: [{nome:Clorpirifos 480EC,nome_comercial:Lorsban,tipo:inseticida,dose_min:1.5,dose_max:2.0,unidade:L,por:hectare,proporcao_por_litro:1.75,unidade_proporcao:mL,intervalo_reaplicacao:30,carencia_dias:14}]\n" +
+"aureolada fungicidas: [{nome:Oxicloreto de Cobre 840WP,nome_comercial:Recop,tipo:protetor,dose_min:2.5,dose_max:2.5,unidade:kg,por:hectare,proporcao_por_litro:2.5,unidade_proporcao:g,intervalo_reaplicacao:21,carencia_dias:7}]\n\n" +
+
+"INSTRUCOES FINAIS OBRIGATORIAS:\n" +
+"1. Liste TODOS os problemas encontrados no array diagnosticos — sem limite de quantidade.\n" +
+"2. Ordene do mais grave para o menos grave.\n" +
+"3. Se houver manchas alaranjadas na face inferior, ferrugem DEVE obrigatoriamente aparecer no array.\n" +
+"4. Se a folha tiver coloracao geral palida ou clorotica sem brilho, inclua a deficiencia nutricional correspondente.\n" +
+"5. Diagnosticos diferentes na mesma folha sao normais e esperados — LISTE TODOS SEM EXCECAO.\n" +
+"6. Deficiencias nutricionais nao tem fungicidas — retorne fungicidas:[] para elas.\n\n" +
+
+"RESPONDA SOMENTE JSON, sem texto antes ou depois:\n" +
+"{\"diagnosticos\":[{\"diagnostico\":\"nome_exato_da_lista_acima\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descricao do sinal visual observado na imagem\",\"acao\":\"o que o produtor deve fazer em linguagem simples e direta\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"exemplo de marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":1.5,\"dose_max\":2.5,\"unidade\":\"kg|L|mL\",\"por\":\"hectare\",\"proporcao_por_litro\":2.5,\"unidade_proporcao\":\"g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
 
 app.listen(process.env.PORT || 8080, function() {

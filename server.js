@@ -335,8 +335,28 @@ app.post("/identifica-daninha", function(req, res) {
   .then(function(d) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var m = txt.match(/\{[\s\S]*\}/);
-    if (m) { res.json(JSON.parse(m[0])); }
-    else { res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Nao foi possivel identificar", acao: "Tente uma foto mais clara.", urgencia: "baixa", tipo_controle: "nenhum" }); }
+    if (m) {
+      try {
+        var resultado = JSON.parse(m[0]);
+        // Garantir campos minimos
+        if (!resultado.nome || resultado.nome === "") resultado.nome = "Planta nao identificada";
+        if (!resultado.indicador) resultado.indicador = "Nao foi possivel determinar indicador";
+        if (!resultado.acao) resultado.acao = "Tente uma foto mais proxima e com boa iluminacao.";
+        if (!resultado.urgencia) resultado.urgencia = "media";
+        if (!resultado.tipo_controle) resultado.tipo_controle = "integrado";
+        if (!resultado.produtos) resultado.produtos = [];
+        if (!resultado.alerta) resultado.alerta = "";
+        if (!resultado.manejo_preventivo) resultado.manejo_preventivo = "";
+        res.json(resultado);
+      } catch(parseErr) {
+        console.error("Erro parse daninha:", parseErr.message, "texto:", txt.substring(0,200));
+        res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Erro ao processar resposta", acao: "Tente uma foto mais clara e proxima da planta.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
+      }
+    }
+    else {
+      console.error("JSON nao encontrado na resposta daninha:", txt.substring(0,300));
+      res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Nao foi possivel identificar esta planta", acao: "Fotografe mais de perto, com boa iluminacao e mostrando folhas, flores e frutos se houver.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
+    }
   })
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });

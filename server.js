@@ -100,7 +100,7 @@ app.get("/plano/:userId", function(req, res) {
   else res.json({ plano: "gratuito", analises: 20, ativo: false });
 });
 
-// ── DIAGNÓSTICO (1 chamada) ──────────────────────
+// ── DIAGNÓSTICO ──────────────────────────────────────
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null, altitude = req.body.altitude || null;
@@ -110,7 +110,7 @@ app.post("/diagnostico", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2500, messages: [{
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{
       role: "user", content: [
         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
         { type: "text", text: prompt }
@@ -120,12 +120,73 @@ app.post("/diagnostico", function(req, res) {
   .then(function(r){ return r.json(); })
   .then(function(d){
     var txt = d.content && d.content[0] ? d.content[0].text : "";
-    var m = txt.match(/\{[\s\S]*\}/);
+    var txtLimpo = txt.replace(/```json/g,"").replace(/```/g,"").trim();
+    var m = txtLimpo.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        var resultado = JSON.parse(m[0]);
+        if (!resultado.diagnosticos || resultado.diagnosticos.length === 0) {
+          resultado.diagnosticos = [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nenhum sintoma detectado. Planta aparentemente saudável.", fungicidas: [] }];
+        }
+        res.json(resultado);
+      } catch(e) {
+        console.error("Erro parse diagnostico:", e.message, "txt:", txt.substring(0,300));
+        res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara e proxima da folha.", fungicidas: [] }] });
+      }
+    } else {
+      console.error("JSON nao encontrado. Resposta:", txt.substring(0,300));
+      res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Fotografe a folha de perto com boa iluminacao.", fungicidas: [] }] });
+    }
+  })
+  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+});
+
+// ── PLANO DE AÇÃO (chamada separada — haiku) ─────────
+app.post("/plano-acao", function(req, res) {
+  var diagnosticos = req.body.diagnosticos || [];
+  var regiao = req.body.regiao || null;
+  var KEY = process.env.ANTHROPIC_API_KEY;
+
+  if (diagnosticos.length === 0) return res.json({ urgente: "", em_21_dias: "", nutricao: "", resumo_geral: "", resumo: "" });
+
+  var regiaoCtx = regiao ? " O produtor esta na regiao " + regiao + "." : "";
+
+  var resumoDiags = diagnosticos.map(function(d, i) {
+    var fungStr = d.fungicidas && d.fungicidas.length > 0
+      ? d.fungicidas.map(function(f){ return f.nome_comercial || f.nome; }).join(", ")
+      : "sem fungicida";
+    return (i+1) + ". " + d.diagnostico + " (estagio " + d.estagio + "/5, " + d.confianca + " confianca) — produtos: " + fungStr;
+  }).join("\n");
+
+  var prompt =
+    "Voce e o Doutor Cafe, agronomista especialista." + regiaoCtx + "\n\n" +
+    "O diagnostico encontrou:\n" + resumoDiags + "\n\n" +
+    "Crie:\n" +
+    "1. RESUMO_GERAL: 2-3 frases simples explicando o que o produtor tem. Use nomes populares: " +
+    "helmintosporiose=mancha marrom com aneis, ferrugem=po laranjado embaixo da folha, " +
+    "cercosporiose=pontinhos redondos, deficiencias=falta de nutriente X.\n" +
+    "2. PLANO: consolide tratamentos. Use nomes comerciais (Folicur, Recop, Cercobin). " +
+    "Dose por hectare E por tanque de 20L. Linguagem simples.\n\n" +
+    "RESPONDA SOMENTE JSON:\n" +
+    "{\"resumo_geral\":\"2-3 frases em linguagem simples com nomes populares\",\"urgente\":\"O que fazer ESSA SEMANA com produto dose por hectare e por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias\",\"nutricao\":\"Correcao nutricional se houver deficiencia\",\"resumo\":\"Uma frase curta resumindo\"}";
+
+  fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 700, messages: [{
+      role: "user", content: [{ type: "text", text: prompt }]
+    }]})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var txtLimpo = txt.replace(/```json/g,"").replace(/```/g,"").trim();
+    var m = txtLimpo.match(/\{[\s\S]*\}/);
     if (m) {
       try { res.json(JSON.parse(m[0])); }
-      catch(e) { res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] }); }
+      catch(e) { res.json({ urgente: "", em_21_dias: "", nutricao: "", resumo_geral: "", resumo: "" }); }
     } else {
-      res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] });
+      res.json({ urgente: "", em_21_dias: "", nutricao: "", resumo_geral: "", resumo: "" });
     }
   })
   .catch(function(e){ res.status(500).json({ erro: e.message }); });

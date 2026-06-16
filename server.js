@@ -124,8 +124,15 @@ app.post("/gerar-pix", function(req, res) {
         plano: plano.nome
       });
     } else {
-      console.error("Erro MP PIX:", JSON.stringify(d));
-      res.status(500).json({ erro: "Erro ao gerar PIX", detalhe: d.message || d.error });
+      console.error("Erro MP PIX completo:", JSON.stringify(d));
+      var mensagemErro = d.message || d.error || d.cause || "Verifique o token do Mercado Pago";
+      var statusErro = d.status || d.error;
+      res.status(500).json({ 
+        erro: "Erro ao gerar PIX", 
+        detalhe: mensagemErro,
+        status: statusErro,
+        debug: JSON.stringify(d).substring(0, 300)
+      });
     }
   })
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
@@ -217,18 +224,85 @@ app.post("/diagnostico", function(req, res) {
   var regiao   = req.body.regiao   || null;
   var altitude = req.body.altitude || null;
   var KEY      = process.env.ANTHROPIC_API_KEY;
-  var prompt   = buildPrompt(regiao, altitude, false);
+
+  // ── CHAMADA 1: Identificar todos os problemas na imagem ──
+  var prompt1 = buildPrompt(regiao, altitude, false);
+
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]})
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{
+      role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
+        { type: "text", text: prompt1 }
+      ]
+    }]})
   })
   .then(function(r) { return r.json(); })
-  .then(function(d) {
-    var txt = d.content && d.content[0] ? d.content[0].text : "";
-    var m = txt.match(/\{[\s\S]*\}/);
-    if (m) { res.json(JSON.parse(m[0])); }
-    else { res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] }); }
+  .then(function(d1) {
+    var txt1 = d1.content && d1.content[0] ? d1.content[0].text : "";
+    var m1 = txt1.match(/\{[\s\S]*\}/);
+    if (!m1) {
+      return res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] });
+    }
+
+    var resultado = JSON.parse(m1[0]);
+    var diags = resultado.diagnosticos || [];
+
+    // ── CHAMADA 2: Gerar plano de ação consolidado ──
+    // Monta resumo dos diagnósticos para o modelo criar o plano
+    var resumoDiags = diags.map(function(d, i) {
+      var fungStr = d.fungicidas && d.fungicidas.length > 0
+        ? d.fungicidas.map(function(f){ return f.nome_comercial || f.nome; }).join(", ")
+        : "sem fungicida";
+      return (i+1) + ". " + d.diagnostico + " (estagio " + d.estagio + "/5, " + d.confianca + " confianca) — produtos: " + fungStr;
+    }).join("
+");
+
+    var regiaoCtx = regiao ? " O produtor esta na regiao " + regiao + "." : "";
+    var prompt2 =
+      "Voce e o Doutor Cafe, agronomista especialista em cafe." + regiaoCtx + "
+
+" +
+      "O diagnostico da folha encontrou os seguintes problemas:
+" + resumoDiags + "
+
+" +
+      "Crie um PLANO DE ACAO pratico e simples para o produtor rural, consolidando os tratamentos:
+" +
+      "- Produtos que resolvem multiplos problemas devem ser mencionados uma so vez
+" +
+      "- Use nomes comerciais dos produtos (Folicur, Recop, Cercobin, etc)
+" +
+      "- Informe dose por hectare E por tanque de 20 litros
+" +
+      "- Linguagem simples, sem termos tecnicos
+
+" +
+      "RESPONDA SOMENTE JSON:
+" +
+      "{"urgente":"O que fazer ESSA SEMANA — produto, dose por hectare, dose por tanque de 20L","em_21_dias":"O que fazer em 21 dias — produto e dose","nutricao":"Correcao nutricional se houver deficiencia, senao deixe vazio","resumo":"Uma frase resumindo a situacao da planta em linguagem simples"}";
+
+    fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 600, messages: [{
+        role: "user", content: [{ type: "text", text: prompt2 }]
+      }]})
+    })
+    .then(function(r2) { return r2.json(); })
+    .then(function(d2) {
+      var txt2 = d2.content && d2.content[0] ? d2.content[0].text : "";
+      var m2 = txt2.match(/\{[\s\S]*\}/);
+      if (m2) {
+        try { resultado.plano_acao = JSON.parse(m2[0]); } catch(e) {}
+      }
+      res.json(resultado);
+    })
+    .catch(function() {
+      // Se o plano de acao falhar, retorna so os diagnosticos sem travar
+      res.json(resultado);
+    });
   })
   .catch(function(e) { res.status(500).json({ erro: e.message }); });
 });
@@ -481,18 +555,13 @@ function buildPrompt(regiao, altitude, isVideo) {
 "5. Se a folha tiver coloracao geral palida ou clorotica sem brilho, inclua a deficiencia nutricional correspondente.\n" +
 "6. Diagnosticos diferentes na mesma folha sao normais e esperados — LISTE TODOS SEM EXCECAO.\n" +
 "7. Deficiencias nutricionais nao tem fungicidas — retorne fungicidas:[] para elas.\n" +
-"8. Se a imagem mostrar MUITAS FOLHAS SECAS CAIDAS no chao ou ramos desfolhados ao fundo, inclua helmintosporiose ou ferrugem avancada como diagnostico pois sao as principais causas de desfolha severa no cafe.\n" +
-"9. NUNCA retorne saudavel se houver qualquer mancha, lesao, necrose, descoloracao ou sintoma visivel na folha ou no contexto da imagem.\n\n" +
+"8. Se a imagem mostrar MUITAS FOLHAS SECAS CAIDAS no chao ou ramos desfolhados ao fundo, inclua helmintosporiose ou ferrugem avancada como diagnostico.\n" +
+"9. NUNCA retorne saudavel se houver qualquer mancha, lesao, necrose, descoloracao ou sintoma visivel.\n\n" +
 
-"INSTRUCAO ESPECIAL — PLANO DE ACAO:\n" +
-"Alem dos diagnosticos individuais, crie um PLANO DE ACAO consolidado que diz ao produtor exatamente o que fazer, em ordem de prioridade. O plano deve:\n" +
-"1. Consolidar produtos que resolvem multiplos problemas em uma so aplicacao\n" +
-"2. Definir O QUE fazer AGORA (essa semana), EM 21 DIAS e NA NUTRICAO\n" +
-"3. Usar linguagem simples: nome comercial do produto, dose por hectare, quando aplicar\n" +
-"4. Ser direto — o produtor precisa de UMA decisao clara, nao 5 opcoes\n\n" +
 "RESPONDA SOMENTE JSON, sem texto antes ou depois:\n" +
-"{\"plano_acao\":{\"urgente\":\"O que fazer ESSA SEMANA — produto, dose e como aplicar\",\"em_21_dias\":\"O que fazer em 21 dias — produto e dose\",\"nutricao\":\"Correcao nutricional necessaria se houver deficiencia\",\"resumo\":\"Uma frase resumindo a situacao da planta\"},\"diagnosticos\":[{\"diagnostico\":\"nome_exato_da_lista_acima\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descricao do sinal visual observado na imagem\",\"acao\":\"o que o produtor deve fazer em linguagem simples e direta\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"exemplo de marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":1.5,\"dose_max\":2.5,\"unidade\":\"kg|L|mL\",\"por\":\"hectare\",\"proporcao_por_litro\":2.5,\"unidade_proporcao\":\"g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
+"{\"diagnosticos\":[{\"diagnostico\":\"nome_exato_da_lista_acima\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descricao do sinal visual observado na imagem\",\"acao\":\"o que o produtor deve fazer em linguagem simples e direta\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"exemplo de marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":1.5,\"dose_max\":2.5,\"unidade\":\"kg|L|mL\",\"por\":\"hectare\",\"proporcao_por_litro\":2.5,\"unidade_proporcao\":\"g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
+
 
 app.listen(process.env.PORT || 8080, function() {
   console.log("Servidor Doutor Cafe ok");

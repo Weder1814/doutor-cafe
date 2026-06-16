@@ -344,7 +344,7 @@ app.post("/identifica-daninha", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1500, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]})
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]})
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
@@ -484,8 +484,14 @@ function buildPrompt(regiao, altitude, isVideo) {
 "8. Se a imagem mostrar MUITAS FOLHAS SECAS CAIDAS no chao ou ramos desfolhados ao fundo, inclua helmintosporiose ou ferrugem avancada como diagnostico pois sao as principais causas de desfolha severa no cafe.\n" +
 "9. NUNCA retorne saudavel se houver qualquer mancha, lesao, necrose, descoloracao ou sintoma visivel na folha ou no contexto da imagem.\n\n" +
 
+"INSTRUCAO ESPECIAL — PLANO DE ACAO:\n" +
+"Alem dos diagnosticos individuais, crie um PLANO DE ACAO consolidado que diz ao produtor exatamente o que fazer, em ordem de prioridade. O plano deve:\n" +
+"1. Consolidar produtos que resolvem multiplos problemas em uma so aplicacao\n" +
+"2. Definir O QUE fazer AGORA (essa semana), EM 21 DIAS e NA NUTRICAO\n" +
+"3. Usar linguagem simples: nome comercial do produto, dose por hectare, quando aplicar\n" +
+"4. Ser direto — o produtor precisa de UMA decisao clara, nao 5 opcoes\n\n" +
 "RESPONDA SOMENTE JSON, sem texto antes ou depois:\n" +
-"{\"diagnosticos\":[{\"diagnostico\":\"nome_exato_da_lista_acima\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descricao do sinal visual observado na imagem\",\"acao\":\"o que o produtor deve fazer em linguagem simples e direta\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"exemplo de marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":1.5,\"dose_max\":2.5,\"unidade\":\"kg|L|mL\",\"por\":\"hectare\",\"proporcao_por_litro\":2.5,\"unidade_proporcao\":\"g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
+"{\"plano_acao\":{\"urgente\":\"O que fazer ESSA SEMANA — produto, dose e como aplicar\",\"em_21_dias\":\"O que fazer em 21 dias — produto e dose\",\"nutricao\":\"Correcao nutricional necessaria se houver deficiencia\",\"resumo\":\"Uma frase resumindo a situacao da planta\"},\"diagnosticos\":[{\"diagnostico\":\"nome_exato_da_lista_acima\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"descricao do sinal visual observado na imagem\",\"acao\":\"o que o produtor deve fazer em linguagem simples e direta\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"exemplo de marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":1.5,\"dose_max\":2.5,\"unidade\":\"kg|L|mL\",\"por\":\"hectare\",\"proporcao_por_litro\":2.5,\"unidade_proporcao\":\"g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
 
 app.listen(process.env.PORT || 8080, function() {

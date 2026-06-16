@@ -110,7 +110,7 @@ app.post("/diagnostico", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1500, messages: [{
       role: "user", content: [
         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
         { type: "text", text: prompt }
@@ -376,13 +376,11 @@ function buildPrompt(regiao, altitude, isVideo) {
 "6. Deficiencias nutricionais: fungicidas:[].\n" +
 "7. NUNCA retorne saudavel se houver qualquer sintoma visivel.\n\n" +
 
-"ALEM DOS DIAGNOSTICOS, retorne tambem:\n" +
-"- resumo_geral: 2-3 frases em linguagem simples explicando o que o produtor tem, usando nomes populares:\n" +
-"  ferrugem=po laranjado embaixo da folha, helmintosporiose=mancha marrom com aneis, cercosporiose=pontinhos redondos, antracnose=manchas pretas afundadas, deficiencias=falta de nutriente X\n" +
-"- plano_acao com urgente/em_21_dias/nutricao/resumo: consolide os tratamentos numa orientacao simples\n\n" +
-"RESPONDA SOMENTE JSON:\n" +
-"{\"resumo_geral\":\"2-3 frases explicando o que o produtor tem em linguagem simples com nomes populares\",\"plano_acao\":{\"urgente\":\"O que fazer ESSA SEMANA com produto nome comercial dose por hectare e por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias\",\"nutricao\":\"Correcao nutricional se houver deficiencia senao deixe vazio\",\"resumo\":\"Uma frase curta resumindo a situacao\"},\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
+"RESPONDA SOMENTE JSON sem texto antes ou depois:\n" +
+"{\"diagnosticos\":[{\"diagnostico\":\"nome_exato_da_lista\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado na imagem\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
+
+
 
 app.listen(process.env.PORT || 8080, function() {
   console.log("Servidor Doutor Cafe ok");

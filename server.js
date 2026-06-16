@@ -100,74 +100,36 @@ app.get("/plano/:userId", function(req, res) {
   else res.json({ plano: "gratuito", analises: 20, ativo: false });
 });
 
-// ── DIAGNÓSTICO (2 chamadas) ──────────────────────
+// ── DIAGNÓSTICO (1 chamada) ──────────────────────
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null, altitude = req.body.altitude || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
-  var prompt1 = buildPrompt(regiao, altitude, false);
+  var prompt = buildPrompt(regiao, altitude, false);
 
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: [
-      { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
-      { type: "text", text: prompt1 }
-    ]}]})
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2500, messages: [{
+      role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
+        { type: "text", text: prompt }
+      ]
+    }]})
   })
   .then(function(r){ return r.json(); })
-  .then(function(d1){
-    var txt1 = d1.content && d1.content[0] ? d1.content[0].text : "";
-    var m1 = txt1.match(/\{[\s\S]*\}/);
-    if (!m1) return res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] });
-    var resultado = JSON.parse(m1[0]);
-    var diags = resultado.diagnosticos || [];
-
-    // Chamada 2: Plano de ação
-    var resumoDiags = diags.map(function(d, i){
-      var fungStr = d.fungicidas && d.fungicidas.length > 0 ? d.fungicidas.map(function(f){ return f.nome_comercial || f.nome; }).join(", ") : "sem fungicida";
-      return (i+1) + ". " + d.diagnostico + " (estagio " + d.estagio + "/5, " + d.confianca + " confianca) — produtos: " + fungStr;
-    }).join("\n");
-
-    var regiaoCtx = regiao ? " O produtor esta na regiao " + regiao + "." : "";
-    var prompt2 = "Voce e o Doutor Cafe, agronomista especialista em cafe." + regiaoCtx + "\n\n" +
-      "O diagnostico da folha encontrou os seguintes problemas:\n" + resumoDiags + "\n\n" +
-      "Faca duas coisas:\n\n" +
-      "1. RESUMO GERAL: Explique em 2-3 frases simples o que o produtor tem na planta. Use nomes populares:\n" +
-      "   - helmintosporiose = mancha marrom com aneis (causa queda das folhas)\n" +
-      "   - ferrugem = po laranjado embaixo da folha (a mais comum do cafe)\n" +
-      "   - cercosporiose = pontinhos redondos com centro claro\n" +
-      "   - antracnose = manchas pretas afundadas\n" +
-      "   - phoma = manchas nas folhas novas do topo\n" +
-      "   - bicho mineiro = trilhas dentro da folha\n" +
-      "   - acaro = folha bronzeada\n" +
-      "   - nitrogenio/magnesio/potassio/ferro/etc = falta de nutriente X\n" +
-      "   Exemplo: Sua planta esta com ferrugem (po laranjado embaixo da folha), mancha marrom com aneis e falta de potassio. Tudo foi pego cedo e da para controlar bem.\n\n" +
-      "2. PLANO DE ACAO: Consolide os tratamentos:\n" +
-      "   - Produtos que resolvem multiplos problemas: mencione uma so vez\n" +
-      "   - Use nomes comerciais (Folicur, Recop, Cercobin, etc)\n" +
-      "   - Dose por hectare E por tanque de 20 litros\n" +
-      "   - Linguagem simples, sem termos tecnicos\n\n" +
-      "RESPONDA SOMENTE JSON:\n" +
-      "{\"resumo_geral\":\"2-3 frases explicando o que o produtor tem, usando nomes populares das doencas\",\"urgente\":\"O que fazer ESSA SEMANA — produto, dose por hectare e por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias — produto e dose\",\"nutricao\":\"Correcao nutricional se houver deficiencia, senao deixe vazio\",\"resumo\":\"Uma frase curta resumindo a situacao\"}";
-
-    fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 600, messages: [{ role: "user", content: [{ type: "text", text: prompt2 }]}]})
-    })
-    .then(function(r2){ return r2.json(); })
-    .then(function(d2){
-      var txt2 = d2.content && d2.content[0] ? d2.content[0].text : "";
-      var m2 = txt2.match(/\{[\s\S]*\}/);
-      if (m2) { try { resultado.plano_acao = JSON.parse(m2[0]); } catch(e) {} }
-      res.json(resultado);
-    })
-    .catch(function(){ res.json(resultado); });
+  .then(function(d){
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var m = txt.match(/\{[\s\S]*\}/);
+    if (m) {
+      try { res.json(JSON.parse(m[0])); }
+      catch(e) { res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] }); }
+    } else {
+      res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] });
+    }
   })
   .catch(function(e){ res.status(500).json({ erro: e.message }); });
 });
-
 // ── DIAGNÓSTICO VÍDEO ──────────────────────────
 app.post("/diagnostico-video", function(req, res) {
   var frames = req.body.frames, regiao = req.body.regiao || null, altitude = req.body.altitude || null;
@@ -353,8 +315,12 @@ function buildPrompt(regiao, altitude, isVideo) {
 "6. Deficiencias nutricionais: fungicidas:[].\n" +
 "7. NUNCA retorne saudavel se houver qualquer sintoma visivel.\n\n" +
 
+"ALEM DOS DIAGNOSTICOS, retorne tambem:\n" +
+"- resumo_geral: 2-3 frases em linguagem simples explicando o que o produtor tem, usando nomes populares:\n" +
+"  ferrugem=po laranjado embaixo da folha, helmintosporiose=mancha marrom com aneis, cercosporiose=pontinhos redondos, antracnose=manchas pretas afundadas, deficiencias=falta de nutriente X\n" +
+"- plano_acao com urgente/em_21_dias/nutricao/resumo: consolide os tratamentos numa orientacao simples\n\n" +
 "RESPONDA SOMENTE JSON:\n" +
-"{\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
+"{\"resumo_geral\":\"2-3 frases explicando o que o produtor tem em linguagem simples com nomes populares\",\"plano_acao\":{\"urgente\":\"O que fazer ESSA SEMANA com produto nome comercial dose por hectare e por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias\",\"nutricao\":\"Correcao nutricional se houver deficiencia senao deixe vazio\",\"resumo\":\"Uma frase curta resumindo a situacao\"},\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
 
 app.listen(process.env.PORT || 8080, function() {

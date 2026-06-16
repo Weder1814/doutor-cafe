@@ -256,33 +256,21 @@ app.post("/diagnostico", function(req, res) {
         ? d.fungicidas.map(function(f){ return f.nome_comercial || f.nome; }).join(", ")
         : "sem fungicida";
       return (i+1) + ". " + d.diagnostico + " (estagio " + d.estagio + "/5, " + d.confianca + " confianca) — produtos: " + fungStr;
-    }).join("
-");
+    }).join("\n");
 
     var regiaoCtx = regiao ? " O produtor esta na regiao " + regiao + "." : "";
     var prompt2 =
-      "Voce e o Doutor Cafe, agronomista especialista em cafe." + regiaoCtx + "
+      "Voce e o Doutor Cafe, agronomista especialista em cafe." + regiaoCtx + "\n\n" +
+      "O diagnostico da folha encontrou os seguintes problemas:\n" + resumoDiags + "\n\n" +
+      "Crie um PLANO DE ACAO pratico e simples para o produtor rural, consolidando os tratamentos:\n" +
+      "- Produtos que resolvem multiplos problemas devem ser mencionados uma so vez\n" +
+      "- Use nomes comerciais dos produtos (Folicur, Recop, Cercobin, etc)\n" +
+      "- Informe dose por hectare E por tanque de 20 litros\n" +
+      "- Linguagem simples, sem termos tecnicos\n\n" +
+      "RESPONDA SOMENTE JSON:\n" +
+      "{\"urgente\":\"O que fazer ESSA SEMANA — produto, dose por hectare, dose por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias — produto e dose\",\"nutricao\":\"Correcao nutricional se houver deficiencia, senao deixe vazio\",\"resumo\":\"Uma frase resumindo a situacao da planta em linguagem simples\"}";
 
-" +
-      "O diagnostico da folha encontrou os seguintes problemas:
-" + resumoDiags + "
-
-" +
-      "Crie um PLANO DE ACAO pratico e simples para o produtor rural, consolidando os tratamentos:
-" +
-      "- Produtos que resolvem multiplos problemas devem ser mencionados uma so vez
-" +
-      "- Use nomes comerciais dos produtos (Folicur, Recop, Cercobin, etc)
-" +
-      "- Informe dose por hectare E por tanque de 20 litros
-" +
-      "- Linguagem simples, sem termos tecnicos
-
-" +
-      "RESPONDA SOMENTE JSON:
-" +
-      "{"urgente":"O que fazer ESSA SEMANA — produto, dose por hectare, dose por tanque de 20L","em_21_dias":"O que fazer em 21 dias — produto e dose","nutricao":"Correcao nutricional se houver deficiencia, senao deixe vazio","resumo":"Uma frase resumindo a situacao da planta em linguagem simples"}";
-
+    
     fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },

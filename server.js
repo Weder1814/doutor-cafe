@@ -110,7 +110,7 @@ app.post("/diagnostico", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1500, messages: [{
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{
       role: "user", content: [
         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
         { type: "text", text: prompt }
@@ -120,25 +120,59 @@ app.post("/diagnostico", function(req, res) {
   .then(function(r){ return r.json(); })
   .then(function(d){
     var txt = d.content && d.content[0] ? d.content[0].text : "";
-    var txtLimpo = txt.replace(/```json/g,"").replace(/```/g,"").trim();
-    var m = txtLimpo.match(/\{[\s\S]*\}/);
-    if (m) {
-      try {
-        var resultado = JSON.parse(m[0]);
-        if (!resultado.diagnosticos || resultado.diagnosticos.length === 0) {
-          resultado.diagnosticos = [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nenhum sintoma detectado. Planta aparentemente saudável.", fungicidas: [] }];
-        }
-        res.json(resultado);
-      } catch(e) {
-        console.error("Erro parse diagnostico:", e.message, "txt:", txt.substring(0,300));
-        res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara e proxima da folha.", fungicidas: [] }] });
+    console.log("Resposta modelo (primeiros 200 chars):", txt.substring(0, 200));
+
+    // Parse robusto — tenta 3 estratégias
+    var resultado = null;
+
+    // Estratégia 1: limpar e fazer match
+    try {
+      var txtLimpo = txt.replace(/```json/gi,"").replace(/```/g,"").trim();
+      var inicio = txtLimpo.indexOf("{");
+      var fim = txtLimpo.lastIndexOf("}");
+      if (inicio > -1 && fim > inicio) {
+        resultado = JSON.parse(txtLimpo.substring(inicio, fim + 1));
       }
+    } catch(e1) {
+      console.error("Estrategia 1 falhou:", e1.message);
+    }
+
+    // Estratégia 2: regex greedier
+    if (!resultado) {
+      try {
+        var m = txt.match(/\{"diagnosticos"[\s\S]*\}/);
+        if (m) resultado = JSON.parse(m[0]);
+      } catch(e2) {
+        console.error("Estrategia 2 falhou:", e2.message);
+      }
+    }
+
+    // Estratégia 3: extrair cada diagnóstico individualmente
+    if (!resultado) {
+      try {
+        var diags = [];
+        var matches = txt.match(/\{"diagnostico"[\s\S]*?"fungicidas":\s*\[[\s\S]*?\]\s*\}/g);
+        if (matches && matches.length > 0) {
+          matches.forEach(function(m){ try { diags.push(JSON.parse(m)); } catch(e){} });
+        }
+        if (diags.length > 0) resultado = { diagnosticos: diags };
+      } catch(e3) {
+        console.error("Estrategia 3 falhou:", e3.message);
+      }
+    }
+
+    if (resultado && resultado.diagnosticos && resultado.diagnosticos.length > 0) {
+      console.log("✅ Parse OK:", resultado.diagnosticos.length, "diagnosticos");
+      res.json(resultado);
     } else {
-      console.error("JSON nao encontrado. Resposta:", txt.substring(0,300));
-      res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Fotografe a folha de perto com boa iluminacao.", fungicidas: [] }] });
+      console.error("❌ Parse falhou. Resposta completa:", txt.substring(0, 500));
+      res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: txt.substring(0,100), acao: "Nao foi possivel analisar. Tente uma foto mais clara com boa iluminacao.", fungicidas: [] }] });
     }
   })
-  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+  .catch(function(e){
+    console.error("Erro fetch diagnostico:", e.message);
+    res.status(500).json({ erro: e.message });
+  });
 });
 
 // ── PLANO DE AÇÃO (chamada separada — haiku) ─────────

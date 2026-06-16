@@ -132,18 +132,29 @@ app.post("/diagnostico", function(req, res) {
     var regiaoCtx = regiao ? " O produtor esta na regiao " + regiao + "." : "";
     var prompt2 = "Voce e o Doutor Cafe, agronomista especialista em cafe." + regiaoCtx + "\n\n" +
       "O diagnostico da folha encontrou os seguintes problemas:\n" + resumoDiags + "\n\n" +
-      "Crie um PLANO DE ACAO pratico e simples para o produtor rural, consolidando os tratamentos:\n" +
-      "- Produtos que resolvem multiplos problemas devem ser mencionados uma so vez\n" +
-      "- Use nomes comerciais dos produtos (Folicur, Recop, Cercobin, etc)\n" +
-      "- Informe dose por hectare E por tanque de 20 litros\n" +
-      "- Linguagem simples, sem termos tecnicos\n\n" +
+      "Faca duas coisas:\n\n" +
+      "1. RESUMO GERAL: Explique em 2-3 frases simples o que o produtor tem na planta. Use nomes populares:\n" +
+      "   - helmintosporiose = mancha marrom com aneis (causa queda das folhas)\n" +
+      "   - ferrugem = po laranjado embaixo da folha (a mais comum do cafe)\n" +
+      "   - cercosporiose = pontinhos redondos com centro claro\n" +
+      "   - antracnose = manchas pretas afundadas\n" +
+      "   - phoma = manchas nas folhas novas do topo\n" +
+      "   - bicho mineiro = trilhas dentro da folha\n" +
+      "   - acaro = folha bronzeada\n" +
+      "   - nitrogenio/magnesio/potassio/ferro/etc = falta de nutriente X\n" +
+      "   Exemplo: Sua planta esta com ferrugem (po laranjado embaixo da folha), mancha marrom com aneis e falta de potassio. Tudo foi pego cedo e da para controlar bem.\n\n" +
+      "2. PLANO DE ACAO: Consolide os tratamentos:\n" +
+      "   - Produtos que resolvem multiplos problemas: mencione uma so vez\n" +
+      "   - Use nomes comerciais (Folicur, Recop, Cercobin, etc)\n" +
+      "   - Dose por hectare E por tanque de 20 litros\n" +
+      "   - Linguagem simples, sem termos tecnicos\n\n" +
       "RESPONDA SOMENTE JSON:\n" +
-      "{\"urgente\":\"O que fazer ESSA SEMANA — produto, dose por hectare, dose por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias — produto e dose\",\"nutricao\":\"Correcao nutricional se houver deficiencia, senao deixe vazio\",\"resumo\":\"Uma frase resumindo a situacao da planta em linguagem simples\"}";
+      "{\"resumo_geral\":\"2-3 frases explicando o que o produtor tem, usando nomes populares das doencas\",\"urgente\":\"O que fazer ESSA SEMANA — produto, dose por hectare e por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias — produto e dose\",\"nutricao\":\"Correcao nutricional se houver deficiencia, senao deixe vazio\",\"resumo\":\"Uma frase curta resumindo a situacao\"}";
 
     fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 600, messages: [{ role: "user", content: [{ type: "text", text: prompt2 }]}]})
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 600, messages: [{ role: "user", content: [{ type: "text", text: prompt2 }]}]})
     })
     .then(function(r2){ return r2.json(); })
     .then(function(d2){

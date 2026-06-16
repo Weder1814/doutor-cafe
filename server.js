@@ -22,12 +22,6 @@ app.get("/", function(req, res) {
   res.json({ status: "online", app: "Doutor Cafe API" });
 });
 
-// ── WAKE-UP ENDPOINT (novo) ──
-// O frontend chama isso ao abrir o app para "acordar" o Railway
-app.get("/ping", function(req, res) {
-  res.json({ ok: true, ts: Date.now() });
-});
-
 app.post("/cadastrar-usuario", function(req, res) {
   var userId = req.body.userId, nome = req.body.nome, celular = req.body.celular;
   var regiao = req.body.regiao || "", email = req.body.email || "";
@@ -106,64 +100,22 @@ app.get("/plano/:userId", function(req, res) {
   else res.json({ plano: "gratuito", analises: 20, ativo: false });
 });
 
-// ── PROMPT OTIMIZADO (~60% menor, mesma qualidade) ──
-function buildPrompt(regiao, altitude, isVideo) {
-  var ctx = "";
-  if (regiao) {
-    var defs = {
-      "Cerrado Mineiro":"solos acidos, deficiencia Ca Mg B, ferrugem em anos umidos",
-      "Sul de Minas":"altitude >800m, risco Phoma Cercosporiose, deficiencia Zn",
-      "Mogiana":"clima quente 22-26C, risco acaro broca em seco, deficiencia K",
-      "Matas de Minas":"alta umidade, ferrugem bicho-mineiro, deficiencia P Mg",
-      "Chapada Diamantina":"altitude elevada, Phoma, deficiencia N B",
-      "Planalto da Bahia":"clima seco, acaro vermelho, deficiencia Fe",
-      "Rondonia":"alta umidade, ferrugem antracnose cercosporiose, solos acidos",
-      "Norte do Parana":"risco geadas maio-ago, deficiencia Mn",
-      "Espirito Santo":"alta umidade, cercosporiose cochonilha",
-      "Alta Paulista":"clima quente e seco, acaro vermelho, deficiencia Zn"
-    };
-    ctx = "\nRegiao: "+regiao+(defs[regiao]?" ("+defs[regiao]+")":"")+(altitude?", "+altitude+"m":"")+"."+(altitude>900?" Risco Phoma/Cercosporiose.":"")+(altitude<600?" Risco ferrugem/acaro/broca.":"");
-  }
-
-  return "Voce e o Doutor Cafe, fitopatologista especialista em cafeicultura brasileira."+ctx+"\n"+
-(isVideo?"Analise TODOS os frames juntos como uma unica planta.\n":"")+
-"REGRA CRITICA: Liste TODOS os problemas visiveis. Ferrugem+Cercosporiose+deficiencias frequentemente ocorrem juntas — liste TODAS. NUNCA retorne saudavel se houver qualquer sintoma.\n\n"+
-"DOENCAS:\nferrugem=pustulas ALARANJADAS face inferior, manchas amarelas face superior — A MAIS COMUM\n"+
-"cercosporiose=manchas circulares centro BRANCO halo amarelo fino\nhelmintosporiose=manchas GRANDES marrom halos concentricos — causa desfolha\n"+
-"antracnose=lesoes pretas afundadas\nphoma=necrose folhas novas\naureolada=manchas pardas halo amarelo grande\nbicho=trilhas serpentinas\n"+
-"acaro=folha bronzeada face inferior\ncochonilha=massas brancas em ramos\nbroca=furo circular frutos\n\n"+
-"NUTRICAO:\nnitrogenio=folha toda amarela uniforme folhas velhas\nmagnesio=nervuras verdes tecido amarelo internerval folhas velhas\n"+
-"potassio=queima bordas folhas velhas\nferro=folhas novas brancas nervuras verdes\ncalcio=folhas novas deformadas ponteiros mortos\n"+
-"boro=folhas novas quebradicas\nzinco=folhas novas estreitas roseta\nmanganes=pontuacoes cloroticas\nfosforo=folhas verde-escuro quase preto\n"+
-"enxofre=folhas novas amarelas uniformes\ncobre=manchas necroticas folhas novas\n"+
-"estresse_hidrico=folha murcha bordas secas\nescaldadura=manchas amarelas irregulares sol\nfitotoxicidade=danos pos-aplicacao\nfruto_verde; fruto_maduro; fruto_passado\n\n"+
-"PRODUTOS:\nferrugem/cercosporiose: Tebuconazol 200SC sistemico 0.75-1L/ha prop:0.05L/20L int:21d; Oxicloreto Cobre protetor 2-2.5kg/ha prop:2.5g/20L\n"+
-"helmintosporiose: Tebuconazol 200SC 0.75-1L/ha int:14d; Tiofanato Metilico 700WP 1-1.5kg/ha prop:1.25g/20L\n"+
-"antracnose: Azoxistrobina+Difenoconazol 0.3-0.4L/ha prop:0.3mL/20L\nbicho: Thiamethoxam 250WG 0.1-0.2kg/ha\nacaro: Abamectina 18EC 0.5-0.75L/ha\nbroca: Clorpirifos 480EC 1.5-2L/ha\n\n"+
-"Ordene do mais grave ao menos grave. Deficiencias nutricionais: fungicidas:[].\n\n"+
-"RESPONDA SOMENTE JSON:\n"+
-"{\"resumo_geral\":\"2-3 frases simples com nomes populares\",\"plano_acao\":{\"urgente\":\"o que fazer essa semana com produto e dose\",\"em_21_dias\":\"proximo passo\",\"nutricao\":\"correcao nutricional ou vazio\",\"resumo\":\"frase curta\"},"+
-"\"diagnosticos\":[{\"diagnostico\":\"nome\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual\",\"acao\":\"o que fazer\","+
-"\"fungicidas\":[{\"nome\":\"generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
-}
-
-// ── DIAGNÓSTICO — max_tokens reduzido de 2500 → 1400 ──
+// ── DIAGNÓSTICO (1 chamada) ──────────────────────
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null, altitude = req.body.altitude || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
+  var prompt = buildPrompt(regiao, altitude, false);
 
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1400,  // REDUZIDO de 2500
-      messages: [{ role: "user", content: [
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2500, messages: [{
+      role: "user", content: [
         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
-        { type: "text", text: buildPrompt(regiao, altitude, false) }
-      ]}]
-    })
+        { type: "text", text: prompt }
+      ]
+    }]})
   })
   .then(function(r){ return r.json(); })
   .then(function(d){
@@ -178,98 +130,198 @@ app.post("/diagnostico", function(req, res) {
   })
   .catch(function(e){ res.status(500).json({ erro: e.message }); });
 });
-
-// ── DIAGNÓSTICO VÍDEO — max_tokens reduzido de 2000 → 1400 ──
+// ── DIAGNÓSTICO VÍDEO ──────────────────────────
 app.post("/diagnostico-video", function(req, res) {
   var frames = req.body.frames, regiao = req.body.regiao || null, altitude = req.body.altitude || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
   if (!frames || frames.length === 0) return res.status(400).json({ erro: "Nenhum frame recebido." });
-
+  var prompt = buildPrompt(regiao, altitude, true);
   var content = [];
-  frames.forEach(function(frame, i){
-    content.push({ type: "text", text: "Frame " + (i+1) + ":" });
-    content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: frame }});
-  });
-  content.push({ type: "text", text: buildPrompt(regiao, altitude, true) });
-
-  fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1400, messages: [{ role: "user", content }]})
-  })
+  frames.forEach(function(frame, i){ content.push({ type: "text", text: "Frame " + (i+1) + " de " + frames.length + ":" }); content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: frame }}); });
+  content.push({ type: "text", text: prompt });
+  fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content }]}) })
   .then(function(r){ return r.json(); })
-  .then(function(d){
-    var txt = d.content && d.content[0] ? d.content[0].text : "";
-    var m = txt.match(/\{[\s\S]*\}/);
-    if (m) res.json(JSON.parse(m[0]));
-    else res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar.", fungicidas: [] }] });
-  })
+  .then(function(d){ var txt = d.content && d.content[0] ? d.content[0].text : ""; var m = txt.match(/\{[\s\S]*\}/); if (m) res.json(JSON.parse(m[0])); else res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "media", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] }); })
   .catch(function(e){ res.status(500).json({ erro: e.message }); });
 });
 
-// ── ANÁLISE DE SOLO ──
+// ── ANÁLISE DE SOLO ──────────────────────────────
 app.post("/analise-solo", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg", regiao = req.body.regiao || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
-  var ctx = regiao ? " Regiao: " + regiao + "." : "";
-  var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura."+ctx+"\nAnalise este laudo de solo e faca recomendacoes para cafe arabica.\nRESPONDA SOMENTE JSON:\n{\"acao\":\"recomendacao completa em linguagem simples\",\"valores\":{\"pH\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"v\",\"status\":\"ok|baixo|alto\"}}}";
-
-  fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 900, messages: [{ role: "user", content: [
-      { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
-      { type: "text", text: prompt }
-    ]}]})
-  })
+  var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
+  var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper e Embrapa." + contexto + "\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}}}";
+  fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1200, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]}) })
   .then(function(r){ return r.json(); })
-  .then(function(d){
-    var txt = d.content && d.content[0] ? d.content[0].text : "";
-    var m = txt.match(/\{[\s\S]*\}/);
-    if (m) res.json(JSON.parse(m[0]));
-    else res.json({ acao: "Nao foi possivel ler o laudo. Verifique a foto.", valores: {} });
-  })
+  .then(function(d){ var txt = d.content && d.content[0] ? d.content[0].text : ""; var m = txt.match(/\{[\s\S]*\}/); if (m) res.json(JSON.parse(m[0])); else res.json({ acao: "Nao foi possivel ler o laudo. Verifique a foto e tente novamente.", valores: {} }); })
   .catch(function(e){ res.status(500).json({ erro: e.message }); });
 });
 
-// ── IDENTIFICA DANINHA ── usa Haiku (mais rápido e barato)
+// ── IDENTIFICA DANINHA ───────────────────────────
 app.post("/identifica-daninha", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg", regiao = req.body.regiao || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
-  var ctx = regiao ? " Regiao: " + regiao + "." : "";
+  var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
+  var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro." + contexto + "\n\n" +
+"Analise a imagem e identifique a planta daninha com precisao. Use o banco de dados abaixo.\n\n" +
+"=== PLANTAS DANINHAS DO CAFE ===\n\n" +
+"1. PICAO-PRETO (Bidens pilosa): folha larga, sementes com espinhos, flores amarelas. Solo fertil com manejo deficiente. PRE: Goal BR 5-6L/ha, Ametrina 800 1,5-2,5kg/ha. POS: Goal BR 6L/ha. Controlar ANTES do florescimento.\n\n" +
+"2. CAPIM-AMARGOSO (Digitaria insularis): gramínea perene 50-100cm, touceiras. Solo degradado com excesso de glifosato. Resistente ao glifosato. ACCase: Fusilade 250EW, Verdict Max 0,2-0,4L/ha, Select 240EC 0,45L/ha, Kennox 0,5-0,7L/ha.\n\n" +
+"3. CAPIM-PE-DE-GALINHA (Eleusine indica): gramínea anual 30-50cm. Solo COMPACTADO. POS: ACCase + glifosato. Galigan 240 3L/ha. Controlar com maximo 1 perfilho.\n\n" +
+"4. BUVA/VOADEIRA (Conyza spp.): planta ereta ate 2m. Solo com excesso de glifosato. Resistente ao glifosato. Controlar com MENOS de 25cm. Galigan 240EC, Heat 700WG, Aurora 400EC, Ally 600WG.\n\n" +
+"5. CARURU (Amaranthus spp.): planta 20cm-2m. Solo fertil com alto N. Hospedeiro de nematoide. Heat 700WG em plantas ate 5cm.\n\n" +
+"6. TIRIRICA (Cyperus rotundus): perene 10-60cm, folhas triangulares. Solo com DRENAGEM RUIM. Glifosato + Diuron Nortox 800WP. Pulverizacao SEQUENCIAL.\n\n" +
+"7. CORDA-DE-VIOLA (Ipomoea spp.): trepadeira ate 3m, flores roxas. Solo fertil e umido. Tolerante ao glifosato. Aurora 400EC, Ally 600WG. NAO puxar quando nos cafeeiros.\n\n" +
+"8. CAPIM-BRAQUIARIA (Urochloa spp.): ALIADA nas entrelinhas. Problema na linha do cafe. Manter 1 metro de distancia. ACCase para controle.\n\n" +
+"9. POAIA-BRANCA (Richardia brasiliensis): planta rasteira, flores brancas. Solo umido. Goal BR, Ametrina em pos-emergencia.\n\n" +
+"10. CAPIM-MARMELADA (Urochloa plantaginea): gramínea anual ate 80cm. Solo fertil e umido. ACCase em pos-emergencia.\n\n" +
+"11. TRAPOERABA (Commelina benghalensis): planta rasteira, flores azuis. Solo UMIDO. TOLERANTE ao glifosato. 2,4-D, carfentrazina.\n\n" +
+"12. GUANXUMA (Sida spp.): arbusto flores amarelas. Solo DEGRADADO. 2,4-D, metsulfurom.\n\n" +
+"13. ERVA-QUENTE (Spermacoce latifolia): planta ereta, flores brancas. Solo ACIDO. Correcao do pH. Metsulfurom, glifosato.\n\n" +
+"14. CAPIM-DE-BURRO (Cynodon dactylon): gramínea rasteira, estoloes. Solo COMPACTADO. ACCase em pos-emergencia.\n\n" +
+"15. MARIA-PRETINHA (Solanum americanum): planta 30-80cm, frutos pretos TOXICOS. Solo fertil. Glifosato, 2,4-D.\n\n" +
+"INDICADORES: Solo ACIDO=erva-quente,tiririca,capim-pe-de-galinha. Solo COMPACTADO=capim-pe-de-galinha,tiririca,capim-de-burro. Solo FERTIL=picao-preto,caruru,corda-de-viola. Solo UMIDO=tiririca,trapoeraba,poaia-branca. Excesso GLIFOSATO=buva,capim-amargoso.\n\n" +
+"Use linguagem simples para produtor rural. Sem termos tecnicos.\n\n" +
+"RESPONDA SOMENTE JSON:\n" +
+"{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo em linguagem simples\",\"acao\":\"o que fazer agora em linguagem simples\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"nome comercial do produto\",\"dose\":\"quantidade em linguagem simples\",\"momento\":\"quando aplicar\",\"como_usar\":\"instrucao pratica\"}],\"alerta\":\"aviso mais importante em linguagem simples\",\"manejo_preventivo\":\"dica pratica para evitar que se espalhe\"}";
 
-  var prompt = "Voce e o Doutor Cafe, agronomista especialista em plantas daninhas do cafe."+ctx+"\n\n"+
-"PLANTAS DANINHAS COMUNS DO CAFE:\npicao-preto=solo fertil; capim-amargoso=solo degradado resistente-glifosato; capim-pe-de-galinha=solo compactado; buva=excesso glifosato; caruru=solo fertil alto-N; tiririca=drenagem ruim; corda-de-viola=solo fertil umido; braquiaria=aliada entrelinhas problema linha; poaia-branca=solo umido; trapoeraba=solo umido tolerante-glifosato; guanxuma=solo degradado; erva-quente=solo acido; maria-pretinha=solo fertil frutos TOXICOS.\n\n"+
-"INDICADORES: Acido=erva-quente,tiririca,capim-pe-de-galinha. Compactado=capim-pe-de-galinha,tiririca. Fertil=picao-preto,caruru,corda-de-viola. Umido=tiririca,trapoeraba. Excesso-glifosato=buva,capim-amargoso.\n\n"+
-"RESPONDA SOMENTE JSON:\n"+
-"{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo em linguagem simples\",\"acao\":\"o que fazer agora\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"produto\",\"dose\":\"dose\",\"momento\":\"quando\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\",\"manejo_preventivo\":\"dica preventiva\"}";
-
-  fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 900, messages: [{ role: "user", content: [
-      { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
-      { type: "text", text: prompt }
-    ]}]})
-  })
+  fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem }}, { type: "text", text: prompt }]}]}) })
   .then(function(r){ return r.json(); })
   .then(function(d){
     var txt = d.content && d.content[0] ? d.content[0].text : "";
-    var m = txt.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
+    var txtLimpo = txt.replace(/```json/g,"").replace(/```/g,"").trim();
+    var m = txtLimpo.match(/\{[\s\S]*\}/);
     if (m) {
       try {
-        var r = JSON.parse(m[0]);
-        if (!r.nome) r.nome = "Planta nao identificada";
-        if (!r.produtos) r.produtos = [];
-        res.json(r);
+        var jsonStr = m[0].replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+        var resultado = JSON.parse(jsonStr);
+        if (!resultado.nome) resultado.nome = "Planta nao identificada";
+        if (!resultado.indicador) resultado.indicador = "Nao foi possivel determinar indicador";
+        if (!resultado.acao) resultado.acao = "Tente uma foto mais proxima e com boa iluminacao.";
+        if (!resultado.urgencia) resultado.urgencia = "media";
+        if (!resultado.tipo_controle) resultado.tipo_controle = "integrado";
+        if (!resultado.produtos) resultado.produtos = [];
+        if (!resultado.alerta) resultado.alerta = "";
+        if (!resultado.manejo_preventivo) resultado.manejo_preventivo = "";
+        res.json(resultado);
       } catch(e) {
-        res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Erro ao processar", acao: "Tente foto mais clara.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
+        res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Erro ao processar resposta", acao: "Tente uma foto mais clara.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
       }
     } else {
-      res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Nao identificada", acao: "Fotografe mais de perto.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
+      res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Nao foi possivel identificar", acao: "Fotografe mais de perto com boa iluminacao.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
     }
   }).catch(function(e){ res.status(500).json({ erro: e.message }); });
 });
+
+// ── BUILD PROMPT ─────────────────────────────────
+function buildPrompt(regiao, altitude, isVideo) {
+  var contextoRegional = "";
+  if (regiao) {
+    var deficienciasRegiao = {
+      "Cerrado Mineiro": "solos acidos com deficiencia frequente de Calcio Magnesio e Boro. Alta incidencia de ferrugem em anos umidos.",
+      "Sul de Minas": "altitudes acima de 800m favorecem Phoma e Cercosporiose. Risco de deficiencia de Zinco.",
+      "Mogiana": "regiao quente 22-26C com risco de acaro vermelho e broca em periodos secos. Deficiencia de Potassio comum.",
+      "Matas de Minas": "alta umidade favorece ferrugem e bicho-mineiro. Deficiencia de Fosforo e Magnesio.",
+      "Chapada Diamantina": "altitude elevada favorece Phoma. Deficiencia de Nitrogenio e Boro.",
+      "Planalto da Bahia": "clima seco favorece acaro vermelho. Deficiencia de Ferro em solos alcalinos.",
+      "Rondonia": "alta umidade favorece ferrugem antracnose e cercosporiose. Solos acidos.",
+      "Norte do Parana": "risco de geadas maio-agosto. Risco de deficiencia de Manganes.",
+      "Espirito Santo": "alta umidade favorece cercosporiose e cochonilha.",
+      "Alta Paulista": "clima quente e seco favorece acaro vermelho. Deficiencia de Zinco."
+    };
+    var info = deficienciasRegiao[regiao] || "regiao cafeeira brasileira.";
+    contextoRegional = "\n\nCONTEXTO REGIONAL: Produtor na regiao " + regiao + ". " + info;
+    if (altitude) {
+      contextoRegional += " Altitude: " + altitude + "m.";
+      if (altitude > 900) contextoRegional += " Altitude alta: maior risco de Phoma e Cercosporiose.";
+      if (altitude < 600) contextoRegional += " Altitude baixa: maior risco de ferrugem acaro vermelho e broca.";
+    }
+  }
+
+  var introVideo = isVideo ? "Voce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto.\n\n" : "";
+
+  return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia." + contextoRegional + "\n\n" + introVideo +
+
+"REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. Ferrugem, Cercosporiose, Antracnose, Helmintosporiose e deficiencias nutricionais FREQUENTEMENTE ocorrem juntas na mesma folha — liste TODOS. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n" +
+
+"PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix):\n" +
+"A ferrugem e a doenca mais importante e comum do cafe no Brasil. SEMPRE verifique:\n" +
+"- Manchas AMARELO-ALARANJADAS arredondadas na face INFERIOR da folha\n" +
+"- Po ou pustulas alaranjadas (uredosporos) visiveis na face inferior\n" +
+"- Manchas cloroticas amarelas correspondentes na face SUPERIOR\n" +
+"Se encontrar QUALQUER sinal alaranjado ou amarelo-ferrugem: DIAGNOSTIQUE como ferrugem.\n" +
+"NAO confunda com cercosporiose (que tem centro BRANCO-ACINZENTADO).\n" +
+"NAO agrupe ferrugem com cercosporiose — sao doencas distintas.\n\n" +
+
+"ATENCAO ESPECIAL — HELMINTOSPORIOSE:\n" +
+"helmintosporiose=manchas GRANDES marrom-escuras com HALOS CONCENTRICOS bem definidos e halo amarelo ao redor. Principal causa de DESFOLHA SEVERA.\n\n" +
+
+"DOENCAS FUNGICAS E PRAGAS (verifique TODAS):\n" +
+"ferrugem=pustulas ALARANJADAS face INFERIOR. Manchas amarelas face superior. A MAIS COMUM.\n" +
+"cercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\n" +
+"helmintosporiose=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo. Causa desfolha.\n" +
+"antracnose=lesoes AFUNDADAS pretas irregulares.\n" +
+"phoma=manchas NECROTICAS sem halo FOLHAS NOVAS no TOPO.\n" +
+"aureolada=manchas pardas GRANDES HALO AMARELO GRANDE seca ramos.\n" +
+"bicho=TRILHAS SERPENTINAS castanhas dentro da folha.\n" +
+"ascochyta=manchas marrons claras bordas irregulares.\n" +
+"manteigosa=areas amarelas translucidas entre nervuras.\n" +
+"roseliniose=podridao escura ramos e base do caule.\n" +
+"fusariose=SECA DA COPA DE CIMA PARA BAIXO.\n" +
+"acaro=folha BRONZEADA acinzentada face inferior.\n" +
+"cochonilha=massas BRANCAS algodonosas em ramos.\n" +
+"broca=FURO CIRCULAR nos frutos.\n\n" +
+
+"DEFICIENCIAS NUTRICIONAIS (verifique TODAS):\n" +
+"nitrogenio=folha TODA AMARELA UNIFORME folhas velhas.\n" +
+"magnesio=nervuras VERDES tecido AMARELO internerval folhas velhas.\n" +
+"potassio=QUEIMA bordas e pontas folhas velhas, coloracao palida.\n" +
+"ferro=folhas NOVAS ESBRANQUICADAS nervuras verdes.\n" +
+"calcio=folhas NOVAS deformadas ENCURVADAS ponteiros mortos.\n" +
+"boro=folhas NOVAS QUEBRADICAS deformadas.\n" +
+"zinco=folhas NOVAS ESTREITAS aspecto roseta.\n" +
+"manganes=PONTUACOES cloroticas folhas novas.\n" +
+"fosforo=folhas ESCURECIDAS verde-escuro a preto.\n" +
+"enxofre=folhas NOVAS amarelas UNIFORMES.\n" +
+"cobre=manchas NECROTICAS folhas NOVAS deformadas.\n" +
+"estresse_hidrico=folha MURCHA bordas secas enroladas.\n" +
+"escaldadura=manchas amarelas irregulares excesso de sol.\n" +
+"fitotoxicidade=manchas necroticas apos aplicacao.\n\n" +
+
+"SE FOR FRUTO:\n" +
+"fruto_verde=fruto verde saudavel.\n" +
+"fruto_maduro=fruto cereja no ponto ideal.\n" +
+"fruto_passado=fruto seco mumificado.\n\n" +
+
+"PRODUTOS E DOSES:\n" +
+"ferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.05 unidade_proporcao:L intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\n" +
+"cercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\n" +
+"helmintosporiose: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\n" +
+"antracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\n" +
+"phoma: Tiofanato Metilico 700WP protetor 1-1,5kg/ha.\n" +
+"bicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha.\n" +
+"acaro: Abamectina 18EC acaricida 0,5-0,75L/ha.\n" +
+"broca: Clorpirifos 480EC inseticida 1,5-2L/ha.\n\n" +
+
+"INSTRUCOES FINAIS:\n" +
+"1. Liste TODOS os problemas — sem limite.\n" +
+"2. Ordene do mais grave para o menos grave.\n" +
+"3. Manchas alaranjadas = ferrugem OBRIGATORIAMENTE no array.\n" +
+"4. Manchas grandes marrons com halos = helmintosporiose OBRIGATORIAMENTE.\n" +
+"5. Folha palida clorotica = inclua deficiencia nutricional.\n" +
+"6. Deficiencias nutricionais: fungicidas:[].\n" +
+"7. NUNCA retorne saudavel se houver qualquer sintoma visivel.\n\n" +
+
+"ALEM DOS DIAGNOSTICOS, retorne tambem:\n" +
+"- resumo_geral: 2-3 frases em linguagem simples explicando o que o produtor tem, usando nomes populares:\n" +
+"  ferrugem=po laranjado embaixo da folha, helmintosporiose=mancha marrom com aneis, cercosporiose=pontinhos redondos, antracnose=manchas pretas afundadas, deficiencias=falta de nutriente X\n" +
+"- plano_acao com urgente/em_21_dias/nutricao/resumo: consolide os tratamentos numa orientacao simples\n\n" +
+"RESPONDA SOMENTE JSON:\n" +
+"{\"resumo_geral\":\"2-3 frases explicando o que o produtor tem em linguagem simples com nomes populares\",\"plano_acao\":{\"urgente\":\"O que fazer ESSA SEMANA com produto nome comercial dose por hectare e por tanque de 20L\",\"em_21_dias\":\"O que fazer em 21 dias\",\"nutricao\":\"Correcao nutricional se houver deficiencia senao deixe vazio\",\"resumo\":\"Uma frase curta resumindo a situacao\"},\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
+}
 
 app.listen(process.env.PORT || 8080, function() {
   console.log("Servidor Doutor Cafe ok");

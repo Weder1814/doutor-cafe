@@ -1,5 +1,6 @@
 var express = require("express");
 var cors = require("cors");
+var { Pool } = require("pg");
 var app = express();
 
 app.use(cors());
@@ -8,15 +9,42 @@ app.use(express.json({ limit: "50mb" }));
 var MP_TOKEN = process.env.MP_ACCESS_TOKEN;
 var BASE_URL = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
 
-var PLANOS = {
-  basico_mensal:  { nome: "Doutor Café Básico Mensal",  valor: 32.90,  analises: 120 },
-  basico_anual:   { nome: "Doutor Café Básico Anual",   valor: 299.90, analises: 120 },
-  pro_mensal:     { nome: "Doutor Café Pro Mensal",     valor: 49.90,  analises: 999999 },
-  pro_anual:      { nome: "Doutor Café Pro Anual",      valor: 499.90, analises: 999999 }
-};
+// ── PostgreSQL ──────────────────────────────────────────
+var pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
 
-var usuarios = {};
-var cadastros = [];
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id SERIAL PRIMARY KEY,
+      user_id VARCHAR(100) UNIQUE NOT NULL,
+      cpf VARCHAR(14) UNIQUE,
+      nome VARCHAR(200) NOT NULL,
+      celular VARCHAR(20),
+      pin VARCHAR(4),
+      email VARCHAR(200),
+      regiao VARCHAR(100),
+      plano VARCHAR(50) DEFAULT 'gratuito',
+      plano_id VARCHAR(100),
+      analises_usadas INTEGER DEFAULT 0,
+      criado_em TIMESTAMP DEFAULT NOW(),
+      atualizado_em TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  console.log("✅ Banco de dados pronto");
+}
+initDB().catch(function(e){ console.error("DB init erro:", e.message); });
+
+var PLANOS = {
+  basico_mensal:  { nome: "Básico Mensal",  valor: 29.90, analises: 150 },
+  basico_anual:   { nome: "Básico Anual",   valor: 299.90, analises: 150 },
+  pro_mensal:     { nome: "Pro Mensal",     valor: 39.90, analises: 300 },
+  pro_anual:      { nome: "Pro Anual",      valor: 399.90, analises: 300 },
+  premium_mensal: { nome: "Premium Mensal", valor: 49.90, analises: 450 },
+  premium_anual:  { nome: "Premium Anual",  valor: 499.90, analises: 450 }
+};
 
 app.get("/", function(req, res) {
   res.json({ status: "online", app: "Doutor Cafe API" });
@@ -27,23 +55,75 @@ app.get("/ping", function(req, res) {
 });
 
 // ── CADASTRAR USUÁRIO ────────────────────────────
-app.post("/cadastrar-usuario", function(req, res) {
-  var userId = req.body.userId, nome = req.body.nome, celular = req.body.celular;
+app.post("/cadastrar-usuario", async function(req, res) {
+  var userId = req.body.userId, nome = req.body.nome;
+  var celular = req.body.celular || "", cpf = req.body.cpf || "";
   var regiao = req.body.regiao || "", email = req.body.email || "";
-  if (!userId || !nome || !celular) return res.status(400).json({ erro: "Nome e celular são obrigatórios." });
-  var jaExiste = cadastros.find(function(c){ return c.userId === userId; });
-  if (jaExiste) return res.json({ sucesso: true, jaExistia: true, analises_bonus: 10 });
-  cadastros.push({ userId: userId, nome: nome, celular: celular, regiao: regiao, email: email, dataCadastro: new Date().toISOString() });
-  console.log("Novo cadastro:", nome, celular, regiao);
-  res.json({ sucesso: true, jaExistia: false, analises_bonus: 10 });
+  if (!userId || !nome) return res.status(400).json({ erro: "Nome obrigatório." });
+  try {
+    var cpfLimpo = cpf.replace(/[^0-9]/g, "");
+    var pin = (req.body.pin || "").replace(/[^0-9]/g, "").substr(0, 4);
+    await pool.query(
+      `INSERT INTO usuarios (user_id, cpf, nome, celular, pin, email, regiao)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id) DO UPDATE SET
+         nome = EXCLUDED.nome, celular = EXCLUDED.celular,
+         pin = COALESCE(EXCLUDED.pin, usuarios.pin),
+         email = EXCLUDED.email, regiao = EXCLUDED.regiao,
+         atualizado_em = NOW()`,
+      [userId, cpfLimpo || null, nome, celular, pin || null, email, regiao]
+    );
+    console.log("✅ Usuário salvo:", nome, cpfLimpo ? "(CPF: "+cpfLimpo.substr(0,3)+"...)" : "");
+    res.json({ ok: true, userId: userId });
+  } catch(e) {
+    console.error("Erro cadastrar:", e.message);
+    res.status(500).json({ erro: e.message });
+  }
 });
 
-app.get("/usuarios", function(req, res) {
-  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro: "Acesso negado." });
-  res.json({ total: cadastros.length, cadastros: cadastros.map(function(c){ return { nome:c.nome, celular:c.celular, regiao:c.regiao, email:c.email, dataCadastro:c.dataCadastro }; }) });
+// Login pelo CPF — recupera conta em novo dispositivo
+app.post("/entrar", async function(req, res) {
+  var celular = (req.body.celular || "").replace(/[^0-9]/g, "");
+  var pin = (req.body.pin || "").replace(/[^0-9]/g, "");
+  if (!celular || celular.length < 10) return res.status(400).json({ erro: "Celular inválido." });
+  if (!pin || pin.length !== 4) return res.status(400).json({ erro: "PIN deve ter 4 dígitos." });
+  try {
+    var r = await pool.query("SELECT * FROM usuarios WHERE celular = $1", [celular]);
+    if (r.rows.length === 0) return res.status(404).json({ erro: "Celular não encontrado. Faça o cadastro." });
+    var u = r.rows[0];
+    if (u.pin && u.pin !== pin) return res.status(401).json({ erro: "PIN incorreto." });
+    console.log("✅ Login PIN:", u.nome);
+    res.json({
+      ok: true, userId: u.user_id, nome: u.nome, celular: u.celular,
+      email: u.email, regiao: u.regiao, plano: u.plano,
+      planoId: u.plano_id, analisesUsadas: u.analises_usadas
+    });
+  } catch(e) {
+    res.status(500).json({ erro: e.message });
+  }
 });
 
-// ── PIX ──────────────────────────────────────────
+// Atualizar análises usadas no servidor
+app.post("/incrementar-analise", async function(req, res) {
+  var userId = req.body.userId;
+  if (!userId) return res.json({ ok: false });
+  try {
+    await pool.query(
+      "UPDATE usuarios SET analises_usadas = analises_usadas + 1, atualizado_em = NOW() WHERE user_id = $1",
+      [userId]
+    );
+    res.json({ ok: true });
+  } catch(e) { res.json({ ok: false }); }
+});
+
+
+app.get("/usuarios", async function(req, res) {
+  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro: "Não autorizado" });
+  try {
+    var r = await pool.query("SELECT user_id, nome, celular, cpf, regiao, plano, analises_usadas, criado_em FROM usuarios ORDER BY criado_em DESC");
+    res.json({ total: r.rows.length, usuarios: r.rows });
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
 app.post("/gerar-pix", function(req, res) {
   var planoId = req.body.plano, userId = req.body.userId;
   var email = req.body.email || "produtor@doutorcafe.app";
@@ -92,27 +172,39 @@ app.get("/verificar-pix/:paymentId", function(req, res) {
   .catch(function(e){ res.status(500).json({ erro: e.message }); });
 });
 
-app.post("/webhook-pagamento", function(req, res) {
-  var tipo = req.body.type, id = req.body.data && req.body.data.id;
-  res.status(200).send("OK");
-  if (tipo !== "payment" || !id) return;
-  fetch("https://api.mercadopago.com/v1/payments/" + id, { headers: { "Authorization": "Bearer " + MP_TOKEN } })
-  .then(function(r){ return r.json(); })
-  .then(function(p){
-    if (p.status === "approved") {
-      var meta = p.metadata || {}, userId = meta.user_id, planoId = meta.plano_id, analises = meta.analises || 120;
-      if (userId) { usuarios[userId] = { plano: planoId, analises: analises, dataAssinatura: new Date().toISOString(), paymentId: id }; }
-    }
-  }).catch(function(e){ console.error("Webhook erro:", e.message); });
+app.post("/webhook-pagamento", async function(req, res) {
+  var data = req.body;
+  console.log("Webhook MP:", JSON.stringify(data).substr(0,200));
+  if (data && data.type === "payment" && data.data && data.data.id) {
+    try {
+      var r = await fetch("https://api.mercadopago.com/v1/payments/" + data.data.id, {
+        headers: { "Authorization": "Bearer " + MP_TOKEN }
+      });
+      var pagamento = await r.json();
+      if (pagamento.status === "approved") {
+        var userId = pagamento.external_reference || pagamento.metadata && pagamento.metadata.user_id;
+        var planoKey = pagamento.metadata && pagamento.metadata.plano;
+        if (userId && planoKey && PLANOS[planoKey]) {
+          await pool.query(
+            "UPDATE usuarios SET plano = $1, plano_id = $2, atualizado_em = NOW() WHERE user_id = $3",
+            [planoKey, String(pagamento.id), userId]
+          );
+          console.log("✅ Plano ativado:", planoKey, "para userId:", userId);
+        }
+      }
+    } catch(e) { console.error("Webhook erro:", e.message); }
+  }
+  res.json({ ok: true });
 });
-
-app.get("/plano/:userId", function(req, res) {
-  var u = usuarios[req.params.userId];
-  if (u) res.json({ plano: u.plano, analises: u.analises, dataAssinatura: u.dataAssinatura, ativo: true });
-  else res.json({ plano: "gratuito", analises: 20, ativo: false });
+app.get("/plano/:userId", async function(req, res) {
+  var userId = req.params.userId;
+  try {
+    var r = await pool.query("SELECT plano, plano_id, analises_usadas FROM usuarios WHERE user_id = $1", [userId]);
+    if (r.rows.length === 0) return res.json({ plano: "gratuito", analisesUsadas: 0 });
+    var u = r.rows[0];
+    res.json({ plano: u.plano || "gratuito", planoId: u.plano_id, analisesUsadas: u.analises_usadas });
+  } catch(e) { res.json({ plano: "gratuito", analisesUsadas: 0 }); }
 });
-
-// ── DIAGNÓSTICO ──────────────────────────────────
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null, altitude = req.body.altitude || null;
@@ -163,6 +255,7 @@ app.post("/diagnostico", function(req, res) {
     }
 
     // Extração COMPLETA: envia objeto completo com visto+acao+fungicidas
+    var diagsExtraidos = []; // guardar para usar como fallback no fim
     function extrairNovosdiags() {
       var inicioArr = textAccum.indexOf('"diagnosticos":[');
       if (inicioArr === -1) return;
@@ -187,6 +280,7 @@ app.post("/diagnostico", function(req, res) {
         }
         if (depth > 0) break;
       }
+      diagsExtraidos = encontrados; // atualizar sempre
       for (var k = diagsEnviados; k < encontrados.length; k++) {
         res.write("data: " + JSON.stringify({ tipo: "diag_completo", diag: encontrados[k], index: k }) + "\n\n");
         diagsEnviados++;
@@ -215,8 +309,14 @@ app.post("/diagnostico", function(req, res) {
 
     stream.on("end", function() {
       var resultado = extrairJSON(textAccum);
+      // Se extrairJSON falhou mas já extraímos diagnósticos pelo streaming, usar eles
       if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
-        resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara.", fungicidas: [] }] };
+        if (diagsExtraidos.length > 0) {
+          console.log("ℹ️ extrairJSON falhou, usando", diagsExtraidos.length, "diags extraídos pelo stream");
+          resultado = { diagnosticos: diagsExtraidos };
+        } else {
+          resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara.", fungicidas: [] }] };
+        }
       }
       res.write("data: " + JSON.stringify({ tipo: "fim", resultado: resultado }) + "\n\n");
       res.end();

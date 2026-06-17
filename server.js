@@ -246,7 +246,7 @@ app.post("/identifica-daninha", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1500, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem } }, { type: "text", text: prompt }] }] })
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1500, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem } }, { type: "text", text: prompt }] }] })
   })
   .then(function(r){ return r.json(); })
   .then(function(d){

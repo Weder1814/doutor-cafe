@@ -355,14 +355,14 @@ function buildPrompt(regiao, altitude, isVideo) {
 "fruto_verde=fruto verde saudavel. fruto_maduro=fruto cereja no ponto ideal. fruto_passado=fruto seco mumificado.\n\n" +
 
 "PRODUTOS E DOSES:\n" +
-"ferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.05 unidade_proporcao:L intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\n" +
+"ferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\n" +
 "cercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\n" +
 "helmintosporiose: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\n" +
 "antracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\n" +
 "phoma: Tiofanato Metilico 700WP protetor 1-1,5kg/ha.\n" +
-"bicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha.\n" +
-"acaro: Abamectina 18EC acaricida 0,5-0,75L/ha.\n" +
-"broca: Clorpirifos 480EC inseticida 1,5-2L/ha.\n\n" +
+"bicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\n" +
+"acaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\n" +
+"broca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n" +
 
 "INSTRUCOES FINAIS:\n" +
 "1. Liste TODOS os problemas encontrados — sem limite.\n" +

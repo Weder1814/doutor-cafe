@@ -119,7 +119,7 @@ app.post("/diagnostico", function(req, res) {
   var KEY = process.env.ANTHROPIC_API_KEY;
   var prompt = buildPrompt(regiao, altitude, false);
 
-  // SSE headers para streaming
+  // SSE headers
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -135,9 +135,17 @@ app.post("/diagnostico", function(req, res) {
     ]}]})
   })
   .then(function(r) {
-    var TextDecoder = require("util").TextDecoder;
-    var decoder = new TextDecoder();
     var sseBuf = "", textAccum = "", diagsEnviados = 0;
+
+    // CORREÇÃO: converter Web ReadableStream → Node.js Readable
+    var stream;
+    try {
+      var Readable = require("stream").Readable;
+      stream = Readable.fromWeb(r.body);
+    } catch(e) {
+      console.error("fromWeb falhou, usando body diretamente:", e.message);
+      stream = r.body;
+    }
 
     function extrairNovosdiags() {
       var inicioArr = textAccum.indexOf('"diagnosticos":[');
@@ -168,12 +176,12 @@ app.post("/diagnostico", function(req, res) {
       for (var k = diagsEnviados; k < encontrados.length; k++) {
         res.write("data: " + JSON.stringify({ tipo: "diag", diag: encontrados[k] }) + "\n\n");
         diagsEnviados++;
-        console.log("Streaming diag:", encontrados[k].diagnostico);
+        console.log("✅ Streaming diag:", encontrados[k].diagnostico);
       }
     }
 
-    r.body.on("data", function(chunk) {
-      sseBuf += decoder.decode(chunk, { stream: true });
+    stream.on("data", function(chunk) {
+      sseBuf += chunk.toString();
       var linhas = sseBuf.split("\n");
       sseBuf = linhas.pop();
       linhas.forEach(function(linha) {
@@ -190,7 +198,7 @@ app.post("/diagnostico", function(req, res) {
       });
     });
 
-    r.body.on("end", function() {
+    stream.on("end", function() {
       var resultado = extrairJSON(textAccum);
       if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
         resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara.", fungicidas: [] }] };
@@ -199,12 +207,14 @@ app.post("/diagnostico", function(req, res) {
       res.end();
     });
 
-    r.body.on("error", function(e) {
+    stream.on("error", function(e) {
+      console.error("Stream erro:", e.message);
       res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
       res.end();
     });
   })
   .catch(function(e) {
+    console.error("Fetch erro:", e.message);
     res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
     res.end();
   });

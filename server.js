@@ -147,11 +147,26 @@ app.post("/diagnostico", function(req, res) {
       stream = r.body;
     }
 
+    // Detecção PARCIAL: envia nome+estagio+confianca assim que aparecem no stream (~2-3s)
+    var parciaisEnviados = 0;
+    function detectarParciais() {
+      var re = /"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
+      var match, encontrados = [];
+      while ((match = re.exec(textAccum)) !== null) {
+        encontrados.push({ diagnostico: match[1], estagio: parseInt(match[2]), confianca: match[3], visto: "", acao: "Identificando detalhes...", fungicidas: [], parcial: true });
+      }
+      for (var k = parciaisEnviados; k < encontrados.length; k++) {
+        res.write("data: " + JSON.stringify({ tipo: "diag", diag: encontrados[k] }) + "\n\n");
+        parciaisEnviados++;
+        console.log("⚡ Parcial:", encontrados[k].diagnostico);
+      }
+    }
+
+    // Extração COMPLETA: envia objeto completo com visto+acao+fungicidas
     function extrairNovosdiags() {
       var inicioArr = textAccum.indexOf('"diagnosticos":[');
       if (inicioArr === -1) return;
-      var pos = inicioArr + 16;
-      var encontrados = [];
+      var pos = inicioArr + 16, encontrados = [];
       while (pos < textAccum.length) {
         var objStart = textAccum.indexOf("{", pos);
         if (objStart === -1) break;
@@ -165,8 +180,7 @@ app.post("/diagnostico", function(req, res) {
                 var obj = JSON.parse(textAccum.substring(objStart, i + 1));
                 if (obj.diagnostico) encontrados.push(obj);
               } catch(e) {}
-              pos = i + 1;
-              break;
+              pos = i + 1; break;
             }
           }
           i++;
@@ -174,9 +188,9 @@ app.post("/diagnostico", function(req, res) {
         if (depth > 0) break;
       }
       for (var k = diagsEnviados; k < encontrados.length; k++) {
-        res.write("data: " + JSON.stringify({ tipo: "diag", diag: encontrados[k] }) + "\n\n");
+        res.write("data: " + JSON.stringify({ tipo: "diag_completo", diag: encontrados[k], index: k }) + "\n\n");
         diagsEnviados++;
-        console.log("✅ Streaming diag:", encontrados[k].diagnostico);
+        console.log("✅ Completo:", encontrados[k].diagnostico);
       }
     }
 
@@ -192,6 +206,7 @@ app.post("/diagnostico", function(req, res) {
           var evento = JSON.parse(dados);
           if (evento.type === "content_block_delta" && evento.delta && evento.delta.text) {
             textAccum += evento.delta.text;
+            detectarParciais();
             extrairNovosdiags();
           }
         } catch(e) {}

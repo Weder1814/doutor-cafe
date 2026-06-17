@@ -119,28 +119,95 @@ app.post("/diagnostico", function(req, res) {
   var KEY = process.env.ANTHROPIC_API_KEY;
   var prompt = buildPrompt(regiao, altitude, false);
 
+  // SSE headers para streaming
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: [
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, stream: true, messages: [{ role: "user", content: [
       { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
       { type: "text", text: prompt }
     ]}]})
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
-    var txt = d.content && d.content[0] ? d.content[0].text : "";
-    console.log("Diagnostico resposta (200 chars):", txt.substring(0,200));
-    var resultado = extrairJSON(txt);
-    if (resultado && resultado.diagnosticos && resultado.diagnosticos.length > 0) {
-      console.log("OK:", resultado.diagnosticos.length, "diagnosticos");
-      res.json(resultado);
-    } else {
-      console.error("Parse falhou. txt:", txt.substring(0,400));
-      res.json({ diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Fotografe a folha de perto com boa iluminacao e tente novamente.", fungicidas: [] }] });
+  .then(function(r) {
+    var TextDecoder = require("util").TextDecoder;
+    var decoder = new TextDecoder();
+    var sseBuf = "", textAccum = "", diagsEnviados = 0;
+
+    function extrairNovosdiags() {
+      var inicioArr = textAccum.indexOf('"diagnosticos":[');
+      if (inicioArr === -1) return;
+      var pos = inicioArr + 16;
+      var encontrados = [];
+      while (pos < textAccum.length) {
+        var objStart = textAccum.indexOf("{", pos);
+        if (objStart === -1) break;
+        var depth = 0, i = objStart;
+        while (i < textAccum.length) {
+          if (textAccum[i] === "{") depth++;
+          else if (textAccum[i] === "}") {
+            depth--;
+            if (depth === 0) {
+              try {
+                var obj = JSON.parse(textAccum.substring(objStart, i + 1));
+                if (obj.diagnostico) encontrados.push(obj);
+              } catch(e) {}
+              pos = i + 1;
+              break;
+            }
+          }
+          i++;
+        }
+        if (depth > 0) break;
+      }
+      for (var k = diagsEnviados; k < encontrados.length; k++) {
+        res.write("data: " + JSON.stringify({ tipo: "diag", diag: encontrados[k] }) + "\n\n");
+        diagsEnviados++;
+        console.log("Streaming diag:", encontrados[k].diagnostico);
+      }
     }
+
+    r.body.on("data", function(chunk) {
+      sseBuf += decoder.decode(chunk, { stream: true });
+      var linhas = sseBuf.split("\n");
+      sseBuf = linhas.pop();
+      linhas.forEach(function(linha) {
+        if (!linha.startsWith("data: ")) return;
+        var dados = linha.slice(6);
+        if (dados === "[DONE]") return;
+        try {
+          var evento = JSON.parse(dados);
+          if (evento.type === "content_block_delta" && evento.delta && evento.delta.text) {
+            textAccum += evento.delta.text;
+            extrairNovosdiags();
+          }
+        } catch(e) {}
+      });
+    });
+
+    r.body.on("end", function() {
+      var resultado = extrairJSON(textAccum);
+      if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
+        resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara.", fungicidas: [] }] };
+      }
+      res.write("data: " + JSON.stringify({ tipo: "fim", resultado: resultado }) + "\n\n");
+      res.end();
+    });
+
+    r.body.on("error", function(e) {
+      res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
+      res.end();
+    });
   })
-  .catch(function(e){ console.error("Erro diagnostico:", e.message); res.status(500).json({ erro: e.message }); });
+  .catch(function(e) {
+    res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
+    res.end();
+  });
 });
 
 // ── PLANO DE AÇÃO (haiku — rápido) ───────────────

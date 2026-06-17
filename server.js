@@ -223,9 +223,9 @@ app.post("/identifica-daninha", function(req, res) {
 "Analise a imagem e identifique a planta daninha. Use linguagem simples para produtor rural. Sem termos tecnicos.\n\n" +
 "PLANTAS DANINHAS DO CAFE:\n" +
 "1. PICAO-PRETO (Bidens pilosa): sementes com espinhos, flores amarelas. Solo fertil. PRE: Goal BR 5-6L/ha, Ametrina 800 1,5-2,5kg/ha. POS: Goal BR 6L/ha.\n" +
-"2. CAPIM-AMARGOSO (Digitaria insularis): gramínea perene, touceiras. Solo degradado, resistente ao glifosato. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha, Select 240EC 0,45L/ha.\n" +
-"3. CAPIM-PE-DE-GALINHA (Eleusine indica): gramínea anual. Solo COMPACTADO. POS: ACCase + glifosato. Galigan 240 3L/ha.\n" +
-"4. BUVA (Conyza spp.): ereta ate 2m. Solo com excesso de glifosato. Resistente. Controlar com MENOS de 25cm. Galigan 240EC, Heat 700WG, Aurora 400EC.\n" +
+"2. CAPIM-AMARGOSO (Digitaria insularis): GRAMÍNEA perene em TOUCEIRAS grandes 50-100cm, folhas com pelos brancos nas bordas, sementes pilosas que grudam na roupa, caule achatado. Solo degradado, resistente ao glifosato. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha, Select 240EC 0,45L/ha.\n" +
+"3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMÍNEA anual em TOUCEIRAS DENSAS rasteiras, folhas CHATAS e largas saindo do centro formando leque, espiga com ramificacoes em formato de pe de galinha. Completamente diferente da Buva. Solo COMPACTADO. POS: ACCase + glifosato. Galigan 240 3L/ha. Controlar com maximo 1 perfilho.\n" +
+"4. BUVA/VOADEIRA (Conyza spp.): planta ERETA ate 2m, caule unico vertical, folhas ESTREITAS e COMPRIDAS com bordas levemente serrilhadas, aspecto de espeto para cima, levemente peluda/cinza. NAO e gramínea. Solo com excesso de glifosato — resistente. Controlar OBRIGATORIAMENTE com menos de 25cm pois sementes voam. Galigan 240EC, Heat 700WG, Aurora 400EC, Ally 600WG.\n" +
 "5. CARURU (Amaranthus spp.): 20cm-2m. Solo fertil com alto N. Heat 700WG em plantas ate 5cm.\n" +
 "6. TIRIRICA (Cyperus rotundus): perene, folhas triangulares. Solo com DRENAGEM RUIM. Glifosato + Diuron Nortox 800WP. Pulverizacao SEQUENCIAL.\n" +
 "7. CORDA-DE-VIOLA (Ipomoea spp.): trepadeira ate 3m, flores roxas. Solo fertil e umido. Tolerante ao glifosato. Aurora 400EC, Ally 600WG.\n" +
@@ -237,6 +237,11 @@ app.post("/identifica-daninha", function(req, res) {
 "13. ERVA-QUENTE (Spermacoce latifolia): flores brancas. Solo ACIDO. Correcao do pH. Metsulfurom, glifosato.\n" +
 "14. CAPIM-DE-BURRO (Cynodon dactylon): gramínea rasteira, estoloes. Solo COMPACTADO. ACCase.\n" +
 "15. MARIA-PRETINHA (Solanum americanum): frutos pretos TOXICOS. Solo fertil. Glifosato, 2,4-D.\n\n" +
+"ATENCAO - DIFERENCIAR PLANTAS:\\n" +
+"BUVA = planta ERETA nao-gramínea folhas ESTREITAS compridas serrilhadas aspecto espeto vertical\\n" +
+"CAPIM-PE-DE-GALINHA = gramínea touceiras RASAS folhas chatas em leque\\n" +
+"CAPIM-AMARGOSO = gramínea touceiras ALTAS 50-100cm com pelos brancos\\n" +
+"TIRIRICA = folha triangular em secao flores marrom\\n\\n" +
 "RESPONDA SOMENTE JSON:\n{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo em linguagem simples\",\"acao\":\"o que fazer em linguagem simples\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"quantidade simples ex: 3 litros por hectare ou 60mL por tanque de 20L\",\"momento\":\"quando aplicar\",\"como_usar\":\"instrucao pratica\"}],\"alerta\":\"aviso mais importante\",\"manejo_preventivo\":\"dica para evitar que se espalhe\"}";
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",

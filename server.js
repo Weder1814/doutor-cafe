@@ -1,7 +1,10 @@
 var express = require("express");
 var cors = require("cors");
-var { Pool } = require("pg");
 var app = express();
+
+// pg opcional - funciona sem banco de dados (usa memória como fallback)
+var Pool = null;
+try { Pool = require("pg").Pool; } catch(e) { console.log("pg nao instalado — usando memoria. Para instalar: npm install pg"); }
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -59,26 +62,27 @@ app.post("/cadastrar-usuario", async function(req, res) {
   var userId = req.body.userId, nome = req.body.nome;
   var celular = req.body.celular || "", cpf = req.body.cpf || "";
   var regiao = req.body.regiao || "", email = req.body.email || "";
+  var pin = (req.body.pin || "").replace(/[^0-9]/g, "").substr(0, 4);
   if (!userId || !nome) return res.status(400).json({ erro: "Nome obrigatório." });
-  try {
-    var cpfLimpo = cpf.replace(/[^0-9]/g, "");
-    var pin = (req.body.pin || "").replace(/[^0-9]/g, "").substr(0, 4);
-    await pool.query(
-      `INSERT INTO usuarios (user_id, cpf, nome, celular, pin, email, regiao)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (user_id) DO UPDATE SET
-         nome = EXCLUDED.nome, celular = EXCLUDED.celular,
-         pin = COALESCE(EXCLUDED.pin, usuarios.pin),
-         email = EXCLUDED.email, regiao = EXCLUDED.regiao,
-         atualizado_em = NOW()`,
-      [userId, cpfLimpo || null, nome, celular, pin || null, email, regiao]
-    );
-    console.log("✅ Usuário salvo:", nome, cpfLimpo ? "(CPF: "+cpfLimpo.substr(0,3)+"...)" : "");
-    res.json({ ok: true, userId: userId });
-  } catch(e) {
-    console.error("Erro cadastrar:", e.message);
-    res.status(500).json({ erro: e.message });
+  var cpfLimpo = cpf.replace(/[^0-9]/g, "");
+  // Salvar na memória sempre (fallback)
+  usuariosMemoria[userId] = { userId, cpf: cpfLimpo, nome, celular, pin, email, regiao, plano: "gratuito", analisesUsadas: 0, criadoEm: new Date().toISOString() };
+  // Salvar no banco se disponível
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO usuarios (user_id, cpf, nome, celular, pin, email, regiao)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (user_id) DO UPDATE SET
+           nome=EXCLUDED.nome, celular=EXCLUDED.celular,
+           pin=COALESCE(EXCLUDED.pin,usuarios.pin),
+           email=EXCLUDED.email, regiao=EXCLUDED.regiao, atualizado_em=NOW()`,
+        [userId, cpfLimpo||null, nome, celular, pin||null, email, regiao]
+      );
+    } catch(e) { console.error("Erro DB cadastrar:", e.message); }
   }
+  console.log("✅ Usuário salvo:", nome);
+  res.json({ ok: true, userId: userId });
 });
 
 // Login pelo CPF — recupera conta em novo dispositivo
@@ -606,4 +610,21 @@ function buildPrompt(regiao, altitude, isVideo) {
 
 app.listen(process.env.PORT || 8080, function() {
   console.log("Servidor Doutor Cafe ok");
-});
+});// ── PostgreSQL (opcional) ───────────────────────────────
+var pool = null;
+var usuariosMemoria = {};
+
+if (Pool && process.env.DATABASE_URL) {
+  pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  pool.query(`CREATE TABLE IF NOT EXISTS usuarios (
+    id SERIAL PRIMARY KEY, user_id VARCHAR(100) UNIQUE NOT NULL,
+    cpf VARCHAR(14) UNIQUE, nome VARCHAR(200) NOT NULL, celular VARCHAR(20), pin VARCHAR(4),
+    email VARCHAR(200), regiao VARCHAR(100), plano VARCHAR(50) DEFAULT 'gratuito',
+    plano_id VARCHAR(100), analises_usadas INTEGER DEFAULT 0,
+    criado_em TIMESTAMP DEFAULT NOW(), atualizado_em TIMESTAMP DEFAULT NOW()
+  )`)
+  .then(function(){ console.log("✅ PostgreSQL conectado e tabela pronta"); })
+  .catch(function(e){ console.error("DB erro:", e.message); pool = null; });
+} else {
+  console.log("ℹ️ Sem DATABASE_URL — usando memoria. Adicione PostgreSQL no Railway para persistencia.");
+}

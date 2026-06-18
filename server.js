@@ -222,6 +222,16 @@ app.post("/diagnostico", function(req, res) {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
+  // Keep-alive: envia comentário SSE a cada 5s para Railway não fechar a conexão
+  var keepAliveInterval = setInterval(function() {
+    try { res.write(": ping\n\n"); } catch(e) { clearInterval(keepAliveInterval); }
+  }, 5000);
+
+  function finalizarSSE() {
+    clearInterval(keepAliveInterval);
+    try { res.end(); } catch(e) {}
+  }
+
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
@@ -323,21 +333,48 @@ app.post("/diagnostico", function(req, res) {
         }
       }
       res.write("data: " + JSON.stringify({ tipo: "fim", resultado: resultado }) + "\n\n");
-      res.end();
+      finalizarSSE();
     });
 
     stream.on("error", function(e) {
       console.error("Stream erro:", e.message);
       res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
-      res.end();
+      finalizarSSE();
     });
   })
   .catch(function(e) {
     console.error("Fetch erro:", e.message);
     res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
-    res.end();
+    finalizarSSE();
   });
 });
+
+// ── DIAGNÓSTICO JSON (fallback para iOS que não suporta SSE) ─────
+app.post("/diagnostico-json", function(req, res) {
+  var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null, altitude = req.body.altitude || null;
+  var KEY = process.env.ANTHROPIC_API_KEY;
+  var prompt = buildPrompt(regiao, altitude, false);
+  fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
+      { type: "text", text: prompt }
+    ]}]})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var resultado = extrairJSON(txt);
+    if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
+      resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara.", fungicidas: [] }] };
+    }
+    res.json(resultado);
+  })
+  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+});
+
 
 // ── PLANO DE AÇÃO (haiku — rápido) ───────────────
 app.post("/plano-acao", function(req, res) {

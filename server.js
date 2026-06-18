@@ -2,9 +2,7 @@ var express = require("express");
 var cors = require("cors");
 var app = express();
 
-// pg opcional - funciona sem banco de dados (usa memória como fallback)
-var Pool = null;
-try { Pool = require("pg").Pool; } catch(e) { console.log("pg nao instalado — usando memoria. Para instalar: npm install pg"); }
+// Armazenamento em memória (PostgreSQL pode ser adicionado futuramente)
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -12,33 +10,7 @@ app.use(express.json({ limit: "50mb" }));
 var MP_TOKEN = process.env.MP_ACCESS_TOKEN;
 var BASE_URL = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
 
-// ── PostgreSQL ──────────────────────────────────────────
-var pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
-});
-
-async function initDB() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS usuarios (
-      id SERIAL PRIMARY KEY,
-      user_id VARCHAR(100) UNIQUE NOT NULL,
-      cpf VARCHAR(14) UNIQUE,
-      nome VARCHAR(200) NOT NULL,
-      celular VARCHAR(20),
-      pin VARCHAR(4),
-      email VARCHAR(200),
-      regiao VARCHAR(100),
-      plano VARCHAR(50) DEFAULT 'gratuito',
-      plano_id VARCHAR(100),
-      analises_usadas INTEGER DEFAULT 0,
-      criado_em TIMESTAMP DEFAULT NOW(),
-      atualizado_em TIMESTAMP DEFAULT NOW()
-    )
-  `);
-  console.log("✅ Banco de dados pronto");
-}
-initDB().catch(function(e){ console.error("DB init erro:", e.message); });
+// Armazenamento em memória (PostgreSQL pode ser adicionado futuramente via DATABASE_URL)
 
 var PLANOS = {
   basico_mensal:  { nome: "Básico Mensal",  valor: 29.90, analises: 150 },
@@ -58,75 +30,41 @@ app.get("/ping", function(req, res) {
 });
 
 // ── CADASTRAR USUÁRIO ────────────────────────────
-app.post("/cadastrar-usuario", async function(req, res) {
+app.post("/cadastrar-usuario", function(req, res) {
   var userId = req.body.userId, nome = req.body.nome;
-  var celular = req.body.celular || "", cpf = req.body.cpf || "";
+  var celular = req.body.celular || "", cpf = (req.body.cpf || "").replace(/[^0-9]/g,"");
   var regiao = req.body.regiao || "", email = req.body.email || "";
-  var pin = (req.body.pin || "").replace(/[^0-9]/g, "").substr(0, 4);
-  if (!userId || !nome) return res.status(400).json({ erro: "Nome obrigatório." });
-  var cpfLimpo = cpf.replace(/[^0-9]/g, "");
-  // Salvar na memória sempre (fallback)
-  usuariosMemoria[userId] = { userId, cpf: cpfLimpo, nome, celular, pin, email, regiao, plano: "gratuito", analisesUsadas: 0, criadoEm: new Date().toISOString() };
-  // Salvar no banco se disponível
-  if (pool) {
-    try {
-      await pool.query(
-        `INSERT INTO usuarios (user_id, cpf, nome, celular, pin, email, regiao)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (user_id) DO UPDATE SET
-           nome=EXCLUDED.nome, celular=EXCLUDED.celular,
-           pin=COALESCE(EXCLUDED.pin,usuarios.pin),
-           email=EXCLUDED.email, regiao=EXCLUDED.regiao, atualizado_em=NOW()`,
-        [userId, cpfLimpo||null, nome, celular, pin||null, email, regiao]
-      );
-    } catch(e) { console.error("Erro DB cadastrar:", e.message); }
-  }
-  console.log("✅ Usuário salvo:", nome);
+  var pin = (req.body.pin || "").replace(/[^0-9]/g,"").substr(0,4);
+  if (!userId || !nome) return res.status(400).json({ erro: "Nome obrigatorio." });
+  usuariosMemoria[userId] = { userId:userId, cpf:cpf, nome:nome, celular:celular, pin:pin, email:email, regiao:regiao, plano:"gratuito", analisesUsadas:0 };
+  console.log("✅ Cadastro:", nome);
   res.json({ ok: true, userId: userId });
 });
 
 // Login pelo CPF — recupera conta em novo dispositivo
-app.post("/entrar", async function(req, res) {
-  var celular = (req.body.celular || "").replace(/[^0-9]/g, "");
-  var pin = (req.body.pin || "").replace(/[^0-9]/g, "");
-  if (!celular || celular.length < 10) return res.status(400).json({ erro: "Celular inválido." });
-  if (!pin || pin.length !== 4) return res.status(400).json({ erro: "PIN deve ter 4 dígitos." });
-  try {
-    var r = await pool.query("SELECT * FROM usuarios WHERE celular = $1", [celular]);
-    if (r.rows.length === 0) return res.status(404).json({ erro: "Celular não encontrado. Faça o cadastro." });
-    var u = r.rows[0];
-    if (u.pin && u.pin !== pin) return res.status(401).json({ erro: "PIN incorreto." });
-    console.log("✅ Login PIN:", u.nome);
-    res.json({
-      ok: true, userId: u.user_id, nome: u.nome, celular: u.celular,
-      email: u.email, regiao: u.regiao, plano: u.plano,
-      planoId: u.plano_id, analisesUsadas: u.analises_usadas
-    });
-  } catch(e) {
-    res.status(500).json({ erro: e.message });
-  }
+app.post("/entrar", function(req, res) {
+  var celular = (req.body.celular || "").replace(/[^0-9]/g,"");
+  var pin = (req.body.pin || "").replace(/[^0-9]/g,"");
+  if (!celular || celular.length < 10) return res.status(400).json({ erro: "Celular invalido." });
+  if (!pin || pin.length !== 4) return res.status(400).json({ erro: "PIN deve ter 4 digitos." });
+  var u = Object.values(usuariosMemoria).find(function(x){ return x.celular && x.celular.replace(/[^0-9]/g,"") === celular; });
+  if (!u) return res.status(404).json({ erro: "Celular nao encontrado. Faca o cadastro." });
+  if (u.pin && u.pin !== pin) return res.status(401).json({ erro: "PIN incorreto." });
+  res.json({ ok:true, userId:u.userId, nome:u.nome, celular:u.celular, email:u.email, regiao:u.regiao, plano:u.plano, analisesUsadas:u.analisesUsadas });
 });
 
 // Atualizar análises usadas no servidor
-app.post("/incrementar-analise", async function(req, res) {
+app.post("/incrementar-analise", function(req, res) {
   var userId = req.body.userId;
-  if (!userId) return res.json({ ok: false });
-  try {
-    await pool.query(
-      "UPDATE usuarios SET analises_usadas = analises_usadas + 1, atualizado_em = NOW() WHERE user_id = $1",
-      [userId]
-    );
-    res.json({ ok: true });
-  } catch(e) { res.json({ ok: false }); }
+  if (userId && usuariosMemoria[userId]) usuariosMemoria[userId].analisesUsadas = (usuariosMemoria[userId].analisesUsadas||0) + 1;
+  res.json({ ok: true });
 });
 
 
-app.get("/usuarios", async function(req, res) {
-  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro: "Não autorizado" });
-  try {
-    var r = await pool.query("SELECT user_id, nome, celular, cpf, regiao, plano, analises_usadas, criado_em FROM usuarios ORDER BY criado_em DESC");
-    res.json({ total: r.rows.length, usuarios: r.rows });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+app.get("/usuarios", function(req, res) {
+  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro: "Nao autorizado" });
+  var lista = Object.values(usuariosMemoria);
+  res.json({ total: lista.length, usuarios: lista });
 });
 app.post("/gerar-pix", function(req, res) {
   var planoId = req.body.plano, userId = req.body.userId;
@@ -176,38 +114,13 @@ app.get("/verificar-pix/:paymentId", function(req, res) {
   .catch(function(e){ res.status(500).json({ erro: e.message }); });
 });
 
-app.post("/webhook-pagamento", async function(req, res) {
-  var data = req.body;
-  console.log("Webhook MP:", JSON.stringify(data).substr(0,200));
-  if (data && data.type === "payment" && data.data && data.data.id) {
-    try {
-      var r = await fetch("https://api.mercadopago.com/v1/payments/" + data.data.id, {
-        headers: { "Authorization": "Bearer " + MP_TOKEN }
-      });
-      var pagamento = await r.json();
-      if (pagamento.status === "approved") {
-        var userId = pagamento.external_reference || pagamento.metadata && pagamento.metadata.user_id;
-        var planoKey = pagamento.metadata && pagamento.metadata.plano;
-        if (userId && planoKey && PLANOS[planoKey]) {
-          await pool.query(
-            "UPDATE usuarios SET plano = $1, plano_id = $2, atualizado_em = NOW() WHERE user_id = $3",
-            [planoKey, String(pagamento.id), userId]
-          );
-          console.log("✅ Plano ativado:", planoKey, "para userId:", userId);
-        }
-      }
-    } catch(e) { console.error("Webhook erro:", e.message); }
-  }
+app.post("/webhook-pagamento", function(req, res) {
+  console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
   res.json({ ok: true });
 });
-app.get("/plano/:userId", async function(req, res) {
-  var userId = req.params.userId;
-  try {
-    var r = await pool.query("SELECT plano, plano_id, analises_usadas FROM usuarios WHERE user_id = $1", [userId]);
-    if (r.rows.length === 0) return res.json({ plano: "gratuito", analisesUsadas: 0 });
-    var u = r.rows[0];
-    res.json({ plano: u.plano || "gratuito", planoId: u.plano_id, analisesUsadas: u.analises_usadas });
-  } catch(e) { res.json({ plano: "gratuito", analisesUsadas: 0 }); }
+app.get("/plano/:userId", function(req, res) {
+  var u = usuariosMemoria[req.params.userId];
+  res.json({ plano: u ? (u.plano||"gratuito") : "gratuito", analisesUsadas: u ? (u.analisesUsadas||0) : 0 });
 });
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
@@ -539,23 +452,11 @@ function buildPrompt(regiao, altitude, isVideo) {
 "{\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
 
-app.listen(process.env.PORT || 8080, function() {
-  console.log("Servidor Doutor Cafe ok");
-});// ── PostgreSQL (opcional) ───────────────────────────────
+// Armazenamento em memória
 var pool = null;
 var usuariosMemoria = {};
+console.log("✅ Servidor iniciado — armazenamento em memória ativo");
 
-if (Pool && process.env.DATABASE_URL) {
-  pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-  pool.query(`CREATE TABLE IF NOT EXISTS usuarios (
-    id SERIAL PRIMARY KEY, user_id VARCHAR(100) UNIQUE NOT NULL,
-    cpf VARCHAR(14) UNIQUE, nome VARCHAR(200) NOT NULL, celular VARCHAR(20), pin VARCHAR(4),
-    email VARCHAR(200), regiao VARCHAR(100), plano VARCHAR(50) DEFAULT 'gratuito',
-    plano_id VARCHAR(100), analises_usadas INTEGER DEFAULT 0,
-    criado_em TIMESTAMP DEFAULT NOW(), atualizado_em TIMESTAMP DEFAULT NOW()
-  )`)
-  .then(function(){ console.log("✅ PostgreSQL conectado e tabela pronta"); })
-  .catch(function(e){ console.error("DB erro:", e.message); pool = null; });
-} else {
-  console.log("ℹ️ Sem DATABASE_URL — usando memoria. Adicione PostgreSQL no Railway para persistencia.");
-}
+app.listen(process.env.PORT || 8080, function() {
+  console.log("Servidor Doutor Cafe ok");
+});

@@ -518,17 +518,27 @@ function buildPrompt(regiao, altitude, isVideo) {
 "ATENCAO ESPECIAL — HELMINTOSPORIOSE:\n" +
 "helmintosporiose=manchas GRANDES marrom-escuras com HALOS CONCENTRICOS bem definidos e halo amarelo ao redor. Principal causa de DESFOLHA SEVERA no cafe.\n\n" +
 
-"DOENCAS FUNGICAS E PRAGAS (verifique TODAS — podem coexistir):\n" +
-"ferrugem=pustulas ALARANJADAS face INFERIOR. Manchas amarelas face superior. A MAIS COMUM.\n" +
-"cercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\n" +
-"helmintosporiose=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo. Causa desfolha.\n" +
-"antracnose=lesoes AFUNDADAS pretas irregulares.\n" +
-"phoma=manchas NECROTICAS sem halo FOLHAS NOVAS no TOPO.\n" +
-"aureolada=manchas pardas GRANDES HALO AMARELO GRANDE seca ramos.\n" +
-"bicho=TRILHAS SERPENTINAS castanhas dentro da folha.\n" +
-"acaro=folha BRONZEADA acinzentada face inferior.\n" +
-"cochonilha=massas BRANCAS algodonosas em ramos.\n" +
-"broca=FURO CIRCULAR nos frutos.\n\n" +
+"DOENCAS FUNGICAS FOLIARES (verifique TODAS — coexistem frequentemente):\n" +
+"ferrugem=pustulas ALARANJADAS face INFERIOR. Manchas cloroticas amarelas face superior correspondentes. A MAIS COMUM. Hemileia vastatrix.\n" +
+"cercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO bem definido. Olho de pardo.\n" +
+"helmintosporiose=manchas GRANDES marrom-escuras HALOS CONCENTRICOS multiplos halo amarelo extenso. Principal causa desfolha severa.\n" +
+"antracnose=lesoes AFUNDADAS pretas bordas irregulares tecido morto afundado. Colletotrichum spp.\n" +
+"phoma=manchas NECROTICAS negras irregulares SEM halo FOLHAS NOVAS ponteiros. Causa mumificacao dos chumbinhos.\n" +
+"aureolada=bacteriana. manchas pardas centro necrotico HALO AMARELO GRANDE. Seca ponteiros e ramos. Pseudomonas syringae.\n" +
+"mancha_manteigosa=manchas ENCHARCADAS OLEOSAS aspecto gorduroso face superior E inferior da folha. Amarelecimento. Causa incerta possivelmente viral. PROBLEMA CRESCENTE nos ultimos 5 anos.\n" +
+"corynespora=manchas IRREGULARES marrom-avermelhadas com halo amarelo. SIMILAR a cercosporiose mas MAIORES e mais irregulares. Causa desfolha severa. Confundida frequentemente com cercosporiose.\n" +
+"koleroga=FOLHAS CAIDAS presas aos ramos por FIOS DE MICELIO visivel. Folhas mortas nao caem ficam dependuradas. Alta umidade. Pellicularia koleroga.\n" +
+"ascochyta=manchas CLARAS centro branco-palido bordas marrons indefinidas nas folhas mais velhas. Menos comum.\n" +
+"rizoctoniose=manchas aquosas marrons no caule BASE DA PLANTA junto ao solo. Anelar o caule. Mudas e plantas jovens.\n" +
+"roseliniose=PONTUACOES ESCURAS microscopicas no caule. Crescimento MICELIAL ESCURO sob casca. Caule enegrecido. Confundir com fusariose — diferenca: roseliniose tem micelios visiveis externo.\n\n" +
+"PRAGAS (verifique TODAS):\n" +
+"bicho=TRILHAS SERPENTINAS castanhas dentro da folha. Larva mineira Perileucoptera coffeella.\n" +
+"acaro=folha BRONZEADA acinzentada opaca face inferior. Acaro vermelho Oligonychus ilicis.\n" +
+"cochonilha=massas BRANCAS algodonosas em ramos e axilas. Pseudococcus spp.\n" +
+"cochonilha_raiz=planta com amarelecimento geral sem causa aparente nas folhas. Raizes com massas brancas cerosas. Diagnosticar pelos sintomas aereos: queda producao sem doenca foliar visivel.\n" +
+"lagarta=areas DESFOLHADAS com lagartas VIVAS visiveis nas bordas da lesao. Varias especies.\n" +
+"broca=FURO CIRCULAR 1-2mm no disco floral ou coroa do FRUTO. Hypothenemus hampei. Nivel controle: 3 pct frutos brocados.\n" +
+"nematoide=planta com AMARELECIMENTO GERAL progressivo sem recuperacao. Raizes com GALHAS visivel ao examinar o solo ao redor. Meloidogyne spp. Diagnostico definitivo requer laboratorio mas sintomas aereos sugestivos.\n\n" +
 
 "DEFICIENCIAS NUTRICIONAIS (verifique TODAS — coexistem com doencas):\n" +
 "nitrogenio=folha TODA AMARELA UNIFORME folhas velhas.\n" +
@@ -543,8 +553,22 @@ function buildPrompt(regiao, altitude, isVideo) {
 "estresse_hidrico=folha MURCHA bordas secas enroladas.\n" +
 "escaldadura=manchas amarelas irregulares excesso de sol.\n\n" +
 
-"SE FOR FRUTO:\n" +
-"fruto_verde=fruto verde saudavel. fruto_maduro=fruto cereja no ponto ideal. fruto_passado=fruto seco mumificado.\n\n" +
+"SE A IMAGEM MOSTRAR FRUTOS DE CAFE (e nao folhas), analise especificamente:\n\n" +
+"CONDICOES DOS FRUTOS:\n" +
+"fruto_verde=fruto totalmente verde firme sem lesoes — imaturo saudavel.\n" +
+"fruto_maduro=fruto VERMELHO ou AMARELO cereja uniforme brilhante — no ponto ideal de colheita.\n" +
+"fruto_passado=fruto ESCURECIDO enrugado seco mumificado que permaneceu na planta apos maturacao.\n\n" +
+"DOENCAS E PRAGAS EM FRUTOS (verifique todas):\n" +
+"broca=FURO CIRCULAR escuro de 1-2mm no disco floral (base) ou coroa do fruto. Presenca de po escuro. Causer: Hypothenemus hampei. MUITO COMUM.\n" +
+"antracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras a PRETAS com halo escuro na superficie do fruto. Frutos mumificados negros com esporos rosacos/salmonados em condicao umida. Causa Colletotrichum spp.\n" +
+"fusariose_fruto=fruto MUMIFICADO marrom-escuro a negro SEM perfuracao de broca. Podridao seca interna. Frutos nao caem facilmente.\n" +
+"cercosporiose_fruto=manchas CIRCULARES PEQUENAS cinza-esbranquicadas com halo amarelo nos frutos verdes. Similar ao padrao nas folhas.\n" +
+"phoma_fruto=manchas NECROTICAS escuras irregulares nos frutos VERDES JOVENS. Frutos caem prematuramente.\n" +
+"acaro_fruto=superficie do fruto BRONZEADA acinzentada opaca. Frutos pequenos deformados. Inspecione com lupa.\n" +
+"bicho_mineiro_fruto=galeria serpentina castanha visivel sob a casca em frutos jovens verdes.\n\n" +
+"INSTRUCAO ANTI-CONFUSAO FRUTOS:\n" +
+"broca x antracnose: broca=FURO circular minusculo. antracnose=lesao AFUNDADA GRANDE sem furo.\n" +
+"fruto_passado x fusariose: passado=processo natural secagem. fusariose=infeccao fungica fruto nao madurou.\n\n" +
 
 "PRODUTOS E DOSES:\n" +
 "ferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\n" +
@@ -554,7 +578,19 @@ function buildPrompt(regiao, altitude, isVideo) {
 "phoma: Tiofanato Metilico 700WP protetor 1-1,5kg/ha.\n" +
 "bicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\n" +
 "acaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\n" +
-"broca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n" +
+"broca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n" +
+"mancha_manteigosa: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Remover folhas afetadas. Consultar engenheiro agronomo.\n" +
+"corynespora: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha intervalo:21. Tiofanato Metilico 700WP 1-1,5kg/ha.\n" +
+"koleroga: Mancozeb 800WP 2kg/ha intervalo:21 proporcao_por_litro:2 unidade_proporcao:g. Remover folhas presas aos ramos.\n" +
+"rizoctoniose: Controle cultural: solo bem drenado, evitar machucados no coleto. Fungicida preventivo: Tiofanato Metilico 700WP.\n" +
+"roseliniose: Remover e queimar plantas afetadas. Evitar reuso do solo. Controle biologico com Trichoderma.\n" +
+"lagarta: Bacillus thuringiensis biologico 1-2L/ha. Monitorar nivel de infestacao.\n" +
+"cochonilha_raiz: Imidacloprid 700WG 0,3kg/ha via solo. Melhorar drenagem do solo.\n" +
+"nematoide: Nao ha controle quimico economico para area ja infestada. Rotacao culturas. Uso de variedades resistentes. Consultar agrónomo para nematicidas.\n\n" +
+"antracnose_fruto: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha.\n" +
+"fusariose_fruto: remover e destruir frutos mumificados. Tiofanato Metilico 700WP protetor 1-1,5kg/ha intervalo:14.\n" +
+"cercosporiose_fruto: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha intervalo:21.\n" +
+"fruto_passado: recomendado colheita seletiva imediata para evitar fonte de inoculo.\n\n" +
 
 "INSTRUCOES FINAIS:\n" +
 "1. Liste TODOS os problemas encontrados — sem limite.\n" +

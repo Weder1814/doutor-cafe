@@ -128,30 +128,103 @@ app.post("/diagnostico", function(req, res) {
   var KEY = process.env.ANTHROPIC_API_KEY;
   var prompt = buildPrompt(regiao, altitude, false);
 
+  // SSE — mantém conexão viva e envia diagnósticos conforme chegam
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  // Ping a cada 5s para Railway não fechar a conexão ociosa
+  var ping = setInterval(function(){ try { res.write(": ping\n\n"); } catch(e){ clearInterval(ping); } }, 5000);
+  function encerrar() { clearInterval(ping); try { res.end(); } catch(e){} }
+
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000,
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, stream: true,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
         { type: "text", text: prompt }
       ]}]
     })
   })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    var txt = d.content && d.content[0] ? d.content[0].text : "";
-    console.log("Diagnostico OK, texto:", txt.substr(0,100));
-    var resultado = extrairJSON(txt);
-    if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
-      resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa",
-        visto: "", acao: "Nao foi possivel analisar. Fotografe a folha de perto com boa iluminacao.", fungicidas: [] }] };
+  .then(function(r) {
+    var Readable = require("stream").Readable;
+    var stream = Readable.fromWeb(r.body);
+    var buf = "", texto = "", diagsEnviados = 0, diagsCompletos = [];
+
+    function detectarParciais() {
+      var re = /"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
+      var m, found = [];
+      while ((m = re.exec(texto)) !== null) found.push({ diagnostico:m[1], estagio:parseInt(m[2]), confianca:m[3], visto:"", acao:"Analisando...", fungicidas:[], parcial:true });
+      for (var k = diagsEnviados; k < found.length; k++) {
+        res.write("data: " + JSON.stringify({ tipo:"diag", diag:found[k] }) + "\n\n");
+        diagsEnviados++;
+        console.log("⚡ Parcial:", found[k].diagnostico);
+      }
     }
-    res.json(resultado);
+
+    function extrairCompletos() {
+      var ini = texto.indexOf('"diagnosticos":[');
+      if (ini === -1) return;
+      var pos = ini + 16, found = [];
+      while (pos < texto.length) {
+        var s = texto.indexOf("{", pos);
+        if (s === -1) break;
+        var d = 0, i = s;
+        while (i < texto.length) {
+          if (texto[i] === "{") d++;
+          else if (texto[i] === "}") { d--; if (d === 0) { try { var o = JSON.parse(texto.substring(s,i+1)); if(o.diagnostico) found.push(o); } catch(e){} pos=i+1; break; } }
+          i++;
+        }
+        if (d > 0) break;
+      }
+      diagsCompletos = found;
+      for (var k = diagsEnviados; k < found.length; k++) {
+        res.write("data: " + JSON.stringify({ tipo:"diag_completo", diag:found[k], index:k }) + "\n\n");
+        console.log("✅ Completo:", found[k].diagnostico);
+      }
+    }
+
+    stream.on("data", function(chunk) {
+      buf += chunk.toString();
+      var linhas = buf.split("\n"); buf = linhas.pop();
+      linhas.forEach(function(linha) {
+        if (!linha.startsWith("data: ")) return;
+        var d = linha.slice(6);
+        if (d === "[DONE]") return;
+        try {
+          var ev = JSON.parse(d);
+          if (ev.type === "content_block_delta" && ev.delta && ev.delta.text) {
+            texto += ev.delta.text;
+            detectarParciais();
+            extrairCompletos();
+          }
+        } catch(e) {}
+      });
+    });
+
+    stream.on("end", function() {
+      var resultado = extrairJSON(texto);
+      if (!resultado || !resultado.diagnosticos || !resultado.diagnosticos.length) {
+        resultado = diagsCompletos.length ? { diagnosticos: diagsCompletos }
+          : { diagnosticos: [{ diagnostico:"saudavel", estagio:1, confianca:"baixa", visto:"", acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.", fungicidas:[] }] };
+      }
+      res.write("data: " + JSON.stringify({ tipo:"fim", resultado:resultado }) + "\n\n");
+      encerrar();
+    });
+
+    stream.on("error", function(e) {
+      console.error("Stream erro:", e.message);
+      res.write("data: " + JSON.stringify({ tipo:"erro", msg:e.message }) + "\n\n");
+      encerrar();
+    });
   })
   .catch(function(e) {
-    console.error("Erro diagnostico:", e.message);
-    res.status(500).json({ erro: e.message });
+    console.error("Fetch Anthropic erro:", e.message);
+    res.write("data: " + JSON.stringify({ tipo:"erro", msg:e.message }) + "\n\n");
+    encerrar();
   });
 });
 

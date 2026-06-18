@@ -215,139 +215,33 @@ app.post("/diagnostico", function(req, res) {
   var KEY = process.env.ANTHROPIC_API_KEY;
   var prompt = buildPrompt(regiao, altitude, false);
 
-  // SSE headers
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders();
-
-  // Keep-alive: envia comentário SSE a cada 5s para Railway não fechar a conexão
-  var keepAliveInterval = setInterval(function() {
-    try { res.write(": ping\n\n"); } catch(e) { clearInterval(keepAliveInterval); }
-  }, 5000);
-
-  function finalizarSSE() {
-    clearInterval(keepAliveInterval);
-    try { res.end(); } catch(e) {}
-  }
-
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, stream: true, messages: [{ role: "user", content: [
-      { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
-      { type: "text", text: prompt }
-    ]}]})
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: tipo, data: imagem }},
+        { type: "text", text: prompt }
+      ]}]
+    })
   })
-  .then(function(r) {
-    var sseBuf = "", textAccum = "", diagsEnviados = 0;
-
-    // CORREÇÃO: converter Web ReadableStream → Node.js Readable
-    var stream;
-    try {
-      var Readable = require("stream").Readable;
-      stream = Readable.fromWeb(r.body);
-    } catch(e) {
-      console.error("fromWeb falhou, usando body diretamente:", e.message);
-      stream = r.body;
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    console.log("Diagnostico OK, texto:", txt.substr(0,100));
+    var resultado = extrairJSON(txt);
+    if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
+      resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa",
+        visto: "", acao: "Nao foi possivel analisar. Fotografe a folha de perto com boa iluminacao.", fungicidas: [] }] };
     }
-
-    // Detecção PARCIAL: envia nome+estagio+confianca assim que aparecem no stream (~2-3s)
-    var parciaisEnviados = 0;
-    function detectarParciais() {
-      var re = /"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
-      var match, encontrados = [];
-      while ((match = re.exec(textAccum)) !== null) {
-        encontrados.push({ diagnostico: match[1], estagio: parseInt(match[2]), confianca: match[3], visto: "", acao: "Identificando detalhes...", fungicidas: [], parcial: true });
-      }
-      for (var k = parciaisEnviados; k < encontrados.length; k++) {
-        res.write("data: " + JSON.stringify({ tipo: "diag", diag: encontrados[k] }) + "\n\n");
-        parciaisEnviados++;
-        console.log("⚡ Parcial:", encontrados[k].diagnostico);
-      }
-    }
-
-    // Extração COMPLETA: envia objeto completo com visto+acao+fungicidas
-    var diagsExtraidos = []; // guardar para usar como fallback no fim
-    function extrairNovosdiags() {
-      var inicioArr = textAccum.indexOf('"diagnosticos":[');
-      if (inicioArr === -1) return;
-      var pos = inicioArr + 16, encontrados = [];
-      while (pos < textAccum.length) {
-        var objStart = textAccum.indexOf("{", pos);
-        if (objStart === -1) break;
-        var depth = 0, i = objStart;
-        while (i < textAccum.length) {
-          if (textAccum[i] === "{") depth++;
-          else if (textAccum[i] === "}") {
-            depth--;
-            if (depth === 0) {
-              try {
-                var obj = JSON.parse(textAccum.substring(objStart, i + 1));
-                if (obj.diagnostico) encontrados.push(obj);
-              } catch(e) {}
-              pos = i + 1; break;
-            }
-          }
-          i++;
-        }
-        if (depth > 0) break;
-      }
-      diagsExtraidos = encontrados; // atualizar sempre
-      for (var k = diagsEnviados; k < encontrados.length; k++) {
-        res.write("data: " + JSON.stringify({ tipo: "diag_completo", diag: encontrados[k], index: k }) + "\n\n");
-        diagsEnviados++;
-        console.log("✅ Completo:", encontrados[k].diagnostico);
-      }
-    }
-
-    stream.on("data", function(chunk) {
-      sseBuf += chunk.toString();
-      var linhas = sseBuf.split("\n");
-      sseBuf = linhas.pop();
-      linhas.forEach(function(linha) {
-        if (!linha.startsWith("data: ")) return;
-        var dados = linha.slice(6);
-        if (dados === "[DONE]") return;
-        try {
-          var evento = JSON.parse(dados);
-          if (evento.type === "content_block_delta" && evento.delta && evento.delta.text) {
-            textAccum += evento.delta.text;
-            detectarParciais();
-            extrairNovosdiags();
-          }
-        } catch(e) {}
-      });
-    });
-
-    stream.on("end", function() {
-      var resultado = extrairJSON(textAccum);
-      // Se extrairJSON falhou mas já extraímos diagnósticos pelo streaming, usar eles
-      if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
-        if (diagsExtraidos.length > 0) {
-          console.log("ℹ️ extrairJSON falhou, usando", diagsExtraidos.length, "diags extraídos pelo stream");
-          resultado = { diagnosticos: diagsExtraidos };
-        } else {
-          resultado = { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente uma foto mais clara.", fungicidas: [] }] };
-        }
-      }
-      res.write("data: " + JSON.stringify({ tipo: "fim", resultado: resultado }) + "\n\n");
-      finalizarSSE();
-    });
-
-    stream.on("error", function(e) {
-      console.error("Stream erro:", e.message);
-      res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
-      finalizarSSE();
-    });
+    res.json(resultado);
   })
   .catch(function(e) {
-    console.error("Fetch erro:", e.message);
-    res.write("data: " + JSON.stringify({ tipo: "erro", msg: e.message }) + "\n\n");
-    finalizarSSE();
+    console.error("Erro diagnostico:", e.message);
+    res.status(500).json({ erro: e.message });
   });
 });
+
 
 // ── DIAGNÓSTICO JSON (fallback para iOS que não suporta SSE) ─────
 app.post("/diagnostico-json", function(req, res) {

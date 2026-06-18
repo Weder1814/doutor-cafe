@@ -152,15 +152,15 @@ app.post("/diagnostico", function(req, res) {
   .then(function(r) {
     var Readable = require("stream").Readable;
     var stream = Readable.fromWeb(r.body);
-    var buf = "", texto = "", diagsEnviados = 0, diagsCompletos = [];
+    var buf = "", texto = "", parciaisEnviados = 0, completosEnviados = 0, diagsCompletos = [];
 
     function detectarParciais() {
       var re = /"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
       var m, found = [];
       while ((m = re.exec(texto)) !== null) found.push({ diagnostico:m[1], estagio:parseInt(m[2]), confianca:m[3], visto:"", acao:"Analisando...", fungicidas:[], parcial:true });
-      for (var k = diagsEnviados; k < found.length; k++) {
+      for (var k = parciaisEnviados; k < found.length; k++) {
         res.write("data: " + JSON.stringify({ tipo:"diag", diag:found[k] }) + "\n\n");
-        diagsEnviados++;
+        parciaisEnviados++;
         console.log("⚡ Parcial:", found[k].diagnostico);
       }
     }
@@ -181,8 +181,9 @@ app.post("/diagnostico", function(req, res) {
         if (d > 0) break;
       }
       diagsCompletos = found;
-      for (var k = diagsEnviados; k < found.length; k++) {
+      for (var k = completosEnviados; k < found.length; k++) {
         res.write("data: " + JSON.stringify({ tipo:"diag_completo", diag:found[k], index:k }) + "\n\n");
+        completosEnviados++;
         console.log("✅ Completo:", found[k].diagnostico);
       }
     }

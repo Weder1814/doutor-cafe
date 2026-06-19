@@ -2,15 +2,11 @@ var express = require("express");
 var cors = require("cors");
 var app = express();
 
-// Armazenamento em memória (PostgreSQL pode ser adicionado futuramente)
-
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
 var MP_TOKEN = process.env.MP_ACCESS_TOKEN;
 var BASE_URL = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
-
-// Armazenamento em memória (PostgreSQL pode ser adicionado futuramente via DATABASE_URL)
 
 var PLANOS = {
   basico_mensal:  { nome: "Básico Mensal",  valor: 29.90, analises: 150 },
@@ -21,27 +17,22 @@ var PLANOS = {
   premium_anual:  { nome: "Premium Anual",  valor: 499.90, analises: 450 }
 };
 
-app.get("/", function(req, res) {
-  res.json({ status: "online", app: "Doutor Cafe API" });
-});
+app.get("/", function(req, res) { res.json({ status: "online", app: "Doutor Cafe API" }); });
+app.get("/ping", function(req, res) { res.json({ ok: true, ts: Date.now() }); });
 
-app.get("/ping", function(req, res) {
-  res.json({ ok: true, ts: Date.now() });
-});
-
-// ── CADASTRAR USUÁRIO ────────────────────────────
+// ── CADASTRAR USUÁRIO ──
 app.post("/cadastrar-usuario", function(req, res) {
   var userId = req.body.userId, nome = req.body.nome;
   var celular = req.body.celular || "", cpf = (req.body.cpf || "").replace(/[^0-9]/g,"");
   var regiao = req.body.regiao || "", email = req.body.email || "";
   var pin = (req.body.pin || "").replace(/[^0-9]/g,"").substr(0,4);
   if (!userId || !nome) return res.status(400).json({ erro: "Nome obrigatorio." });
-  usuariosMemoria[userId] = { userId:userId, cpf:cpf, nome:nome, celular:celular, pin:pin, email:email, regiao:regiao, plano:"gratuito", analisesUsadas:0 };
+  usuariosMemoria[userId] = { userId, cpf, nome, celular, pin, email, regiao, plano:"gratuito", analisesUsadas:0 };
   console.log("✅ Cadastro:", nome);
-  res.json({ ok: true, userId: userId });
+  res.json({ ok: true, userId });
 });
 
-// Login pelo CPF — recupera conta em novo dispositivo
+// ── LOGIN CELULAR + PIN ──
 app.post("/entrar", function(req, res) {
   var celular = (req.body.celular || "").replace(/[^0-9]/g,"");
   var pin = (req.body.pin || "").replace(/[^0-9]/g,"");
@@ -53,19 +44,19 @@ app.post("/entrar", function(req, res) {
   res.json({ ok:true, userId:u.userId, nome:u.nome, celular:u.celular, email:u.email, regiao:u.regiao, plano:u.plano, analisesUsadas:u.analisesUsadas });
 });
 
-// Atualizar análises usadas no servidor
 app.post("/incrementar-analise", function(req, res) {
   var userId = req.body.userId;
   if (userId && usuariosMemoria[userId]) usuariosMemoria[userId].analisesUsadas = (usuariosMemoria[userId].analisesUsadas||0) + 1;
   res.json({ ok: true });
 });
 
-
 app.get("/usuarios", function(req, res) {
   if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro: "Nao autorizado" });
   var lista = Object.values(usuariosMemoria);
   res.json({ total: lista.length, usuarios: lista });
 });
+
+// ── GERAR PIX ──
 app.post("/gerar-pix", function(req, res) {
   var planoId = req.body.plano, userId = req.body.userId;
   var email = req.body.email || "produtor@doutorcafe.app";
@@ -73,7 +64,7 @@ app.post("/gerar-pix", function(req, res) {
   if (!plano) return res.status(400).json({ erro: "Plano inválido" });
   var body = {
     transaction_amount: plano.valor, description: plano.nome, payment_method_id: "pix",
-    payer: { email: email, first_name: nome.split(' ')[0], last_name: nome.split(' ').slice(1).join(' ') || "Rural", identification: { type: "CPF", number: cpf } },
+    payer: { email, first_name: nome.split(' ')[0], last_name: nome.split(' ').slice(1).join(' ') || "Rural", identification: { type: "CPF", number: cpf } },
     metadata: { plano_id: planoId, user_id: userId, analises: plano.analises },
     notification_url: BASE_URL + "/webhook-pagamento"
   };
@@ -82,60 +73,61 @@ app.post("/gerar-pix", function(req, res) {
     headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MP_TOKEN, "X-Idempotency-Key": userId + "_" + planoId + "_" + Date.now() },
     body: JSON.stringify(body)
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
+  .then(r => r.json())
+  .then(d => {
     if (d.id && d.point_of_interaction) {
       res.json({ id: d.id, qr_code: d.point_of_interaction.transaction_data.qr_code, qr_code_base64: d.point_of_interaction.transaction_data.qr_code_base64, valor: plano.valor, plano: plano.nome });
     } else {
       console.error("Erro MP PIX:", JSON.stringify(d));
-      res.status(500).json({ erro: "Erro ao gerar PIX", detalhe: d.message || d.error, debug: JSON.stringify(d).substring(0,300) });
+      res.status(500).json({ erro: "Erro ao gerar PIX", detalhe: d.message || d.error });
     }
-  }).catch(function(e){ res.status(500).json({ erro: e.message }); });
+  }).catch(e => res.status(500).json({ erro: e.message }));
 });
 
 app.post("/criar-assinatura", function(req, res) {
   var planoId = req.body.plano, email = req.body.email || "produtor@doutorcafe.app", userId = req.body.userId, plano = PLANOS[planoId];
   if (!plano) return res.status(400).json({ erro: "Plano inválido" });
   var body = {
-    items: [{ title: plano.nome, quantity: 1, unit_price: plano.valor, currency_id: "BRL" }], payer: { email: email },
+    items: [{ title: plano.nome, quantity: 1, unit_price: plano.valor, currency_id: "BRL" }], payer: { email },
     back_urls: { success: "https://doutor-cafe-app.vercel.app?pagamento=sucesso&plano=" + planoId + "&user=" + userId, failure: "https://doutor-cafe-app.vercel.app?pagamento=falha", pending: "https://doutor-cafe-app.vercel.app?pagamento=pendente" },
     auto_approve: false, notification_url: BASE_URL + "/webhook-pagamento", metadata: { plano_id: planoId, user_id: userId, analises: plano.analises }
   };
   fetch("https://api.mercadopago.com/checkout/preferences", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + MP_TOKEN }, body: JSON.stringify(body) })
-  .then(function(r){ return r.json(); })
-  .then(function(d){ if (d.id) res.json({ url: d.init_point, id: d.id }); else res.status(500).json({ erro: "Erro ao criar preferência", detalhe: d.message || d.error }); })
-  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+  .then(r => r.json())
+  .then(d => { if (d.id) res.json({ url: d.init_point, id: d.id }); else res.status(500).json({ erro: "Erro ao criar preferência", detalhe: d.message || d.error }); })
+  .catch(e => res.status(500).json({ erro: e.message }));
 });
 
 app.get("/verificar-pix/:paymentId", function(req, res) {
   fetch("https://api.mercadopago.com/v1/payments/" + req.params.paymentId, { headers: { "Authorization": "Bearer " + MP_TOKEN } })
-  .then(function(r){ return r.json(); })
-  .then(function(p){ res.json({ status: p.status, aprovado: p.status === "approved", plano_id: p.metadata && p.metadata.plano_id, user_id: p.metadata && p.metadata.user_id }); })
-  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+  .then(r => r.json())
+  .then(p => res.json({ status: p.status, aprovado: p.status === "approved", plano_id: p.metadata && p.metadata.plano_id, user_id: p.metadata && p.metadata.user_id }))
+  .catch(e => res.status(500).json({ erro: e.message }));
 });
 
 app.post("/webhook-pagamento", function(req, res) {
   console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
   res.json({ ok: true });
 });
+
 app.get("/plano/:userId", function(req, res) {
   var u = usuariosMemoria[req.params.userId];
   res.json({ plano: u ? (u.plano||"gratuito") : "gratuito", analisesUsadas: u ? (u.analisesUsadas||0) : 0 });
 });
+
+// ── DIAGNÓSTICO SSE ──
 app.post("/diagnostico", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null, altitude = req.body.altitude || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
   var prompt = buildPrompt(regiao, altitude, false);
 
-  // SSE — mantém conexão viva e envia diagnósticos conforme chegam
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  // Ping a cada 5s para Railway não fechar a conexão ociosa
   var ping = setInterval(function(){ try { res.write(": ping\n\n"); } catch(e){ clearInterval(ping); } }, 5000);
   function encerrar() { clearInterval(ping); try { res.end(); } catch(e){} }
 
@@ -161,7 +153,6 @@ app.post("/diagnostico", function(req, res) {
       for (var k = parciaisEnviados; k < found.length; k++) {
         res.write("data: " + JSON.stringify({ tipo:"diag", diag:found[k] }) + "\n\n");
         parciaisEnviados++;
-        console.log("⚡ Parcial:", found[k].diagnostico);
       }
     }
 
@@ -184,7 +175,6 @@ app.post("/diagnostico", function(req, res) {
       for (var k = completosEnviados; k < found.length; k++) {
         res.write("data: " + JSON.stringify({ tipo:"diag_completo", diag:found[k], index:k }) + "\n\n");
         completosEnviados++;
-        console.log("✅ Completo:", found[k].diagnostico);
       }
     }
 
@@ -212,25 +202,22 @@ app.post("/diagnostico", function(req, res) {
         resultado = diagsCompletos.length ? { diagnosticos: diagsCompletos }
           : { diagnosticos: [{ diagnostico:"saudavel", estagio:1, confianca:"baixa", visto:"", acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.", fungicidas:[] }] };
       }
-      res.write("data: " + JSON.stringify({ tipo:"fim", resultado:resultado }) + "\n\n");
+      res.write("data: " + JSON.stringify({ tipo:"fim", resultado }) + "\n\n");
       encerrar();
     });
 
     stream.on("error", function(e) {
-      console.error("Stream erro:", e.message);
       res.write("data: " + JSON.stringify({ tipo:"erro", msg:e.message }) + "\n\n");
       encerrar();
     });
   })
   .catch(function(e) {
-    console.error("Fetch Anthropic erro:", e.message);
     res.write("data: " + JSON.stringify({ tipo:"erro", msg:e.message }) + "\n\n");
     encerrar();
   });
 });
 
-
-// ── DIAGNÓSTICO JSON (fallback para iOS que não suporta SSE) ─────
+// ── DIAGNÓSTICO JSON (fallback iOS) ──
 app.post("/diagnostico-json", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null, altitude = req.body.altitude || null;
@@ -244,8 +231,8 @@ app.post("/diagnostico-json", function(req, res) {
       { type: "text", text: prompt }
     ]}]})
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
+  .then(r => r.json())
+  .then(d => {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado || !resultado.diagnosticos || resultado.diagnosticos.length === 0) {
@@ -253,31 +240,54 @@ app.post("/diagnostico-json", function(req, res) {
     }
     res.json(resultado);
   })
-  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+  .catch(e => res.status(500).json({ erro: e.message }));
 });
 
-
-// ── PLANO DE AÇÃO (haiku — rápido) ───────────────
+// ── PLANO DE AÇÃO (haiku — com regras de compatibilidade) ──
 app.post("/plano-acao", function(req, res) {
   var diagnosticos = req.body.diagnosticos || [], regiao = req.body.regiao || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
   if (diagnosticos.length === 0) return res.json({ resumo_geral: "", urgente: "", em_21_dias: "", nutricao: "", resumo: "" });
+
   var regiaoCtx = regiao ? " Regiao: " + regiao + "." : "";
   var resumoDiags = diagnosticos.map(function(d, i){
-    var f = d.fungicidas && d.fungicidas.length > 0 ? d.fungicidas.map(function(f){ return f.nome_comercial || f.nome; }).join(", ") : "sem fungicida";
-    return (i+1) + ". " + d.diagnostico + " estagio " + d.estagio + " — produtos: " + f;
+    var f = d.fungicidas && d.fungicidas.length > 0
+      ? d.fungicidas.map(function(f){ return (f.nome_comercial || f.nome) + " (" + f.tipo + ")"; }).join(", ")
+      : "sem fungicida indicado";
+    return (i+1) + ". " + d.diagnostico + " estagio " + d.estagio + " — produtos individuais: " + f;
   }).join("\n");
-  var prompt = "Voce e o Doutor Cafe, agronomista especialista." + regiaoCtx + "\n\nDiagnostico encontrou:\n" + resumoDiags + "\n\n" +
-    "1. RESUMO_GERAL: 2-3 frases simples. Nomes populares: helmintosporiose=mancha marrom com aneis, ferrugem=po laranjado embaixo da folha, cercosporiose=pontinhos redondos, deficiencias=falta de nutriente X.\n" +
-    "2. PLANO: use nomes comerciais (Folicur, Recop, Cercobin). Dose por hectare e por tanque 20L. Linguagem simples.\n\n" +
-    "RESPONDA SOMENTE JSON:\n{\"resumo_geral\":\"frases simples\",\"urgente\":\"o que fazer essa semana com produto dose\",\"em_21_dias\":\"o que fazer em 21 dias\",\"nutricao\":\"correcao nutricional se houver\",\"resumo\":\"frase curta\"}";
+
+  var prompt =
+"Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira." + regiaoCtx + "\n\n" +
+"Diagnostico encontrou:\n" + resumoDiags + "\n\n" +
+
+"REGRAS OBRIGATORIAS DE COMPATIBILIDADE — SIGA RIGOROSAMENTE:\n" +
+"1. NUNCA combine dois triazois na mesma calda. Triazois: Tebuconazol (Folicur), Ciproconazol (presente no Priori Xtra e Opera), Propiconazol, Epoxiconazol, Difenoconazol (presente no Score/Amistar Top).\n" +
+"   - Priori Xtra = azoxistrobina + CIPROCONAZOL (ja tem triazol)\n" +
+"   - Opera = piraclostrobina + EPOXICONAZOL (ja tem triazol)\n" +
+"   - Amistar Top = azoxistrobina + DIFENOCONAZOL (ja tem triazol)\n" +
+"   - Se indicar Priori Xtra, Opera ou Amistar Top: NAO adicione Folicur, Score ou outro triazol na mesma calda.\n" +
+"2. NUNCA combine duas estrobilurinas na mesma calda. Estrobilurinas: Azoxistrobina, Piraclostrobina, Trifloxistrobina.\n" +
+"3. Fungicida protetor (Oxicloreto de Cobre, Mancozeb, Cuprozeb) PODE ser combinado com qualquer sistemico.\n" +
+"4. Para ferrugem + antracnose juntos: use UM produto que cubra ambos — Priori Xtra OU Opera OU Amistar Top — mais um protetor cuproso. Nao misture dois sistemicos.\n" +
+"5. Intervalo minimo entre aplicacoes: 14-21 dias.\n" +
+"6. Use nomes comerciais conhecidos: Priori Xtra, Folicur 200EC, Opera, Cuprogarb 350, Recop, Cercobin, Ally, Roundup.\n\n" +
+
+"FORMATO DA RESPOSTA:\n" +
+"- resumo_geral: 2-3 frases simples explicando o que a planta tem. Use nomes populares: helmintosporiose=mancha marrom com aneis, ferrugem=po laranjado embaixo, cercosporiose=pontinhos redondos.\n" +
+"- urgente: o que fazer ESSA SEMANA. Produto + dose por hectare + dose por tanque 20L. Linguagem simples.\n" +
+"- em_21_dias: proxima aplicacao. Produto + dose.\n" +
+"- nutricao: correcao nutricional se houver deficiencia detectada. Vazio se nao houver.\n\n" +
+"RESPONDA SOMENTE JSON sem texto antes ou depois:\n" +
+"{\"resumo_geral\":\"...\",\"urgente\":\"...\",\"em_21_dias\":\"...\",\"nutricao\":\"...\",\"resumo\":\"frase curta\"}";
+
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 700, messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] })
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 800, messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] })
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
+  .then(r => r.json())
+  .then(d => {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     res.json(resultado || { resumo_geral: "", urgente: "", em_21_dias: "", nutricao: "", resumo: "" });
@@ -285,7 +295,7 @@ app.post("/plano-acao", function(req, res) {
   .catch(function(){ res.json({ resumo_geral: "", urgente: "", em_21_dias: "", nutricao: "", resumo: "" }); });
 });
 
-// ── DIAGNÓSTICO VÍDEO ────────────────────────────
+// ── DIAGNÓSTICO VÍDEO ──
 app.post("/diagnostico-video", function(req, res) {
   var frames = req.body.frames, regiao = req.body.regiao || null, altitude = req.body.altitude || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
@@ -297,18 +307,18 @@ app.post("/diagnostico-video", function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: content }] })
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content }] })
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
+  .then(r => r.json())
+  .then(d => {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     res.json(resultado || { diagnosticos: [{ diagnostico: "saudavel", estagio: 1, confianca: "baixa", visto: "", acao: "Nao foi possivel analisar. Tente novamente.", fungicidas: [] }] });
   })
-  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+  .catch(e => res.status(500).json({ erro: e.message }));
 });
 
-// ── ANÁLISE DE SOLO ──────────────────────────────
+// ── ANÁLISE DE SOLO ──
 app.post("/analise-solo", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg", regiao = req.body.regiao || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
@@ -319,16 +329,16 @@ app.post("/analise-solo", function(req, res) {
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1200, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem } }, { type: "text", text: prompt }] }] })
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
+  .then(r => r.json())
+  .then(d => {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     res.json(resultado || { acao: "Nao foi possivel ler o laudo. Verifique a foto e tente novamente.", valores: {} });
   })
-  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+  .catch(e => res.status(500).json({ erro: e.message }));
 });
 
-// ── IDENTIFICA DANINHA ───────────────────────────
+// ── IDENTIFICA DANINHA ──
 app.post("/identifica-daninha", function(req, res) {
   var imagem = req.body.imagem, tipo = req.body.tipo || "image/jpeg", regiao = req.body.regiao || null;
   var KEY = process.env.ANTHROPIC_API_KEY;
@@ -351,45 +361,40 @@ app.post("/identifica-daninha", function(req, res) {
 "13. ERVA-QUENTE (Spermacoce latifolia): flores brancas. Solo ACIDO. Correcao do pH. Metsulfurom, glifosato.\n" +
 "14. CAPIM-DE-BURRO (Cynodon dactylon): gramínea rasteira, estoloes. Solo COMPACTADO. ACCase.\n" +
 "15. MARIA-PRETINHA (Solanum americanum): frutos pretos TOXICOS. Solo fertil. Glifosato, 2,4-D.\n\n" +
-"ATENCAO - DIFERENCIAR PLANTAS:\\n" +
-"BUVA = planta ERETA nao-gramínea folhas ESTREITAS compridas serrilhadas aspecto espeto vertical\\n" +
-"CAPIM-PE-DE-GALINHA = gramínea touceiras RASAS folhas chatas em leque\\n" +
-"CAPIM-AMARGOSO = gramínea touceiras ALTAS 50-100cm com pelos brancos\\n" +
-"TIRIRICA = folha triangular em secao flores marrom\\n\\n" +
+"ATENCAO - DIFERENCIAR PLANTAS:\n" +
+"BUVA = planta ERETA nao-gramínea folhas ESTREITAS compridas serrilhadas aspecto espeto vertical\n" +
+"CAPIM-PE-DE-GALINHA = gramínea touceiras RASAS folhas chatas em leque\n" +
+"CAPIM-AMARGOSO = gramínea touceiras ALTAS 50-100cm com pelos brancos\n" +
+"TIRIRICA = folha triangular em secao flores marrom\n\n" +
 "RESPONDA SOMENTE JSON:\n{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo em linguagem simples\",\"acao\":\"o que fazer em linguagem simples\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"quantidade simples ex: 3 litros por hectare ou 60mL por tanque de 20L\",\"momento\":\"quando aplicar\",\"como_usar\":\"instrucao pratica\"}],\"alerta\":\"aviso mais importante\",\"manejo_preventivo\":\"dica para evitar que se espalhe\"}";
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1500, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: tipo, data: imagem } }, { type: "text", text: prompt }] }] })
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
+  .then(r => r.json())
+  .then(d => {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (resultado) {
       if (!resultado.nome) resultado.nome = "Planta nao identificada";
       if (!resultado.produtos) resultado.produtos = [];
-      if (!resultado.alerta) resultado.alerta = "";
-      if (!resultado.manejo_preventivo) resultado.manejo_preventivo = "";
       res.json(resultado);
     } else {
       res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Nao foi possivel identificar", acao: "Fotografe mais de perto com boa iluminacao.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
     }
   })
-  .catch(function(e){ res.status(500).json({ erro: e.message }); });
+  .catch(e => res.status(500).json({ erro: e.message }));
 });
 
-// ── EXTRATOR JSON ROBUSTO ─────────────────────────
+// ── EXTRATOR JSON ROBUSTO ──
 function extrairJSON(txt) {
   if (!txt) return null;
-  // Limpar blocos de codigo
   txt = txt.replace(/```json/gi,"").replace(/```/g,"").trim();
-  // Estrategia 1: substring entre primeiro { e ultimo }
   try {
     var ini = txt.indexOf("{"), fim = txt.lastIndexOf("}");
     if (ini > -1 && fim > ini) return JSON.parse(txt.substring(ini, fim + 1));
   } catch(e1) {}
-  // Estrategia 2: remover caracteres especiais e tentar novamente
   try {
     var txtLimpo = txt.replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
     var ini = txtLimpo.indexOf("{"), fim = txtLimpo.lastIndexOf("}");
@@ -398,7 +403,7 @@ function extrairJSON(txt) {
   return null;
 }
 
-// ── BUILD PROMPT ─────────────────────────────────
+// ── BUILD PROMPT ──
 function buildPrompt(regiao, altitude, isVideo) {
   var contextoRegional = "";
   if (regiao) {
@@ -486,11 +491,7 @@ function buildPrompt(regiao, altitude, isVideo) {
 "fusariose_fruto=fruto MUMIFICADO marrom-escuro a negro SEM perfuracao de broca. Podridao seca interna. Frutos nao caem facilmente.\n" +
 "cercosporiose_fruto=manchas CIRCULARES PEQUENAS cinza-esbranquicadas com halo amarelo nos frutos verdes. Similar ao padrao nas folhas.\n" +
 "phoma_fruto=manchas NECROTICAS escuras irregulares nos frutos VERDES JOVENS. Frutos caem prematuramente.\n" +
-"acaro_fruto=superficie do fruto BRONZEADA acinzentada opaca. Frutos pequenos deformados. Inspecione com lupa.\n" +
-"bicho_mineiro_fruto=galeria serpentina castanha visivel sob a casca em frutos jovens verdes.\n\n" +
-"INSTRUCAO ANTI-CONFUSAO FRUTOS:\n" +
-"broca x antracnose: broca=FURO circular minusculo. antracnose=lesao AFUNDADA GRANDE sem furo.\n" +
-"fruto_passado x fusariose: passado=processo natural secagem. fusariose=infeccao fungica fruto nao madurou.\n\n" +
+"acaro_fruto=superficie do fruto BRONZEADA acinzentada opaca. Frutos pequenos deformados.\n\n" +
 
 "PRODUTOS E DOSES:\n" +
 "ferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\n" +
@@ -503,16 +504,7 @@ function buildPrompt(regiao, altitude, isVideo) {
 "broca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n" +
 "mancha_manteigosa: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Remover folhas afetadas. Consultar engenheiro agronomo.\n" +
 "corynespora: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha intervalo:21. Tiofanato Metilico 700WP 1-1,5kg/ha.\n" +
-"koleroga: Mancozeb 800WP 2kg/ha intervalo:21 proporcao_por_litro:2 unidade_proporcao:g. Remover folhas presas aos ramos.\n" +
-"rizoctoniose: Controle cultural: solo bem drenado, evitar machucados no coleto. Fungicida preventivo: Tiofanato Metilico 700WP.\n" +
-"roseliniose: Remover e queimar plantas afetadas. Evitar reuso do solo. Controle biologico com Trichoderma.\n" +
-"lagarta: Bacillus thuringiensis biologico 1-2L/ha. Monitorar nivel de infestacao.\n" +
-"cochonilha_raiz: Imidacloprid 700WG 0,3kg/ha via solo. Melhorar drenagem do solo.\n" +
-"nematoide: Nao ha controle quimico economico para area ja infestada. Rotacao culturas. Uso de variedades resistentes. Consultar agrónomo para nematicidas.\n\n" +
-"antracnose_fruto: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha.\n" +
-"fusariose_fruto: remover e destruir frutos mumificados. Tiofanato Metilico 700WP protetor 1-1,5kg/ha intervalo:14.\n" +
-"cercosporiose_fruto: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha intervalo:21.\n" +
-"fruto_passado: recomendado colheita seletiva imediata para evitar fonte de inoculo.\n\n" +
+"koleroga: Mancozeb 800WP 2kg/ha intervalo:21 proporcao_por_litro:2 unidade_proporcao:g. Remover folhas presas aos ramos.\n\n" +
 
 "INSTRUCOES FINAIS:\n" +
 "1. Liste TODOS os problemas encontrados — sem limite.\n" +
@@ -526,7 +518,7 @@ function buildPrompt(regiao, altitude, isVideo) {
 "{\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
 
-// Armazenamento em memória
+// ── ARMAZENAMENTO ──
 var pool = null;
 var usuariosMemoria = {};
 console.log("✅ Servidor iniciado — armazenamento em memória ativo");

@@ -348,29 +348,32 @@ app.post("/identifica-daninha", function(req, res) {
   var KEY = process.env.ANTHROPIC_API_KEY;
   var contexto = regiao ? " O produtor esta na regiao " + regiao + "." : "";
   var prompt = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro." + contexto + "\n\n" +
-"Analise a imagem e identifique a planta daninha. Use linguagem simples para produtor rural. Sem termos tecnicos.\n\n" +
+"REGRA MAIS IMPORTANTE: Identifique TODAS as especies de plantas daninhas visiveis na imagem — pode haver 2, 3 ou mais especies diferentes ao mesmo tempo. Nao ignore nenhuma planta visivel.\n\n" +
 "PLANTAS DANINHAS DO CAFE:\n" +
 "1. PICAO-PRETO (Bidens pilosa): sementes com espinhos, flores amarelas. Solo fertil. PRE: Goal BR 5-6L/ha, Ametrina 800 1,5-2,5kg/ha. POS: Goal BR 6L/ha.\n" +
 "2. CAPIM-AMARGOSO (Digitaria insularis): GRAMÍNEA perene em TOUCEIRAS grandes 50-100cm, folhas com pelos brancos nas bordas, sementes pilosas que grudam na roupa, caule achatado. Solo degradado, resistente ao glifosato. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha, Select 240EC 0,45L/ha.\n" +
-"3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMÍNEA anual em TOUCEIRAS DENSAS rasteiras, folhas CHATAS e largas saindo do centro formando leque, espiga com ramificacoes em formato de pe de galinha. Completamente diferente da Buva. Solo COMPACTADO. POS: ACCase + glifosato. Galigan 240 3L/ha. Controlar com maximo 1 perfilho.\n" +
-"4. BUVA/VOADEIRA (Conyza spp.): planta ERETA ate 2m, caule unico vertical, folhas ESTREITAS e COMPRIDAS com bordas levemente serrilhadas, aspecto de espeto para cima, levemente peluda/cinza. NAO e gramínea. Solo com excesso de glifosato — resistente. Controlar OBRIGATORIAMENTE com menos de 25cm pois sementes voam. Galigan 240EC, Heat 700WG, Aurora 400EC, Ally 600WG.\n" +
-"5. CARURU (Amaranthus spp.): 20cm-2m. Solo fertil com alto N. Heat 700WG em plantas ate 5cm.\n" +
-"6. TIRIRICA (Cyperus rotundus): perene, folhas triangulares. Solo com DRENAGEM RUIM. Glifosato + Diuron Nortox 800WP. Pulverizacao SEQUENCIAL.\n" +
+"3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMÍNEA anual em TOUCEIRAS DENSAS rasteiras, folhas CHATAS e largas saindo do centro formando leque, espiga com ramificacoes em formato de pe de galinha. Solo COMPACTADO. POS: ACCase + glifosato. Galigan 240 3L/ha.\n" +
+"4. BUVA/VOADEIRA (Conyza spp.): planta ERETA ate 2m, caule unico vertical, folhas ESTREITAS e COMPRIDAS com bordas levemente serrilhadas. NAO e gramínea. Solo com excesso de glifosato — resistente. Controlar com menos de 25cm. Galigan 240EC 3L/ha, Heat 700WG 70-100g/ha, Aurora 400EC, Ally 600WG.\n" +
+"5. CARURU (Amaranthus spp.): 20cm-2m. Solo fertil com alto N. Heat 700WG 70g/ha em plantas ate 5cm.\n" +
+"6. TIRIRICA (Cyperus rotundus): perene, folhas triangulares. Solo com DRENAGEM RUIM. Glifosato + Diuron Nortox 800WP.\n" +
 "7. CORDA-DE-VIOLA (Ipomoea spp.): trepadeira ate 3m, flores roxas. Solo fertil e umido. Tolerante ao glifosato. Aurora 400EC, Ally 600WG.\n" +
-"8. CAPIM-BRAQUIARIA (Urochloa spp.): ALIADA nas entrelinhas. Problema na linha do cafe. Manter 1 metro de distancia. ACCase para controle.\n" +
-"9. POAIA-BRANCA (Richardia brasiliensis): planta rasteira, flores brancas. Solo umido. Goal BR, Ametrina.\n" +
+"8. CAPIM-GORDURA (Melinis minutiflora): GRAMÍNEA perene, folhas PELUDAS e VISCOSAS com cheiro forte de mel/gordura, cor verde-amarelada clara, cresce em touceiras soltas. Cobre o solo rapidamente. Solo com baixa fertilidade. ACCase: Select 240EC 0,45L/ha, Verdict Max 0,3L/ha.\n" +
+"9. CAPIM-BRAQUIARIA (Urochloa spp.): GRAMÍNEA aliada nas entrelinhas mas problema na linha do cafe. Manter 1 metro de distancia. ACCase para controle.\n" +
 "10. CAPIM-MARMELADA (Urochloa plantaginea): gramínea anual ate 80cm. Solo fertil. ACCase.\n" +
 "11. TRAPOERABA (Commelina benghalensis): rasteira, flores azuis. Solo UMIDO. TOLERANTE ao glifosato. 2,4-D, carfentrazina.\n" +
 "12. GUANXUMA (Sida spp.): arbusto flores amarelas. Solo DEGRADADO. 2,4-D, metsulfurom.\n" +
-"13. ERVA-QUENTE (Spermacoce latifolia): flores brancas. Solo ACIDO. Correcao do pH. Metsulfurom, glifosato.\n" +
+"13. ERVA-QUENTE (Spermacoce latifolia): flores brancas. Solo ACIDO. Metsulfurom, glifosato.\n" +
 "14. CAPIM-DE-BURRO (Cynodon dactylon): gramínea rasteira, estoloes. Solo COMPACTADO. ACCase.\n" +
-"15. MARIA-PRETINHA (Solanum americanum): frutos pretos TOXICOS. Solo fertil. Glifosato, 2,4-D.\n\n" +
-"ATENCAO - DIFERENCIAR PLANTAS:\n" +
-"BUVA = planta ERETA nao-gramínea folhas ESTREITAS compridas serrilhadas aspecto espeto vertical\n" +
-"CAPIM-PE-DE-GALINHA = gramínea touceiras RASAS folhas chatas em leque\n" +
-"CAPIM-AMARGOSO = gramínea touceiras ALTAS 50-100cm com pelos brancos\n" +
-"TIRIRICA = folha triangular em secao flores marrom\n\n" +
-"RESPONDA SOMENTE JSON:\n{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo em linguagem simples\",\"acao\":\"o que fazer em linguagem simples\",\"urgencia\":\"alta|media|baixa\",\"tipo_controle\":\"quimico|mecanico|cultural|integrado\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"quantidade simples ex: 3 litros por hectare ou 60mL por tanque de 20L\",\"momento\":\"quando aplicar\",\"como_usar\":\"instrucao pratica\"}],\"alerta\":\"aviso mais importante\",\"manejo_preventivo\":\"dica para evitar que se espalhe\"}";
+"15. MARIA-PRETINHA (Solanum americanum): frutos pretos TOXICOS. Solo fertil. Glifosato, 2,4-D.\n" +
+"16. POAIA-BRANCA (Richardia brasiliensis): planta rasteira, flores brancas. Solo umido. Goal BR, Ametrina.\n\n" +
+"ATENCAO - DIFERENCIAR:\n" +
+"BUVA = ereta, nao-gramínea, folhas estreitas compridas, aspecto espeto vertical\n" +
+"CAPIM-GORDURA = gramínea PELUDA viscosa com cheiro, folhas mais largas que buva, cor amarelada\n" +
+"CAPIM-AMARGOSO = gramínea touceiras altas 50-100cm com pelos brancos nas bordas\n" +
+"CAPIM-PE-DE-GALINHA = gramínea touceiras rasas em leque\n" +
+"TIRIRICA = folha triangular em secao, flores marrom\n\n" +
+"RESPONDA SOMENTE JSON com array de todas as plantas encontradas:\n" +
+"{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer em linguagem simples\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"ex: 3 litros por hectare ou 60mL por tanque 20L\",\"como_usar\":\"instrucao pratica\"}],\"alerta\":\"aviso mais importante\"}],\"indicador_geral\":\"o que a combinacao de plantas indica sobre o solo\",\"manejo_integrado\":\"estrategia para controlar todas juntas\"}";
   fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
@@ -381,11 +384,17 @@ app.post("/identifica-daninha", function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (resultado) {
-      if (!resultado.nome) resultado.nome = "Planta nao identificada";
-      if (!resultado.produtos) resultado.produtos = [];
+      // Suporte ao novo formato com array de plantas
+      if (!resultado.plantas) {
+        // Formato antigo — converter para novo
+        resultado = { plantas: [resultado], indicador_geral: resultado.indicador||"", manejo_integrado: resultado.manejo_preventivo||"" };
+      }
+      if (!resultado.plantas || resultado.plantas.length === 0) {
+        resultado.plantas = [{ nome:"Planta nao identificada", nome_cientifico:"", indicador:"Nao foi possivel identificar", acao:"Fotografe mais de perto com boa iluminacao.", urgencia:"baixa", produtos:[], alerta:"" }];
+      }
       res.json(resultado);
     } else {
-      res.json({ nome: "Planta nao identificada", nome_cientifico: "", indicador: "Nao foi possivel identificar", acao: "Fotografe mais de perto com boa iluminacao.", urgencia: "baixa", tipo_controle: "nenhum", produtos: [], alerta: "", manejo_preventivo: "" });
+      res.json({ plantas: [{ nome:"Planta nao identificada", nome_cientifico:"", indicador:"Nao foi possivel identificar", acao:"Fotografe mais de perto com boa iluminacao.", urgencia:"baixa", produtos:[], alerta:"" }], indicador_geral:"", manejo_integrado:"" });
     }
   })
   .catch(e => res.status(500).json({ erro: e.message }));

@@ -1,7 +1,6 @@
 {
-  "name": "doutor-cafe-api",
+  "name": "doutor-cafe",
   "version": "2.0.0",
-  "description": "Doutor Café — API com PostgreSQL e rate limiting",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,8 +9,5 @@
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "pg": "^8.11.3"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }

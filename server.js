@@ -21,7 +21,7 @@ if (DB_URL) {
     pool = new Pool({
       connectionString: DB_URL,
       ssl: { rejectUnauthorized: false },
-      max: 10,                  // máximo de conexões simultâneas
+      max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
     });
@@ -116,7 +116,6 @@ async function dbGetUserByCelular(celular) {
       var r = await pool.query("SELECT * FROM usuarios WHERE REGEXP_REPLACE(celular,'[^0-9]','','g')=$1", [cel]);
       return r.rows[0] || null;
     } catch(e) {
-      // fallback sem regexp
       try {
         var r2 = await pool.query("SELECT * FROM usuarios WHERE celular=$1", [cel]);
         return r2.rows[0] || null;
@@ -124,6 +123,23 @@ async function dbGetUserByCelular(celular) {
     }
   }
   return Object.values(usuariosMemoria).find(function(u){ return (u.celular||"").replace(/[^0-9]/g,"")===cel; }) || null;
+}
+
+// ── NOVO: buscar usuário por CPF ──────────────────────────────
+async function dbGetUserByCPF(cpf) {
+  var c = cpf.replace(/[^0-9]/g,"");
+  if (pool) {
+    try {
+      var r = await pool.query("SELECT * FROM usuarios WHERE REGEXP_REPLACE(cpf,'[^0-9]','','g')=$1", [c]);
+      return r.rows[0] || null;
+    } catch(e) {
+      try {
+        var r2 = await pool.query("SELECT * FROM usuarios WHERE cpf=$1", [c]);
+        return r2.rows[0] || null;
+      } catch(e2) { console.error("dbGetUserByCPF:", e2.message); }
+    }
+  }
+  return Object.values(usuariosMemoria).find(function(u){ return (u.cpf||"").replace(/[^0-9]/g,"")===c; }) || null;
 }
 
 async function dbSaveUser(u) {
@@ -188,24 +204,23 @@ async function dbSalvarAnalise(userId, talhaoId, diagnosticos, fotoThumb, regiao
 }
 
 // ── RATE LIMITING ──────────────────────────────────────────────
-var rateMap = {};          // userId -> { count, resetAt }
-var RATE_LIMIT_ANALISE = 10;   // máx 10 análises por minuto por usuário
-var RATE_LIMIT_JANELA  = 60 * 1000; // 1 minuto
+var rateMap = {};
+var RATE_LIMIT_ANALISE = 10;
+var RATE_LIMIT_JANELA  = 60 * 1000;
 
 function checkRateLimit(userId) {
   var agora = Date.now();
   if (!rateMap[userId] || agora > rateMap[userId].resetAt) {
     rateMap[userId] = { count: 1, resetAt: agora + RATE_LIMIT_JANELA };
-    return true; // permitido
+    return true;
   }
   rateMap[userId].count++;
   if (rateMap[userId].count > RATE_LIMIT_ANALISE) {
-    return false; // bloqueado
+    return false;
   }
   return true;
 }
 
-// Limpar rate map a cada 5 minutos para não vazar memória
 setInterval(function() {
   var agora = Date.now();
   Object.keys(rateMap).forEach(function(k){ if (agora > rateMap[k].resetAt) delete rateMap[k]; });
@@ -236,6 +251,23 @@ app.post("/cadastrar-usuario", async function(req, res) {
   var pin     = (req.body.pin||"").replace(/[^0-9]/g,"").substr(0,4);
 
   if (!userId || !nome) return res.status(400).json({ erro:"Nome obrigatorio." });
+
+  // ── NOVO: verificar se CPF já existe no banco ──────────────
+  if (cpf) {
+    try {
+      var existente = await dbGetUserByCPF(cpf);
+      if (existente) {
+        console.log("⚠️ CPF já cadastrado:", cpf, "-> retornando userId existente");
+        return res.json({
+          ok:true,
+          userId: existente.user_id||existente.userId,
+          jaExistia:true,
+          plano: existente.plano||"gratuito",
+          analisesUsadas: existente.analises_usadas||existente.analisesUsadas||0
+        });
+      }
+    } catch(e) { console.error("verificarCPF:", e.message); }
+  }
 
   try {
     await dbSaveUser({ userId, cpf, celular, nome, pin, email, regiao, plano:"gratuito", analisesUsadas:0 });
@@ -378,7 +410,6 @@ app.get("/usuarios", async function(req, res) {
 app.post("/webhook-pagamento", async function(req, res) {
   console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
   var data = req.body;
-  // Processar aprovação de pagamento
   if (data.type === "payment" && data.data && data.data.id) {
     try {
       var r = await fetch("https://api.mercadopago.com/v1/payments/"+data.data.id, {
@@ -391,7 +422,6 @@ app.post("/webhook-pagamento", async function(req, res) {
         var tipo    = planoId && planoId.indexOf("premium")>-1?"premium":planoId && planoId.indexOf("pro")>-1?"pro":"basico";
         if (userId) {
           await dbAtualizarPlano(userId, tipo, planoId);
-          // Salvar pagamento
           if (pool) {
             await pool.query(
               "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
@@ -428,7 +458,6 @@ app.post("/gerar-pix", async function(req, res) {
     });
     var d = await r.json();
     if (d.id && d.point_of_interaction) {
-      // Salvar pagamento pendente
       if (pool) {
         try {
           await pool.query("INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
@@ -485,7 +514,6 @@ app.post("/diagnostico", function(req, res) {
   var altitude= req.body.altitude||null;
   var userId  = req.body.userId||"anonimo";
 
-  // Rate limiting
   if (!checkRateLimit(userId)) {
     return res.status(429).json({ erro:"Muitas análises em sequência. Aguarde 1 minuto." });
   }
@@ -802,8 +830,6 @@ function buildPrompt(regiao, altitude, isVideo) {
 }
 
 // ── INICIALIZAÇÃO ─────────────────────────────────────────────
-var usuariosMemoria = {};
-
 initDB().then(function() {
   app.listen(process.env.PORT||8080, function() {
     console.log("🌿 Doutor Cafe API ok — porta", process.env.PORT||8080);

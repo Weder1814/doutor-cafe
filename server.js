@@ -8,7 +8,7 @@ app.use(express.json({ limit: "50mb" }));
 // ── VARIÁVEIS DE AMBIENTE ──────────────────────────────────────
 var MP_TOKEN   = process.env.MP_ACCESS_TOKEN;
 var BASE_URL   = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
-var DB_URL     = process.env.DATABASE_URL;   // PostgreSQL do Railway
+var DB_URL     = process.env.DATABASE_URL;
 var KEY        = process.env.ANTHROPIC_API_KEY;
 
 // ── POSTGRESQL ─────────────────────────────────────────────────
@@ -33,8 +33,56 @@ if (DB_URL) {
   console.warn("⚠️ DATABASE_URL não definida — usando memória");
 }
 
-// Fallback em memória (para desenvolvimento local)
 var usuariosMemoria = {};
+
+// ── VALIDAÇÃO CPF ─────────────────────────────────────────────
+function validarCPF(cpf) {
+  cpf = cpf.replace(/[^0-9]/g, "");
+  if (cpf.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(cpf)) return false;
+  var soma = 0;
+  for (var i = 0; i < 9; i++) soma += parseInt(cpf[i]) * (10 - i);
+  var dig1 = 11 - (soma % 11);
+  if (dig1 >= 10) dig1 = 0;
+  if (dig1 !== parseInt(cpf[9])) return false;
+  soma = 0;
+  for (var i = 0; i < 10; i++) soma += parseInt(cpf[i]) * (11 - i);
+  var dig2 = 11 - (soma % 11);
+  if (dig2 >= 10) dig2 = 0;
+  if (dig2 !== parseInt(cpf[10])) return false;
+  return true;
+}
+
+// ── LIMITES DE ANÁLISES ───────────────────────────────────────
+var LIMITES = {
+  gratuito: 15,
+  basico:   150,
+  pro:      300,
+  premium:  450
+};
+
+function mesAtual() {
+  var agora = new Date();
+  return agora.getFullYear() + "-" + String(agora.getMonth() + 1).padStart(2, "0");
+}
+
+function analisesRestantes(u) {
+  var plano = u.plano || "gratuito";
+  var limite = LIMITES[plano] || 15;
+  var usadas = u.analises_usadas || u.analisesUsadas || 0;
+
+  if (plano === "gratuito") {
+    // Gratuito: vitalício, nunca reseta
+    return Math.max(0, limite - usadas);
+  } else {
+    // Plano pago: reseta todo mês
+    var mesReset = u.mes_reset || u.mesReset || "";
+    if (mesReset !== mesAtual()) {
+      return limite; // novo mês, análises resetadas
+    }
+    return Math.max(0, limite - usadas);
+  }
+}
 
 // ── INICIALIZAR TABELAS ────────────────────────────────────────
 async function initDB() {
@@ -42,56 +90,58 @@ async function initDB() {
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS usuarios (
-        user_id     TEXT PRIMARY KEY,
-        cpf         TEXT,
-        celular     TEXT,
-        nome        TEXT,
-        pin         TEXT,
-        email       TEXT,
-        regiao      TEXT,
-        plano       TEXT DEFAULT 'gratuito',
-        plano_id    TEXT,
+        user_id       TEXT PRIMARY KEY,
+        cpf           TEXT,
+        celular       TEXT,
+        nome          TEXT,
+        pin           TEXT,
+        email         TEXT,
+        regiao        TEXT,
+        plano         TEXT DEFAULT 'gratuito',
+        plano_id      TEXT,
         analises_usadas INTEGER DEFAULT 0,
-        criado_em   TIMESTAMPTZ DEFAULT NOW(),
+        mes_reset     TEXT DEFAULT '',
+        criado_em     TIMESTAMPTZ DEFAULT NOW(),
         atualizado_em TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_usuarios_celular ON usuarios(celular);
       CREATE INDEX IF NOT EXISTS idx_usuarios_cpf ON usuarios(cpf);
 
       CREATE TABLE IF NOT EXISTS analises (
-        id          SERIAL PRIMARY KEY,
-        user_id     TEXT REFERENCES usuarios(user_id) ON DELETE CASCADE,
-        talhao_id   TEXT,
+        id           SERIAL PRIMARY KEY,
+        user_id      TEXT REFERENCES usuarios(user_id) ON DELETE CASCADE,
+        talhao_id    TEXT,
         diagnosticos JSONB,
-        foto_thumb  TEXT,
-        regiao      TEXT,
-        criado_em   TIMESTAMPTZ DEFAULT NOW()
+        foto_thumb   TEXT,
+        regiao       TEXT,
+        criado_em    TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_analises_user ON analises(user_id);
       CREATE INDEX IF NOT EXISTS idx_analises_talhao ON analises(talhao_id);
 
       CREATE TABLE IF NOT EXISTS talhoes (
-        id          TEXT PRIMARY KEY,
-        user_id     TEXT REFERENCES usuarios(user_id) ON DELETE CASCADE,
-        nome        TEXT,
-        variedade   TEXT,
-        idade       INTEGER,
-        area        NUMERIC,
-        analises    JSONB DEFAULT '[]',
-        criado_em   TIMESTAMPTZ DEFAULT NOW(),
+        id            TEXT PRIMARY KEY,
+        user_id       TEXT REFERENCES usuarios(user_id) ON DELETE CASCADE,
+        nome          TEXT,
+        variedade     TEXT,
+        idade         INTEGER,
+        area          NUMERIC,
+        analises      JSONB DEFAULT '[]',
+        criado_em     TIMESTAMPTZ DEFAULT NOW(),
         atualizado_em TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_talhoes_user ON talhoes(user_id);
 
       CREATE TABLE IF NOT EXISTS pagamentos (
-        id          TEXT PRIMARY KEY,
-        user_id     TEXT,
-        plano_id    TEXT,
-        status      TEXT,
-        valor       NUMERIC,
-        criado_em   TIMESTAMPTZ DEFAULT NOW()
+        id        TEXT PRIMARY KEY,
+        user_id   TEXT,
+        plano_id  TEXT,
+        status    TEXT,
+        valor     NUMERIC,
+        criado_em TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mes_reset TEXT DEFAULT ''`);
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);
@@ -125,7 +175,6 @@ async function dbGetUserByCelular(celular) {
   return Object.values(usuariosMemoria).find(function(u){ return (u.celular||"").replace(/[^0-9]/g,"")===cel; }) || null;
 }
 
-// ── NOVO: buscar usuário por CPF ──────────────────────────────
 async function dbGetUserByCPF(cpf) {
   var c = cpf.replace(/[^0-9]/g,"");
   if (pool) {
@@ -146,15 +195,16 @@ async function dbSaveUser(u) {
   if (pool) {
     try {
       await pool.query(`
-        INSERT INTO usuarios (user_id,cpf,celular,nome,pin,email,regiao,plano,analises_usadas)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        INSERT INTO usuarios (user_id,cpf,celular,nome,pin,email,regiao,plano,analises_usadas,mes_reset)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT (user_id) DO UPDATE SET
           cpf=EXCLUDED.cpf, celular=EXCLUDED.celular, nome=EXCLUDED.nome,
           pin=EXCLUDED.pin, email=EXCLUDED.email, regiao=EXCLUDED.regiao,
           plano=EXCLUDED.plano, analises_usadas=EXCLUDED.analises_usadas,
-          atualizado_em=NOW()
+          mes_reset=EXCLUDED.mes_reset, atualizado_em=NOW()
       `, [u.userId||u.user_id, u.cpf||"", u.celular||"", u.nome||"",
-          u.pin||"", u.email||"", u.regiao||"", u.plano||"gratuito", u.analisesUsadas||0]);
+          u.pin||"", u.email||"", u.regiao||"", u.plano||"gratuito",
+          u.analisesUsadas||0, u.mesReset||""]);
       return true;
     } catch(e) { console.error("dbSaveUser:", e.message); }
   }
@@ -163,30 +213,62 @@ async function dbSaveUser(u) {
 }
 
 async function dbIncrementarAnalise(userId) {
+  var mes = mesAtual();
   if (pool) {
     try {
-      await pool.query(
-        "UPDATE usuarios SET analises_usadas=analises_usadas+1, atualizado_em=NOW() WHERE user_id=$1",
-        [userId]
-      );
+      var r = await pool.query("SELECT plano, mes_reset FROM usuarios WHERE user_id=$1", [userId]);
+      if (r.rows.length > 0) {
+        var u = r.rows[0];
+        var plano = u.plano || "gratuito";
+        var mesReset = u.mes_reset || "";
+        if (plano !== "gratuito" && mesReset !== mes) {
+          // Plano pago, novo mês: reseta e conta 1
+          await pool.query(
+            "UPDATE usuarios SET analises_usadas=1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
+            [userId, mes]
+          );
+        } else {
+          // Incrementa normalmente
+          await pool.query(
+            "UPDATE usuarios SET analises_usadas=analises_usadas+1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
+            [userId, plano === "gratuito" ? mesReset : mes]
+          );
+        }
+      }
       return true;
     } catch(e) { console.error("dbIncrementarAnalise:", e.message); }
   }
-  if (usuariosMemoria[userId]) usuariosMemoria[userId].analisesUsadas = (usuariosMemoria[userId].analisesUsadas||0)+1;
+  if (usuariosMemoria[userId]) {
+    var u = usuariosMemoria[userId];
+    var plano = u.plano || "gratuito";
+    if (plano !== "gratuito" && (u.mesReset||"") !== mes) {
+      u.analisesUsadas = 1;
+      u.mesReset = mes;
+    } else {
+      u.analisesUsadas = (u.analisesUsadas||0) + 1;
+      if (plano !== "gratuito") u.mesReset = mes;
+    }
+  }
   return true;
 }
 
 async function dbAtualizarPlano(userId, plano, planoId) {
+  var mes = mesAtual();
   if (pool) {
     try {
       await pool.query(
-        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, atualizado_em=NOW() WHERE user_id=$1",
-        [userId, plano, planoId||""]
+        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, atualizado_em=NOW() WHERE user_id=$1",
+        [userId, plano, planoId||"", mes]
       );
       return true;
     } catch(e) { console.error("dbAtualizarPlano:", e.message); }
   }
-  if (usuariosMemoria[userId]) { usuariosMemoria[userId].plano=plano; usuariosMemoria[userId].planoId=planoId; }
+  if (usuariosMemoria[userId]) {
+    usuariosMemoria[userId].plano = plano;
+    usuariosMemoria[userId].planoId = planoId;
+    usuariosMemoria[userId].analisesUsadas = 0;
+    usuariosMemoria[userId].mesReset = mes;
+  }
   return true;
 }
 
@@ -215,9 +297,7 @@ function checkRateLimit(userId) {
     return true;
   }
   rateMap[userId].count++;
-  if (rateMap[userId].count > RATE_LIMIT_ANALISE) {
-    return false;
-  }
+  if (rateMap[userId].count > RATE_LIMIT_ANALISE) return false;
   return true;
 }
 
@@ -252,27 +332,34 @@ app.post("/cadastrar-usuario", async function(req, res) {
 
   if (!userId || !nome) return res.status(400).json({ erro:"Nome obrigatorio." });
 
-  // ── NOVO: verificar se CPF já existe no banco ──────────────
+  // Validar CPF matematicamente
+  if (cpf && !validarCPF(cpf)) {
+    return res.status(400).json({ erro:"CPF inválido. Verifique os números digitados." });
+  }
+
+  // Verificar se CPF já existe — retorna o userId original
   if (cpf) {
     try {
       var existente = await dbGetUserByCPF(cpf);
       if (existente) {
         console.log("⚠️ CPF já cadastrado:", cpf, "-> retornando userId existente");
+        var restantes = analisesRestantes(existente);
         return res.json({
           ok:true,
           userId: existente.user_id||existente.userId,
           jaExistia:true,
           plano: existente.plano||"gratuito",
-          analisesUsadas: existente.analises_usadas||existente.analisesUsadas||0
+          analisesUsadas: existente.analises_usadas||existente.analisesUsadas||0,
+          analisesRestantes: restantes
         });
       }
     } catch(e) { console.error("verificarCPF:", e.message); }
   }
 
   try {
-    await dbSaveUser({ userId, cpf, celular, nome, pin, email, regiao, plano:"gratuito", analisesUsadas:0 });
+    await dbSaveUser({ userId, cpf, celular, nome, pin, email, regiao, plano:"gratuito", analisesUsadas:0, mesReset:"" });
     console.log("✅ Cadastro:", nome, "| DB:", pool?"postgres":"memoria");
-    res.json({ ok:true, userId });
+    res.json({ ok:true, userId, analisesRestantes: LIMITES.gratuito });
   } catch(e) {
     res.status(500).json({ erro:e.message });
   }
@@ -291,6 +378,7 @@ app.post("/entrar", async function(req, res) {
     if (!u) return res.status(404).json({ erro:"Celular nao encontrado. Faca o cadastro." });
     if (u.pin && u.pin !== pin) return res.status(401).json({ erro:"PIN incorreto." });
 
+    var restantes = analisesRestantes(u);
     res.json({
       ok:true,
       userId: u.user_id||u.userId,
@@ -299,7 +387,25 @@ app.post("/entrar", async function(req, res) {
       email: u.email,
       regiao: u.regiao,
       plano: u.plano||"gratuito",
-      analisesUsadas: u.analises_usadas||u.analisesUsadas||0
+      analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
+      analisesRestantes: restantes
+    });
+  } catch(e) {
+    res.status(500).json({ erro:e.message });
+  }
+});
+
+// ── VERIFICAR ANÁLISES RESTANTES ──────────────────────────────
+app.get("/analises-restantes/:userId", async function(req, res) {
+  try {
+    var u = await dbGetUser(req.params.userId);
+    if (!u) return res.status(404).json({ erro:"Usuario nao encontrado." });
+    var restantes = analisesRestantes(u);
+    res.json({
+      plano: u.plano||"gratuito",
+      analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
+      analisesRestantes: restantes,
+      limite: LIMITES[u.plano||"gratuito"]||15
     });
   } catch(e) {
     res.status(500).json({ erro:e.message });
@@ -309,11 +415,18 @@ app.post("/entrar", async function(req, res) {
 // ── INCREMENTAR ANÁLISE ───────────────────────────────────────
 app.post("/incrementar-analise", async function(req, res) {
   var userId = req.body.userId;
-  if (userId) await dbIncrementarAnalise(userId);
+  if (!userId) return res.json({ ok:true });
+
+  var u = await dbGetUser(userId);
+  if (u && analisesRestantes(u) <= 0) {
+    return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+  }
+
+  await dbIncrementarAnalise(userId);
   res.json({ ok:true });
 });
 
-// ── SALVAR ANÁLISE NO SERVIDOR (sync backup) ──────────────────
+// ── SALVAR ANÁLISE NO SERVIDOR ────────────────────────────────
 app.post("/salvar-analise", async function(req, res) {
   var userId      = req.body.userId;
   var talhaoId    = req.body.talhaoId;
@@ -396,7 +509,7 @@ app.get("/usuarios", async function(req, res) {
   if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
   try {
     if (pool) {
-      var r = await pool.query("SELECT user_id,nome,celular,email,regiao,plano,analises_usadas,criado_em FROM usuarios ORDER BY criado_em DESC");
+      var r = await pool.query("SELECT user_id,nome,celular,email,regiao,plano,analises_usadas,mes_reset,criado_em FROM usuarios ORDER BY criado_em DESC");
       return res.json({ total:r.rows.length, usuarios:r.rows });
     }
     var lista = Object.values(usuariosMemoria);
@@ -502,12 +615,19 @@ app.get("/verificar-pix/:paymentId", async function(req, res) {
 app.get("/plano/:userId", async function(req, res) {
   try {
     var u = await dbGetUser(req.params.userId);
-    res.json({ plano:u?(u.plano||"gratuito"):"gratuito", analisesUsadas:u?(u.analises_usadas||u.analisesUsadas||0):0 });
+    if (!u) return res.json({ plano:"gratuito", analisesUsadas:0, analisesRestantes:15, limite:15 });
+    var restantes = analisesRestantes(u);
+    res.json({
+      plano: u.plano||"gratuito",
+      analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
+      analisesRestantes: restantes,
+      limite: LIMITES[u.plano||"gratuito"]||15
+    });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── DIAGNÓSTICO SSE (com rate limiting) ───────────────────────
-app.post("/diagnostico", function(req, res) {
+// ── DIAGNÓSTICO SSE ───────────────────────────────────────────
+app.post("/diagnostico", async function(req, res) {
   var imagem  = req.body.imagem;
   var tipo    = req.body.tipo||"image/jpeg";
   var regiao  = req.body.regiao||null;
@@ -516,6 +636,13 @@ app.post("/diagnostico", function(req, res) {
 
   if (!checkRateLimit(userId)) {
     return res.status(429).json({ erro:"Muitas análises em sequência. Aguarde 1 minuto." });
+  }
+
+  if (userId !== "anonimo") {
+    var u = await dbGetUser(userId);
+    if (u && analisesRestantes(u) <= 0) {
+      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+    }
   }
 
   var prompt = buildPrompt(regiao, altitude, false);
@@ -621,6 +748,14 @@ app.post("/diagnostico-json", async function(req, res) {
   var regiao=req.body.regiao||null, altitude=req.body.altitude||null;
   var userId=req.body.userId||"anonimo";
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
+
+  if (userId !== "anonimo") {
+    var u = await dbGetUser(userId);
+    if (u && analisesRestantes(u) <= 0) {
+      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+    }
+  }
+
   var prompt=buildPrompt(regiao,altitude,false);
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
@@ -659,25 +794,13 @@ app.post("/plano-acao", async function(req, res) {
 "Diagnostico encontrou:\n"+resumoDiags+"\n\n"+
 "REGRAS OBRIGATORIAS DE COMPATIBILIDADE — VIOLACAO E ERRO GRAVE:\n"+
 "1. PROIBIDO: dois triazois na mesma calda OU em aplicacoes consecutivas sem intervalo adequado.\n"+
-"   TRIAZOIS (todos proibidos de combinar entre si):\n"+
-"   - Tebuconazol = Folicur 200EC\n"+
-"   - Ciproconazol = componente do Priori Xtra e Opera\n"+
-"   - Difenoconazol = componente do Amistar Top e Score\n"+
-"   - Epoxiconazol = componente do Opera\n"+
-"   CONSEQUENCIA: Se usou Amistar Top (tem Difenoconazol) essa semana, em 21 dias NAO pode usar Folicur (Tebuconazol). Sao ambos triazois — PROIBIDO.\n"+
-"   ROTACAO CORRETA em 21 dias apos Amistar Top: use Cercobin (Tiofanato Metilico, NAO e triazol) + Cuprogarb (cobre, protetor).\n"+
-"   ROTACAO CORRETA em 21 dias apos Folicur: use Priori Xtra OU Amistar Top.\n"+
-"   ROTACAO CORRETA em 21 dias apos Priori Xtra: use Folicur OU Amistar Top — NAO use Opera (ambos tem estrobilurina).\n\n"+
-"2. PROIBIDO: duas estrobilurinas juntas. Estrobilurinas: Azoxistrobina (Amistar Top, Priori Xtra), Piraclostrobina (Opera).\n"+
-"3. PERMITIDO: protetor cuproso (Cuprogarb, Recop, Oxicloreto de Cobre) com qualquer sistemico.\n"+
-"4. PERMITIDO: Cercobin (Tiofanato Metilico) com qualquer produto — NAO e triazol nem estrobilurina.\n"+
-"5. Intervalo minimo entre aplicacoes: 14-21 dias.\n\n"+
-"FORMATO DA RESPOSTA:\n"+
-"- resumo_geral: 2-3 frases simples. Use nomes populares.\n"+
-"- urgente: o que fazer ESSA SEMANA. Produto + dose/ha + dose por tanque 20L.\n"+
-"- em_21_dias: proxima aplicacao respeitando OBRIGATORIAMENTE a regra de rotacao acima.\n"+
-"- nutricao: correcao nutricional se houver deficiencia. Vazio se nao houver.\n\n"+
-"RESPONDA SOMENTE JSON:\n"+
+"   TRIAZOIS: Tebuconazol=Folicur, Ciproconazol=Priori Xtra/Opera, Difenoconazol=Amistar Top/Score, Epoxiconazol=Opera.\n"+
+"   ROTACAO CORRETA apos Amistar Top: Cercobin+Cuprogarb. Apos Folicur: Priori Xtra ou Amistar Top. Apos Priori Xtra: Folicur ou Amistar Top.\n"+
+"2. PROIBIDO: duas estrobilurinas juntas.\n"+
+"3. PERMITIDO: protetor cuproso com qualquer sistemico.\n"+
+"4. PERMITIDO: Cercobin com qualquer produto.\n"+
+"5. Intervalo minimo: 14-21 dias.\n\n"+
+"FORMATO JSON:\n"+
 "{\"resumo_geral\":\"...\",\"urgente\":\"...\",\"em_21_dias\":\"...\",\"nutricao\":\"...\",\"resumo\":\"frase curta\"}";
 
   try {
@@ -701,6 +824,14 @@ app.post("/diagnostico-video", async function(req, res) {
   var userId=req.body.userId||"anonimo";
   if(!frames||frames.length===0) return res.status(400).json({ erro:"Nenhum frame recebido." });
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
+
+  if (userId !== "anonimo") {
+    var u = await dbGetUser(userId);
+    if (u && analisesRestantes(u) <= 0) {
+      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+    }
+  }
+
   var prompt=buildPrompt(regiao,altitude,true);
   var content=[];
   frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:frame}}); });
@@ -741,31 +872,22 @@ app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
   var prompt="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro."+contexto+"\n\n"+
-"REGRA MAIS IMPORTANTE: Identifique TODAS as especies de plantas daninhas visiveis na imagem — pode haver 2, 3 ou mais especies diferentes ao mesmo tempo. Nao ignore nenhuma planta visivel.\n\n"+
+"REGRA MAIS IMPORTANTE: Identifique TODAS as especies de plantas daninhas visiveis na imagem.\n\n"+
 "PLANTAS DANINHAS DO CAFE:\n"+
-"1. PICAO-PRETO (Bidens pilosa): sementes com espinhos, flores amarelas. Solo fertil. PRE: Goal BR 5-6L/ha, Ametrina 800 1,5-2,5kg/ha. POS: Goal BR 6L/ha.\n"+
-"2. CAPIM-AMARGOSO (Digitaria insularis): GRAMÍNEA perene em TOUCEIRAS grandes 50-100cm, folhas com pelos brancos nas bordas. Solo degradado, resistente ao glifosato. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha, Select 240EC 0,45L/ha.\n"+
-"3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMÍNEA anual em TOUCEIRAS DENSAS rasteiras, folhas CHATAS em leque, espiga formato pe de galinha. Solo COMPACTADO. ACCase + glifosato. Galigan 240 3L/ha.\n"+
-"4. BUVA/VOADEIRA (Conyza spp.): planta ERETA ate 2m, caule vertical, folhas ESTREITAS COMPRIDAS, aspecto espeto. NAO e gramínea. Solo com excesso de glifosato. Controlar com menos de 25cm. Galigan 240EC 3L/ha, Heat 700WG 70-100g/ha, Ally 600WG.\n"+
-"5. CARURU (Amaranthus spp.): 20cm-2m. Solo fertil com alto N. Heat 700WG 70g/ha.\n"+
-"6. TIRIRICA (Cyperus rotundus): perene, folhas triangulares. Solo DRENAGEM RUIM. Glifosato + Diuron Nortox 800WP.\n"+
-"7. CORDA-DE-VIOLA (Ipomoea spp.): trepadeira ate 3m, flores roxas. Solo fertil e umido. Aurora 400EC, Ally 600WG.\n"+
-"8. CAPIM-GORDURA (Melinis minutiflora): GRAMÍNEA perene, folhas PELUDAS e VISCOSAS com cheiro forte de mel/gordura, cor verde-amarelada clara, touceiras soltas. Solo baixa fertilidade. ACCase: Select 240EC 0,45L/ha, Verdict Max 0,3L/ha.\n"+
-"9. CAPIM-BRAQUIARIA (Urochloa spp.): gramínea aliada nas entrelinhas, problema na linha do cafe. ACCase para controle.\n"+
-"10. CAPIM-MARMELADA (Urochloa plantaginea): gramínea anual ate 80cm. Solo fertil. ACCase.\n"+
-"11. TRAPOERABA (Commelina benghalensis): rasteira, flores azuis. Solo UMIDO. 2,4-D, carfentrazina.\n"+
-"12. GUANXUMA (Sida spp.): arbusto flores amarelas. Solo DEGRADADO. 2,4-D, metsulfurom.\n"+
-"13. CAPIM-DE-BURRO (Cynodon dactylon): gramínea rasteira, estoloes. Solo COMPACTADO. ACCase.\n"+
-"14. MARIA-PRETINHA (Solanum americanum): frutos pretos TOXICOS. Solo fertil. Glifosato, 2,4-D.\n"+
-"15. POAIA-BRANCA (Richardia brasiliensis): rasteira, flores brancas. Solo umido. Goal BR, Ametrina.\n\n"+
-"ATENCAO - DIFERENCIAR:\n"+
-"BUVA = ereta, nao-gramínea, folhas estreitas compridas, aspecto espeto vertical\n"+
-"CAPIM-GORDURA = gramínea PELUDA viscosa com cheiro, folhas mais largas, cor amarelada\n"+
-"CAPIM-AMARGOSO = gramínea touceiras altas 50-100cm com pelos brancos nas bordas\n"+
-"CAPIM-PE-DE-GALINHA = gramínea touceiras rasas em leque\n"+
-"TIRIRICA = folha triangular em secao, flores marrom\n\n"+
-"RESPONDA SOMENTE JSON com array de todas as plantas encontradas:\n"+
-"{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer em linguagem simples\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"ex: 3 litros por hectare ou 60mL por tanque 20L\",\"como_usar\":\"instrucao pratica\"}],\"alerta\":\"aviso mais importante\"}],\"indicador_geral\":\"o que a combinacao de plantas indica sobre o solo\",\"manejo_integrado\":\"estrategia para controlar todas juntas\"}";
+"1. PICAO-PRETO (Bidens pilosa): sementes com espinhos, flores amarelas. Solo fertil. PRE: Goal BR 5-6L/ha. POS: Goal BR 6L/ha.\n"+
+"2. CAPIM-AMARGOSO (Digitaria insularis): GRAMÍNEA perene touceiras 50-100cm, pelos brancos nas bordas. Solo degradado. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha.\n"+
+"3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMÍNEA touceiras rasas em leque, espiga pe de galinha. Solo COMPACTADO. ACCase + glifosato.\n"+
+"4. BUVA/VOADEIRA (Conyza spp.): ereta ate 2m, folhas ESTREITAS, aspecto espeto. NAO gramínea. Galigan 240EC 3L/ha, Heat 700WG 70-100g/ha.\n"+
+"5. CARURU (Amaranthus spp.): 20cm-2m. Heat 700WG 70g/ha.\n"+
+"6. TIRIRICA (Cyperus rotundus): folhas triangulares. Solo DRENAGEM RUIM. Glifosato + Diuron.\n"+
+"7. CORDA-DE-VIOLA (Ipomoea spp.): trepadeira, flores roxas. Aurora 400EC, Ally 600WG.\n"+
+"8. CAPIM-GORDURA (Melinis minutiflora): GRAMÍNEA peluda viscosa cheiro mel, cor amarelada. ACCase: Select 240EC 0,45L/ha.\n"+
+"9. CAPIM-BRAQUIARIA (Urochloa spp.): gramínea aliada entrelinhas, problema na linha. ACCase.\n"+
+"10. TRAPOERABA (Commelina benghalensis): rasteira, flores azuis. Solo UMIDO. 2,4-D.\n"+
+"11. GUANXUMA (Sida spp.): arbusto flores amarelas. Solo DEGRADADO. 2,4-D.\n"+
+"12. MARIA-PRETINHA (Solanum americanum): frutos pretos TOXICOS. Glifosato, 2,4-D.\n\n"+
+"RESPONDA SOMENTE JSON:\n"+
+"{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"dose pratica\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\"}],\"indicador_geral\":\"o que indica sobre o solo\",\"manejo_integrado\":\"estrategia geral\"}";
 
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
@@ -778,10 +900,10 @@ app.post("/identifica-daninha", async function(req, res) {
     var resultado=extrairJSON(txt);
     if(resultado){
       if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
-      if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto com boa iluminacao.",urgencia:"baixa",produtos:[],alerta:""}];
+      if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
       res.json(resultado);
     } else {
-      res.json({plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto com boa iluminacao.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""});
+      res.json({plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""});
     }
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -817,16 +939,16 @@ function buildPrompt(regiao, altitude, isVideo) {
   }
   var introVideo=isVideo?"Voce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto.\n\n":"";
   return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia."+contextoRegional+"\n\n"+introVideo+
-"REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. Ferrugem, Cercosporiose, Antracnose, Helmintosporiose e deficiencias nutricionais FREQUENTEMENTE ocorrem juntas na mesma folha — liste TODOS. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n"+
-"PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix):\nA ferrugem e a doenca mais importante e comum do cafe no Brasil. SEMPRE verifique:\n- Manchas AMARELO-ALARANJADAS arredondadas na face INFERIOR da folha\n- Po ou pustulas alaranjadas (uredosporos) visiveis na face inferior\n- Manchas cloroticas amarelas correspondentes na face SUPERIOR\nSe encontrar QUALQUER sinal alaranjado ou amarelo-ferrugem: DIAGNOSTIQUE como ferrugem.\n\n"+
-"DOENCAS FUNGICAS FOLIARES:\nferrugem=pustulas ALARANJADAS face INFERIOR. A MAIS COMUM.\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nhelmintosporiose=manchas GRANDES marrom-escuras HALOS CONCENTRICOS multiplos halo amarelo extenso. Principal causa desfolha severa.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares tecido morto afundado.\nphoma=manchas NECROTICAS negras irregulares SEM halo FOLHAS NOVAS ponteiros.\naureolada=bacteriana. manchas pardas centro necrotico HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS aspecto gorduroso face superior E inferior.\ncorynespora=manchas IRREGULARES marrom-avermelhadas com halo amarelo. MAIORES e mais irregulares que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas aos ramos por FIOS DE MICELIO visivel.\nascochyta=manchas CLARAS centro branco-palido bordas marrons indefinidas nas folhas mais velhas.\nrizoctoniose=manchas aquosas marrons no caule BASE DA PLANTA junto ao solo.\nroseliniose=PONTUACOES ESCURAS microscopicas no caule. Crescimento MICELIAL ESCURO sob casca.\n\n"+
-"PRAGAS:\nbicho=TRILHAS SERPENTINAS castanhas dentro da folha.\nacaro=folha BRONZEADA acinzentada opaca face inferior.\ncochonilha=massas BRANCAS algodonosas em ramos e axilas.\nlagarta=areas DESFOLHADAS com lagartas VIVAS visiveis.\nbroca=FURO CIRCULAR 1-2mm no disco floral ou coroa do FRUTO.\nnematoide=planta com AMARELECIMENTO GERAL progressivo sem recuperacao.\n\n"+
-"DEFICIENCIAS NUTRICIONAIS:\nnitrogenio=folha TODA AMARELA UNIFORME folhas velhas.\nmagnesio=nervuras VERDES tecido AMARELO internerval folhas velhas.\npotassio=QUEIMA bordas e pontas folhas velhas.\nferro=folhas NOVAS ESBRANQUICADAS nervuras verdes.\ncalcio=folhas NOVAS deformadas ENCURVADAS ponteiros mortos.\nboro=folhas NOVAS QUEBRADICAS deformadas.\nzinco=folhas NOVAS ESTREITAS aspecto roseta.\nmanganes=PONTUACOES cloroticas folhas novas.\nestresse_hidrico=folha MURCHA bordas secas enroladas.\n\n"+
-"SE A IMAGEM MOSTRAR FRUTOS DE CAFE:\nfruto_verde=fruto totalmente verde firme sem lesoes.\nfruto_maduro=fruto VERMELHO ou AMARELO cereja uniforme brilhante.\nfruto_passado=fruto ESCURECIDO enrugado seco mumificado.\nbroca=FURO CIRCULAR escuro 1-2mm no disco floral ou coroa.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras a PRETAS na superficie do fruto.\nfusariose_fruto=fruto MUMIFICADO marrom-escuro SEM perfuracao de broca.\ncercosporiose_fruto=manchas CIRCULARES PEQUENAS cinza-esbranquicadas com halo amarelo.\nphoma_fruto=manchas NECROTICAS escuras irregulares nos frutos VERDES JOVENS.\nacaro_fruto=superficie do fruto BRONZEADA acinzentada opaca.\n\n"+
-"PRODUTOS E DOSES:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nhelmintosporiose: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nphoma: Tiofanato Metilico 700WP protetor 1-1,5kg/ha.\nbicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+
-"INSTRUCOES FINAIS:\n1. Liste TODOS os problemas encontrados — sem limite.\n2. Ordene do mais grave para o menos grave.\n3. Manchas alaranjadas na face inferior = ferrugem OBRIGATORIAMENTE.\n4. Manchas grandes marrons com halos = helmintosporiose OBRIGATORIAMENTE.\n5. Deficiencias nutricionais: fungicidas:[].\n6. NUNCA retorne saudavel se houver qualquer sintoma visivel.\n\n"+
-"RESPONDA SOMENTE JSON sem texto antes ou depois:\n"+
-"{\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual observado\",\"acao\":\"o que fazer em linguagem simples\",\"fungicidas\":[{\"nome\":\"nome generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
+"REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n"+
+"PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix): manchas AMARELO-ALARANJADAS face INFERIOR, po alaranjado. Se encontrar QUALQUER sinal alaranjado: DIAGNOSTIQUE como ferrugem.\n\n"+
+"DOENCAS FUNGICAS:\nferrugem=pustulas ALARANJADAS face INFERIOR.\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nhelmintosporiose=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo extenso.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares.\nphoma=manchas NECROTICAS negras SEM halo FOLHAS NOVAS.\naureolada=bacteriana manchas pardas HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS.\ncorynespora=manchas IRREGULARES marrom-avermelhadas halo amarelo MAIORES que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas por FIOS DE MICELIO.\n\n"+
+"PRAGAS:\nbicho=TRILHAS SERPENTINAS castanhas dentro da folha.\nacaro=folha BRONZEADA acinzentada opaca.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+
+"DEFICIENCIAS:\nnitrogenio=folha TODA AMARELA UNIFORME folhas velhas.\nmagnesio=nervuras VERDES tecido AMARELO internerval.\npotassio=QUEIMA bordas e pontas folhas velhas.\nferro=folhas NOVAS ESBRANQUICADAS nervuras verdes.\ncalcio=folhas NOVAS deformadas ENCURVADAS.\nboro=folhas NOVAS QUEBRADICAS.\nzinco=folhas NOVAS ESTREITAS roseta.\n\n"+
+"FRUTOS:\nfruto_verde=verde firme sem lesoes.\nfruto_maduro=VERMELHO ou AMARELO cereja brilhante.\nfruto_passado=ESCURECIDO enrugado seco.\nbroca=FURO CIRCULAR escuro 1-2mm.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras.\n\n"+
+"PRODUTOS:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nhelmintosporiose: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nbicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+
+"INSTRUCOES FINAIS: Liste TODOS os problemas. Ordene do mais grave. Deficiencias nutricionais: fungicidas:[]. NUNCA retorne saudavel se houver sintoma.\n\n"+
+"RESPONDA SOMENTE JSON:\n"+
+"{\"diagnosticos\":[{\"diagnostico\":\"nome_exato\",\"estagio\":1,\"confianca\":\"alta|media|baixa\",\"visto\":\"sinal visual\",\"acao\":\"o que fazer\",\"fungicidas\":[{\"nome\":\"generico\",\"nome_comercial\":\"marca\",\"tipo\":\"protetor|sistemico|biologico|acaricida|inseticida\",\"dose_min\":0.75,\"dose_max\":1.0,\"unidade\":\"L|kg\",\"por\":\"hectare\",\"proporcao_por_litro\":0.05,\"unidade_proporcao\":\"L|g|mL\",\"intervalo_reaplicacao\":21,\"carencia_dias\":7}]}]}";
 }
 
 // ── INICIALIZAÇÃO ─────────────────────────────────────────────

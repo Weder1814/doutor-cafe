@@ -74,9 +74,7 @@ function analisesRestantes(u) {
     return Math.max(0, limite - usadas);
   } else {
     var mesReset = u.mes_reset || u.mesReset || "";
-    if (mesReset !== mesAtual()) {
-      return limite;
-    }
+    if (mesReset !== mesAtual()) return limite;
     return Math.max(0, limite - usadas);
   }
 }
@@ -188,6 +186,17 @@ async function dbGetUserByCPF(cpf) {
   return Object.values(usuariosMemoria).find(function(u){ return (u.cpf||"").replace(/[^0-9]/g,"")===c; }) || null;
 }
 
+// ── NOVO: buscar usuário apenas pelo PIN ──────────────────────
+async function dbGetUserByPin(pin) {
+  if (pool) {
+    try {
+      var r = await pool.query("SELECT * FROM usuarios WHERE pin=$1 LIMIT 1", [pin]);
+      return r.rows[0] || null;
+    } catch(e) { console.error("dbGetUserByPin:", e.message); }
+  }
+  return Object.values(usuariosMemoria).find(function(u){ return u.pin === pin; }) || null;
+}
+
 async function dbSaveUser(u) {
   if (pool) {
     try {
@@ -237,8 +246,7 @@ async function dbIncrementarAnalise(userId) {
     var u = usuariosMemoria[userId];
     var plano = u.plano || "gratuito";
     if (plano !== "gratuito" && (u.mesReset||"") !== mes) {
-      u.analisesUsadas = 1;
-      u.mesReset = mes;
+      u.analisesUsadas = 1; u.mesReset = mes;
     } else {
       u.analisesUsadas = (u.analisesUsadas||0) + 1;
       if (plano !== "gratuito") u.mesReset = mes;
@@ -356,7 +364,7 @@ app.post("/cadastrar-usuario", async function(req, res) {
   }
 });
 
-// ── LOGIN CELULAR + PIN ───────────────────────────────────────
+// ── LOGIN CELULAR + PIN (mantido para compatibilidade) ────────
 app.post("/entrar", async function(req, res) {
   var celular = (req.body.celular||"").replace(/[^0-9]/g,"");
   var pin     = (req.body.pin||"").replace(/[^0-9]/g,"");
@@ -368,6 +376,33 @@ app.post("/entrar", async function(req, res) {
     var u = await dbGetUserByCelular(celular);
     if (!u) return res.status(404).json({ erro:"Celular nao encontrado. Faca o cadastro." });
     if (u.pin && u.pin !== pin) return res.status(401).json({ erro:"PIN incorreto." });
+
+    var restantes = analisesRestantes(u);
+    res.json({
+      ok:true,
+      userId: u.user_id||u.userId,
+      nome: u.nome,
+      celular: u.celular,
+      email: u.email,
+      regiao: u.regiao,
+      plano: u.plano||"gratuito",
+      analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
+      analisesRestantes: restantes
+    });
+  } catch(e) {
+    res.status(500).json({ erro:e.message });
+  }
+});
+
+// ── NOVO: LOGIN APENAS POR PIN ────────────────────────────────
+app.post("/entrar-pin", async function(req, res) {
+  var pin = (req.body.pin||"").replace(/[^0-9]/g,"");
+
+  if (!pin || pin.length !== 4) return res.status(400).json({ erro:"PIN deve ter 4 digitos." });
+
+  try {
+    var u = await dbGetUserByPin(pin);
+    if (!u) return res.status(404).json({ erro:"PIN nao encontrado. Verifique ou faca o cadastro." });
 
     var restantes = analisesRestantes(u);
     res.json({
@@ -407,12 +442,10 @@ app.get("/analises-restantes/:userId", async function(req, res) {
 app.post("/incrementar-analise", async function(req, res) {
   var userId = req.body.userId;
   if (!userId) return res.json({ ok:true });
-
   var u = await dbGetUser(userId);
   if (u && analisesRestantes(u) <= 0) {
     return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
   }
-
   await dbIncrementarAnalise(userId);
   res.json({ ok:true });
 });
@@ -451,9 +484,7 @@ app.post("/salvar-talhao", async function(req, res) {
       `, [talhao.id, userId, talhao.nome, talhao.variedade||"",
           talhao.idade||null, talhao.area||null, JSON.stringify(talhao.analises||[])]);
       res.json({ ok:true });
-    } catch(e) {
-      res.status(500).json({ erro:e.message });
-    }
+    } catch(e) { res.status(500).json({ erro:e.message }); }
   } else {
     res.json({ ok:true, aviso:"sem banco de dados" });
   }
@@ -468,9 +499,7 @@ app.get("/talhoes/:userId", async function(req, res) {
       res.json({ talhoes: r.rows.map(function(t){
         return { id:t.id, nome:t.nome, variedade:t.variedade, idade:t.idade, area:t.area, analises:t.analises||[], criadoEm:t.criado_em };
       })});
-    } catch(e) {
-      res.status(500).json({ erro:e.message });
-    }
+    } catch(e) { res.status(500).json({ erro:e.message }); }
   } else {
     res.json({ talhoes:[], aviso:"sem banco de dados" });
   }
@@ -487,9 +516,7 @@ app.get("/historico/:userId", async function(req, res) {
         [userId, limit]
       );
       res.json({ analises: r.rows });
-    } catch(e) {
-      res.status(500).json({ erro:e.message });
-    }
+    } catch(e) { res.status(500).json({ erro:e.message }); }
   } else {
     res.json({ analises:[] });
   }
@@ -503,11 +530,8 @@ app.get("/usuarios", async function(req, res) {
       var r = await pool.query("SELECT user_id,nome,celular,email,regiao,plano,analises_usadas,mes_reset,criado_em FROM usuarios ORDER BY criado_em DESC");
       return res.json({ total:r.rows.length, usuarios:r.rows });
     }
-    var lista = Object.values(usuariosMemoria);
-    res.json({ total:lista.length, usuarios:lista });
-  } catch(e) {
-    res.status(500).json({ erro:e.message });
-  }
+    res.json({ total:Object.keys(usuariosMemoria).length, usuarios:Object.values(usuariosMemoria) });
+  } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
 // ── WEBHOOK MERCADO PAGO ──────────────────────────────────────
@@ -617,7 +641,7 @@ app.get("/plano/:userId", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── DIAGNÓSTICO SSE ─── MODELO: claude-sonnet-4-6 (visão complexa) ──
+// ── DIAGNÓSTICO SSE ─── Sonnet 4-6 | max_tokens:3000 | stream:true ──
 app.post("/diagnostico", async function(req, res) {
   var imagem  = req.body.imagem;
   var tipo    = req.body.tipo||"image/jpeg";
@@ -628,7 +652,6 @@ app.post("/diagnostico", async function(req, res) {
   if (!checkRateLimit(userId)) {
     return res.status(429).json({ erro:"Muitas análises em sequência. Aguarde 1 minuto." });
   }
-
   if (userId !== "anonimo") {
     var u = await dbGetUser(userId);
     if (u && analisesRestantes(u) <= 0) {
@@ -650,7 +673,7 @@ app.post("/diagnostico", async function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
-    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:2000, stream:true,
+    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, stream:true,
       messages:[{ role:"user", content:[
         { type:"image", source:{ type:"base64", media_type:tipo, data:imagem }},
         { type:"text", text:prompt }
@@ -733,26 +756,24 @@ app.post("/diagnostico", async function(req, res) {
   });
 });
 
-// ── DIAGNÓSTICO JSON (fallback iOS) ──────────────────────────
+// ── DIAGNÓSTICO JSON (fallback iOS) ─── Sonnet | max_tokens:3000 ──
 app.post("/diagnostico-json", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg";
   var regiao=req.body.regiao||null, altitude=req.body.altitude||null;
   var userId=req.body.userId||"anonimo";
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-
   if (userId !== "anonimo") {
     var u = await dbGetUser(userId);
     if (u && analisesRestantes(u) <= 0) {
       return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
     }
   }
-
   var prompt=buildPrompt(regiao,altitude,false);
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2000,messages:[{role:"user",content:[
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:tipo,data:imagem}},
         {type:"text",text:prompt}
       ]}]})
@@ -767,7 +788,7 @@ app.post("/diagnostico-json", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── PLANO DE AÇÃO ─────────────────────────────────────────────
+// ── PLANO DE AÇÃO ─── Haiku | max_tokens:800 ──────────────────
 app.post("/plano-acao", async function(req, res) {
   var diagnosticos=req.body.diagnosticos||[], regiao=req.body.regiao||null;
   if(diagnosticos.length===0) return res.json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
@@ -809,20 +830,18 @@ app.post("/plano-acao", async function(req, res) {
   }
 });
 
-// ── DIAGNÓSTICO VÍDEO ─────────────────────────────────────────
+// ── DIAGNÓSTICO VÍDEO ─── Sonnet | max_tokens:3000 ───────────
 app.post("/diagnostico-video", async function(req, res) {
   var frames=req.body.frames, regiao=req.body.regiao||null, altitude=req.body.altitude||null;
   var userId=req.body.userId||"anonimo";
   if(!frames||frames.length===0) return res.status(400).json({ erro:"Nenhum frame recebido." });
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-
   if (userId !== "anonimo") {
     var u = await dbGetUser(userId);
     if (u && analisesRestantes(u) <= 0) {
       return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
     }
   }
-
   var prompt=buildPrompt(regiao,altitude,true);
   var content=[];
   frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:frame}}); });
@@ -831,7 +850,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2000,messages:[{role:"user",content}]})
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,messages:[{role:"user",content}]})
     });
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";
@@ -840,7 +859,7 @@ app.post("/diagnostico-video", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── ANÁLISE DE SOLO ─── MODELO: claude-sonnet-4-6 (leitura de laudo) ──
+// ── ANÁLISE DE SOLO ─── Sonnet | max_tokens:1200 ─────────────
 app.post("/analise-solo", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
@@ -858,7 +877,7 @@ app.post("/analise-solo", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── IDENTIFICA DANINHA ─── MODELO: claude-haiku-4-5 (rápido) ──
+// ── IDENTIFICA DANINHA ─── Haiku | max_tokens:800 ────────────
 app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";

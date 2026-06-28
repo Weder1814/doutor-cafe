@@ -70,15 +70,12 @@ function analisesRestantes(u) {
   var plano = u.plano || "gratuito";
   var limite = LIMITES[plano] || 15;
   var usadas = u.analises_usadas || u.analisesUsadas || 0;
-
   if (plano === "gratuito") {
-    // Gratuito: vitalício, nunca reseta
     return Math.max(0, limite - usadas);
   } else {
-    // Plano pago: reseta todo mês
     var mesReset = u.mes_reset || u.mesReset || "";
     if (mesReset !== mesAtual()) {
-      return limite; // novo mês, análises resetadas
+      return limite;
     }
     return Math.max(0, limite - usadas);
   }
@@ -222,13 +219,11 @@ async function dbIncrementarAnalise(userId) {
         var plano = u.plano || "gratuito";
         var mesReset = u.mes_reset || "";
         if (plano !== "gratuito" && mesReset !== mes) {
-          // Plano pago, novo mês: reseta e conta 1
           await pool.query(
             "UPDATE usuarios SET analises_usadas=1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
             [userId, mes]
           );
         } else {
-          // Incrementa normalmente
           await pool.query(
             "UPDATE usuarios SET analises_usadas=analises_usadas+1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
             [userId, plano === "gratuito" ? mesReset : mes]
@@ -332,17 +327,14 @@ app.post("/cadastrar-usuario", async function(req, res) {
 
   if (!userId || !nome) return res.status(400).json({ erro:"Nome obrigatorio." });
 
-  // Validar CPF matematicamente
   if (cpf && !validarCPF(cpf)) {
     return res.status(400).json({ erro:"CPF inválido. Verifique os números digitados." });
   }
 
-  // Verificar se CPF já existe — retorna o userId original
   if (cpf) {
     try {
       var existente = await dbGetUserByCPF(cpf);
       if (existente) {
-        console.log("⚠️ CPF já cadastrado:", cpf, "-> retornando userId existente");
         var restantes = analisesRestantes(existente);
         return res.json({
           ok:true,
@@ -358,7 +350,6 @@ app.post("/cadastrar-usuario", async function(req, res) {
 
   try {
     await dbSaveUser({ userId, cpf, celular, nome, pin, email, regiao, plano:"gratuito", analisesUsadas:0, mesReset:"" });
-    console.log("✅ Cadastro:", nome, "| DB:", pool?"postgres":"memoria");
     res.json({ ok:true, userId, analisesRestantes: LIMITES.gratuito });
   } catch(e) {
     res.status(500).json({ erro:e.message });
@@ -626,7 +617,7 @@ app.get("/plano/:userId", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── DIAGNÓSTICO SSE ───────────────────────────────────────────
+// ── DIAGNÓSTICO SSE ─── MODELO: claude-sonnet-4-6 (visão complexa) ──
 app.post("/diagnostico", async function(req, res) {
   var imagem  = req.body.imagem;
   var tipo    = req.body.tipo||"image/jpeg";
@@ -659,7 +650,7 @@ app.post("/diagnostico", async function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
-    body:JSON.stringify({ model:"claude-haiku-4-5-20251001",max_tokens:800,
+    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:2000, stream:true,
       messages:[{ role:"user", content:[
         { type:"image", source:{ type:"base64", media_type:tipo, data:imagem }},
         { type:"text", text:prompt }
@@ -849,7 +840,7 @@ app.post("/diagnostico-video", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── ANÁLISE DE SOLO ───────────────────────────────────────────
+// ── ANÁLISE DE SOLO ─── MODELO: claude-sonnet-4-6 (leitura de laudo) ──
 app.post("/analise-solo", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
@@ -867,7 +858,7 @@ app.post("/analise-solo", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── IDENTIFICA DANINHA ────────────────────────────────────────
+// ── IDENTIFICA DANINHA ─── MODELO: claude-haiku-4-5 (rápido) ──
 app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
@@ -893,7 +884,7 @@ app.post("/identifica-daninha", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1500,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}},{type:"text",text:prompt}]}]})
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}},{type:"text",text:prompt}]}]})
     });
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";

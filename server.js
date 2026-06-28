@@ -880,7 +880,7 @@ app.post("/identifica-daninha", async function(req, res) {
 "4. BUVA/VOADEIRA (Conyza spp.): ereta ate 2m, folhas ESTREITAS, aspecto espeto. NAO gramínea. Galigan 240EC 3L/ha, Heat 700WG 70-100g/ha.\n"+
 "5. CARURU (Amaranthus spp.): 20cm-2m. Heat 700WG 70g/ha.\n"+
 "6. TIRIRICA (Cyperus rotundus): folhas triangulares. Solo DRENAGEM RUIM. Glifosato + Diuron.\n"+
-"7. CORDA-DE-VIOLA (Ipomoea spp.): trepadeira, flores roxas. Aurora 400EC, Ally 600WG.\n"+
+"7. CORDA-DE-VIOLA (Ipomoea spp.): TREPADEIRA vigorosa, folhas CORDADAS em forma de coracao grandes 5-15cm, flores roxas ou brancas em forma de trombeta, caule volvel enrolando em TUDO ao redor. Cobre completamente o cafeeiro sufocando-o. Solo FERTIL disturbado. Aurora 400EC 1-1,5L/ha POS-emergencia precoce. Ally 600WG 4-6g/ha. Controle URGENTE antes de florescer para evitar banco de sementes.\n"+
 "8. CAPIM-GORDURA (Melinis minutiflora): GRAMÍNEA peluda viscosa cheiro mel, cor amarelada. ACCase: Select 240EC 0,45L/ha.\n"+
 "9. CAPIM-BRAQUIARIA (Urochloa spp.): gramínea aliada entrelinhas, problema na linha. ACCase.\n"+
 "10. TRAPOERABA (Commelina benghalensis): rasteira, flores azuis. Solo UMIDO. 2,4-D.\n"+

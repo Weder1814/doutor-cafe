@@ -906,6 +906,7 @@ app.post("/identifica-daninha", async function(req, res) {
       body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}},{type:"text",text:prompt}]}]})
     });
     var d=await r.json();
+    console.log("STATUS DANINHA:", r.status, "| RESPOSTA:", JSON.stringify(d).substring(0,500));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
     if(resultado){
@@ -913,9 +914,10 @@ app.post("/identifica-daninha", async function(req, res) {
       if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
       res.json(resultado);
     } else {
+      console.error("EXTRAIRJSON FALHOU. Texto recebido:", txt.substring(0,500));
       res.json({plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""});
     }
-  } catch(e) { res.status(500).json({ erro:e.message }); }
+  } catch(e) { console.error("ERRO DANINHA CATCH:", e.message, e.stack); res.status(500).json({ erro:e.message }); }
 });
 
 // ── EXTRATOR JSON ─────────────────────────────────────────────

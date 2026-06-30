@@ -56,9 +56,17 @@ function validarCPF(cpf) {
 // ── LIMITES DE ANÁLISES ───────────────────────────────────────
 var LIMITES = {
   gratuito: 15,
-  basico:   150,
-  pro:      300,
-  premium:  450
+  basico:   130,
+  pro:      250,
+  premium:  400
+};
+
+// ── LIMITE SEPARADO PARA VIDEO (custa ~2x uma foto: 4 frames analisados) ──
+var VIDEO_LIMITES = {
+  gratuito: 2,
+  basico:   10,
+  pro:      25,
+  premium:  50
 };
 
 function mesAtual() {
@@ -79,6 +87,19 @@ function analisesRestantes(u) {
   }
 }
 
+function videosRestantes(u) {
+  var plano = u.plano || "gratuito";
+  var limite = VIDEO_LIMITES[plano] || 2;
+  var usados = u.videos_usados || u.videosUsados || 0;
+  if (plano === "gratuito") {
+    return Math.max(0, limite - usados);
+  } else {
+    var mesReset = u.mes_reset || u.mesReset || "";
+    if (mesReset !== mesAtual()) return limite;
+    return Math.max(0, limite - usados);
+  }
+}
+
 // ── INICIALIZAR TABELAS ────────────────────────────────────────
 async function initDB() {
   if (!pool) return;
@@ -95,6 +116,7 @@ async function initDB() {
         plano         TEXT DEFAULT 'gratuito',
         plano_id      TEXT,
         analises_usadas INTEGER DEFAULT 0,
+        videos_usados INTEGER DEFAULT 0,
         mes_reset     TEXT DEFAULT '',
         criado_em     TIMESTAMPTZ DEFAULT NOW(),
         atualizado_em TIMESTAMPTZ DEFAULT NOW()
@@ -137,6 +159,7 @@ async function initDB() {
       );
     `);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mes_reset TEXT DEFAULT ''`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS videos_usados INTEGER DEFAULT 0`);
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);
@@ -255,6 +278,46 @@ async function dbIncrementarAnalise(userId) {
   return true;
 }
 
+// ── INCREMENTAR CONTADOR DE VIDEO (sub-limite dentro do limite total) ──
+// IMPORTANTE: chamar SEMPRE depois de dbIncrementarAnalise() na mesma analise de
+// video, para que o reset mensal (mes_reset) ja tenha sido aplicado e o contador
+// de video nao fique "preso" a um mes anterior.
+async function dbIncrementarVideo(userId) {
+  var mes = mesAtual();
+  if (pool) {
+    try {
+      var r = await pool.query("SELECT plano, mes_reset, videos_usados FROM usuarios WHERE user_id=$1", [userId]);
+      if (r.rows.length > 0) {
+        var u = r.rows[0];
+        var plano = u.plano || "gratuito";
+        var mesReset = u.mes_reset || "";
+        if (plano !== "gratuito" && mesReset !== mes) {
+          await pool.query(
+            "UPDATE usuarios SET videos_usados=1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
+            [userId, mes]
+          );
+        } else {
+          await pool.query(
+            "UPDATE usuarios SET videos_usados=videos_usados+1, atualizado_em=NOW() WHERE user_id=$1",
+            [userId]
+          );
+        }
+      }
+      return true;
+    } catch(e) { console.error("dbIncrementarVideo:", e.message); }
+  }
+  if (usuariosMemoria[userId]) {
+    var u = usuariosMemoria[userId];
+    var plano = u.plano || "gratuito";
+    if (plano !== "gratuito" && (u.mesReset||"") !== mes) {
+      u.videosUsados = 1; u.mesReset = mes;
+    } else {
+      u.videosUsados = (u.videosUsados||0) + 1;
+    }
+  }
+  return true;
+}
+
 async function dbAtualizarPlano(userId, plano, planoId) {
   var mes = mesAtual();
   if (pool) {
@@ -311,12 +374,12 @@ setInterval(function() {
 
 // ── PLANOS ────────────────────────────────────────────────────
 var PLANOS = {
-  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:150 },
-  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:150 },
-  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:300 },
-  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:300 },
-  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:450 },
-  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:450 }
+  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130 },
+  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:130 },
+  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:250 },
+  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:250 },
+  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:400 },
+  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:400 }
 };
 
 // ── ENDPOINTS BÁSICOS ─────────────────────────────────────────
@@ -431,7 +494,10 @@ app.get("/analises-restantes/:userId", async function(req, res) {
       plano: u.plano||"gratuito",
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes,
-      limite: LIMITES[u.plano||"gratuito"]||15
+      limite: LIMITES[u.plano||"gratuito"]||15,
+      videosUsados: u.videos_usados||u.videosUsados||0,
+      videosRestantes: videosRestantes(u),
+      limiteVideo: VIDEO_LIMITES[u.plano||"gratuito"]||2
     });
   } catch(e) {
     res.status(500).json({ erro:e.message });
@@ -447,6 +513,20 @@ app.post("/incrementar-analise", async function(req, res) {
     return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
   }
   await dbIncrementarAnalise(userId);
+  res.json({ ok:true });
+});
+
+// ── INCREMENTAR VIDEO (sub-limite) ──────────────────────────────
+// Chamar DEPOIS de /incrementar-analise (ou /salvar-analise) na mesma analise
+// de video, nessa ordem, para o reset mensal funcionar corretamente.
+app.post("/incrementar-video", async function(req, res) {
+  var userId = req.body.userId;
+  if (!userId) return res.json({ ok:true });
+  var u = await dbGetUser(userId);
+  if (u && videosRestantes(u) <= 0) {
+    return res.status(403).json({ erro:"Limite de videos do plano atingido neste mes.", semVideos:true });
+  }
+  await dbIncrementarVideo(userId);
   res.json({ ok:true });
 });
 
@@ -630,13 +710,16 @@ app.get("/verificar-pix/:paymentId", async function(req, res) {
 app.get("/plano/:userId", async function(req, res) {
   try {
     var u = await dbGetUser(req.params.userId);
-    if (!u) return res.json({ plano:"gratuito", analisesUsadas:0, analisesRestantes:15, limite:15 });
+    if (!u) return res.json({ plano:"gratuito", analisesUsadas:0, analisesRestantes:15, limite:15, videosUsados:0, videosRestantes:2, limiteVideo:2 });
     var restantes = analisesRestantes(u);
     res.json({
       plano: u.plano||"gratuito",
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes,
-      limite: LIMITES[u.plano||"gratuito"]||15
+      limite: LIMITES[u.plano||"gratuito"]||15,
+      videosUsados: u.videos_usados||u.videosUsados||0,
+      videosRestantes: videosRestantes(u),
+      limiteVideo: VIDEO_LIMITES[u.plano||"gratuito"]||2
     });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -850,6 +933,9 @@ app.post("/diagnostico-video", async function(req, res) {
     var u = await dbGetUser(userId);
     if (u && analisesRestantes(u) <= 0) {
       return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+    }
+    if (u && videosRestantes(u) <= 0) {
+      return res.status(403).json({ erro:"Limite de videos do plano atingido neste mes. Use foto ou aguarde o proximo ciclo.", semVideos:true });
     }
   }
   var contextoRegional=buildContextoRegional(regiao,altitude,true);

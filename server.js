@@ -659,7 +659,7 @@ app.post("/diagnostico", async function(req, res) {
     }
   }
 
-  var prompt = buildPrompt(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
 
   res.setHeader("Content-Type","text/event-stream");
   res.setHeader("Cache-Control","no-cache");
@@ -674,9 +674,12 @@ app.post("/diagnostico", async function(req, res) {
     method:"POST",
     headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
     body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, stream:true,
+      system:[
+        { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
+        { type:"text", text: contextoRegional }
+      ],
       messages:[{ role:"user", content:[
-        { type:"image", source:{ type:"base64", media_type:tipo, data:imagem }},
-        { type:"text", text:prompt }
+        { type:"image", source:{ type:"base64", media_type:tipo, data:imagem }}
       ]}]
     })
   })
@@ -768,14 +771,18 @@ app.post("/diagnostico-json", async function(req, res) {
       return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
     }
   }
-  var prompt=buildPrompt(regiao,altitude,false);
+  var contextoRegional=buildContextoRegional(regiao,altitude,false);
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,messages:[{role:"user",content:[
-        {type:"image",source:{type:"base64",media_type:tipo,data:imagem}},
-        {type:"text",text:prompt}
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,
+        system:[
+          { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
+          { type:"text", text: contextoRegional }
+        ],
+        messages:[{role:"user",content:[
+        {type:"image",source:{type:"base64",media_type:tipo,data:imagem}}
       ]}]})
     });
     var d=await r.json();
@@ -801,9 +808,8 @@ app.post("/plano-acao", async function(req, res) {
     return (i+1)+". "+d.diagnostico+" estagio "+d.estagio+" — produtos individuais: "+f;
   }).join("\n");
 
-  var prompt =
-"Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira."+regiaoCtx+"\n\n"+
-"Diagnostico encontrou:\n"+resumoDiags+"\n\n"+
+  var sistemaStatic =
+"Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira.\n\n"+
 "REGRAS OBRIGATORIAS DE COMPATIBILIDADE — VIOLACAO E ERRO GRAVE:\n"+
 "1. PROIBIDO: dois triazois na mesma calda OU em aplicacoes consecutivas sem intervalo adequado.\n"+
 "   TRIAZOIS: Tebuconazol=Folicur, Ciproconazol=Priori Xtra/Opera, Difenoconazol=Amistar Top/Score, Epoxiconazol=Opera.\n"+
@@ -815,11 +821,15 @@ app.post("/plano-acao", async function(req, res) {
 "FORMATO JSON:\n"+
 "{\"resumo_geral\":\"...\",\"urgente\":\"...\",\"em_21_dias\":\"...\",\"nutricao\":\"...\",\"resumo\":\"frase curta\"}";
 
+  var promptUsuario = regiaoCtx+"\n\nDiagnostico encontrou:\n"+resumoDiags;
+
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,messages:[{role:"user",content:[{type:"text",text:prompt}]}]})
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,
+        system:[ { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } } ],
+        messages:[{role:"user",content:[{type:"text",text:promptUsuario}]}]})
     });
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";
@@ -842,15 +852,19 @@ app.post("/diagnostico-video", async function(req, res) {
       return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
     }
   }
-  var prompt=buildPrompt(regiao,altitude,true);
+  var contextoRegional=buildContextoRegional(regiao,altitude,true);
   var content=[];
   frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:frame}}); });
-  content.push({type:"text",text:prompt});
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,messages:[{role:"user",content}]})
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,
+        system:[
+          { type:"text", text: buildPromptStatic(true), cache_control:{ type:"ephemeral" } },
+          { type:"text", text: contextoRegional }
+        ],
+        messages:[{role:"user",content}]})
     });
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";
@@ -863,12 +877,17 @@ app.post("/diagnostico-video", async function(req, res) {
 app.post("/analise-solo", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var prompt="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper e Embrapa."+contexto+"\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}}}";
+  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper e Embrapa.\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}}}";
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}},{type:"text",text:prompt}]}]})
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,
+        system:[
+          { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } },
+          { type:"text", text: contexto||"Sem contexto regional adicional." }
+        ],
+        messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
     });
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";
@@ -885,7 +904,7 @@ app.post("/analise-solo", async function(req, res) {
 app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var prompt="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro."+contexto+"\n\n"+
+  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro.\n\n"+
 "REGRA MAIS IMPORTANTE: Identifique TODAS as especies de plantas daninhas visiveis na imagem.\n\n"+
 "PLANTAS DANINHAS DO CAFE:\n"+
 "1. PICAO-PRETO (Bidens pilosa): ERETA ramificada 30cm-1,2m, folhas OPOSTAS compostas serrilhadas em 3 segmentos, flores pequenas AMARELAS com petalas brancas ao redor, frutos com sementes ESPINHOSAS pretas alongadas que grudam em roupa/pelo. Solo fertil e adubado. Goal BR 5-6L/ha PRE-emergencia ou POS-emergencia.\n"+
@@ -907,7 +926,12 @@ app.post("/identifica-daninha", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}},{type:"text",text:prompt}]}]})
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,
+        system:[
+          { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } },
+          { type:"text", text: contexto||"Sem contexto regional adicional." }
+        ],
+        messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
     });
     var d=await r.json();
     console.log("STATUS DANINHA:", r.status, "| RESPOSTA:", JSON.stringify(d).substring(0,500));
@@ -934,7 +958,13 @@ function extrairJSON(txt) {
 }
 
 // ── BUILD PROMPT ──────────────────────────────────────────────
-function buildPrompt(regiao, altitude, isVideo) {
+// Dividido em duas partes para permitir prompt caching:
+// - buildPromptStatic: texto fixo (instrucoes, regras, formato JSON) que se repete
+//   identico em toda chamada do mesmo tipo (foto ou video). Vai no "system" com
+//   cache_control:{type:"ephemeral"} para reaproveitar via cache hit (ate 90% mais barato).
+// - buildContextoRegional: texto curto e variavel por regiao/altitude, NAO cacheado,
+//   enviado como bloco separado apos o bloco cacheado.
+function buildContextoRegional(regiao, altitude, isVideo) {
   var contextoRegional="";
   if(regiao){
     var def={
@@ -950,11 +980,17 @@ function buildPrompt(regiao, altitude, isVideo) {
       "Alta Paulista":"clima quente e seco favorece acaro vermelho. Deficiencia de Zinco."
     };
     var info=def[regiao]||"regiao cafeeira brasileira.";
-    contextoRegional="\n\nCONTEXTO REGIONAL: Produtor na regiao "+regiao+". "+info;
+    contextoRegional="CONTEXTO REGIONAL: Produtor na regiao "+regiao+". "+info;
     if(altitude){ contextoRegional+=" Altitude: "+altitude+"m."; if(altitude>900) contextoRegional+=" Altitude alta: maior risco de Phoma e Cercosporiose."; if(altitude<600) contextoRegional+=" Altitude baixa: maior risco de ferrugem acaro vermelho e broca."; }
+  } else {
+    contextoRegional="Sem contexto regional adicional.";
   }
-  var introVideo=isVideo?"Voce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto.\n\n":"";
-  return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia."+contextoRegional+"\n\n"+introVideo+
+  if(isVideo) contextoRegional+="\n\nVoce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto.";
+  return contextoRegional;
+}
+
+function buildPromptStatic(isVideo) {
+  return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia.\n\n"+
 "REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n"+
 "PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix): manchas AMARELO-ALARANJADAS face INFERIOR, po alaranjado. Se encontrar QUALQUER sinal alaranjado: DIAGNOSTIQUE como ferrugem.\n\n"+
 "DOENCAS FUNGICAS:\nferrugem=pustulas ALARANJADAS face INFERIOR.\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nhelmintosporiose=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo extenso.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares.\nphoma=manchas NECROTICAS negras SEM halo FOLHAS NOVAS.\naureolada=bacteriana manchas pardas HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS.\ncorynespora=manchas IRREGULARES marrom-avermelhadas halo amarelo MAIORES que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas por FIOS DE MICELIO.\n\n"+

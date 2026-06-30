@@ -878,24 +878,28 @@ app.post("/analise-solo", async function(req, res) {
 });
 
 // ── IDENTIFICA DANINHA ─── Haiku | max_tokens:800 ────────────
+// ATUALIZADO: todas as 12 plantas agora possuem descritores visuais completos
+// (habito de crescimento, caule, folha, flor/fruto, traco distintivo) para
+// reduzir confusao entre especies parecidas — ex: caruru sendo confundido
+// com corda-de-viola por falta de descricao visual.
 app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
   var prompt="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro."+contexto+"\n\n"+
 "REGRA MAIS IMPORTANTE: Identifique TODAS as especies de plantas daninhas visiveis na imagem.\n\n"+
 "PLANTAS DANINHAS DO CAFE:\n"+
-"1. PICAO-PRETO (Bidens pilosa): sementes com espinhos, flores amarelas. Solo fertil. PRE: Goal BR 5-6L/ha. POS: Goal BR 6L/ha.\n"+
-"2. CAPIM-AMARGOSO (Digitaria insularis): GRAMÍNEA perene touceiras 50-100cm, pelos brancos nas bordas. Solo degradado. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha.\n"+
-"3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMÍNEA touceiras rasas em leque, espiga pe de galinha. Solo COMPACTADO. ACCase + glifosato.\n"+
-"4. BUVA/VOADEIRA (Conyza spp.): ereta ate 2m, folhas ESTREITAS, aspecto espeto. NAO gramínea. Galigan 240EC 3L/ha, Heat 700WG 70-100g/ha.\n"+
-"5. CARURU (Amaranthus spp.): 20cm-2m. Heat 700WG 70g/ha.\n"+
-"6. TIRIRICA (Cyperus rotundus): folhas triangulares. Solo DRENAGEM RUIM. Glifosato + Diuron.\n"+
+"1. PICAO-PRETO (Bidens pilosa): ERETA ramificada 30cm-1,2m, folhas OPOSTAS compostas serrilhadas em 3 segmentos, flores pequenas AMARELAS com petalas brancas ao redor, frutos com sementes ESPINHOSAS pretas alongadas que grudam em roupa/pelo. Solo fertil e adubado. Goal BR 5-6L/ha PRE-emergencia ou POS-emergencia.\n"+
+"2. CAPIM-AMARGOSO (Digitaria insularis): GRAMINEA perene em TOUCEIRAS 50cm-1,5m, folhas LONGAS estreitas com pelos BRANCOS nas bordas e nervura central esbranquicada, inflorescencia em PANICULA prateada/roxa no topo. Solo degradado ou compactado, comum em areas com resistencia a glifosato. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha.\n"+
+"3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMINEA anual touceiras RASAS e achatadas em formato de LEQUE, folhas planas dobradas na base, espiga terminal com 2-7 racemos digitados lembrando \"pe de galinha\". Solo COMPACTADO por trafego de maquinas. ACCase + glifosato.\n"+
+"4. BUVA/VOADEIRA (Conyza spp.): ERETA ate 2m, caule unico piloso, folhas ESTREITAS lanceoladas alternadas formando aspecto de \"espeto\" cilindrico, flores pequenas esbranquicadas no topo, sementes com PAPPUS algodonoso que voam com o vento. NAO e graminea. Solo de plantio direto, comum em areas com resistencia a glifosato. Galigan 240EC 3L/ha, Heat 700WG 70-100g/ha.\n"+
+"5. CARURU (Amaranthus spp.): ERETA (NAO trepadeira) 20cm-2m, caule ROXO ou AVERMELHADO grosso e estriado, folhas OVALADAS pecioladas alternadas com nervuras bem marcadas, inflorescencia TERMINAL em ESPIGA densa avermelhada ou esverdeada. Solo fertil rico em nitrogenio. Heat 700WG 70-100g/ha POS-emergencia, ou Aurora 400EC 1-1,5L/ha.\n"+
+"6. TIRIRICA (Cyperus rotundus): ERETA 15-40cm, folhas em TRES FILEIRAS (caule TRIANGULAR ao corte), brilhantes e estreitas saindo da base, inflorescencia em umbela com espiguetas avermelhadas, raizes com TUBERCULOS (rizomas) que se espalham no solo. Solo com DRENAGEM RUIM ou encharcado. Glifosato + Diuron, dificil controle por causa dos tuberculos.\n"+
 "7. CORDA-DE-VIOLA (Ipomoea spp.): TREPADEIRA vigorosa, folhas CORDADAS em forma de coracao grandes 5-15cm, flores roxas ou brancas em forma de trombeta, caule volvel enrolando em TUDO ao redor. Cobre completamente o cafeeiro sufocando-o. Solo FERTIL disturbado. Aurora 400EC 1-1,5L/ha POS-emergencia precoce. Ally 600WG 4-6g/ha. Controle URGENTE antes de florescer para evitar banco de sementes.\n"+
-"8. CAPIM-GORDURA (Melinis minutiflora): GRAMÍNEA peluda viscosa cheiro mel, cor amarelada. ACCase: Select 240EC 0,45L/ha.\n"+
-"9. CAPIM-BRAQUIARIA (Urochloa spp.): gramínea aliada entrelinhas, problema na linha. ACCase.\n"+
-"10. TRAPOERABA (Commelina benghalensis): rasteira, flores azuis. Solo UMIDO. 2,4-D.\n"+
-"11. GUANXUMA (Sida spp.): arbusto flores amarelas. Solo DEGRADADO. 2,4-D.\n"+
-"12. MARIA-PRETINHA (Solanum americanum): frutos pretos TOXICOS. Glifosato, 2,4-D.\n\n"+
+"8. CAPIM-GORDURA (Melinis minutiflora): GRAMINEA perene PELUDA e VISCOSA ao toque, cor AMARELO-ESVERDEADA, folhas macias com pelos longos, cheiro caracteristico de MEL ao amassar, inflorescencia rosada aberta. Solo pobre e acido, pastagem degradada. ACCase: Select 240EC 0,45L/ha.\n"+
+"9. CAPIM-BRAQUIARIA (Urochloa spp.): GRAMINEA perene estolonifera/touceira robusta 40cm-1m, folhas LARGAS pilosas na base, bainha com pelos, inflorescencia em RACEMOS alongados unilaterais tipo \"dedos\". Geralmente presente nas ENTRELINHAS (pastagem/cobertura), torna-se problema quando invade a LINHA do cafeeiro. ACCase seletivo na linha.\n"+
+"10. TRAPOERABA (Commelina benghalensis): RASTEIRA suculenta enraizando nos nos, folhas OVALADAS lanceoladas com bainha que envolve o caule (tipica de Commelinaceae), flores pequenas AZUIS com 3 petalas (2 grandes + 1 pequena). Solo UMIDO e sombreado, comum em areas irrigadas. 2,4-D, dificil controle por reenraizamento dos fragmentos.\n"+
+"11. GUANXUMA (Sida spp.): ARBUSTIVA ereta 50cm-1,5m, caule fibroso lenhoso na base, folhas OVALADAS serrilhadas com peciolo longo, flores AMARELAS pequenas com 5 petalas, frutos em capsula segmentada tipo \"queijinho\". Solo DEGRADADO ou de baixa fertilidade. 2,4-D.\n"+
+"12. MARIA-PRETINHA (Solanum americanum): ERETA ramificada 30cm-1m, folhas OVALADAS com bordas onduladas, flores BRANCAS pequenas em forma de estrela com anteras amarelas (tipica de Solanaceae), frutos em BAGAS REDONDAS pretas brilhantes quando maduras, TOXICA para consumo. Solo fertil, comum em areas de cultivo. Glifosato, 2,4-D.\n\n"+
 "RESPONDA SOMENTE JSON:\n"+
 "{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"dose pratica\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\"}],\"indicador_geral\":\"o que indica sobre o solo\",\"manejo_integrado\":\"estrategia geral\"}";
 

@@ -136,6 +136,22 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_analises_user ON analises(user_id);
       CREATE INDEX IF NOT EXISTS idx_analises_talhao ON analises(talhao_id);
 
+      CREATE TABLE IF NOT EXISTS uso_api (
+        id                    SERIAL PRIMARY KEY,
+        user_id               TEXT,
+        tipo                  TEXT,
+        modelo                TEXT,
+        regiao                TEXT,
+        input_tokens          INTEGER,
+        output_tokens         INTEGER,
+        cache_creation_tokens INTEGER,
+        cache_read_tokens     INTEGER,
+        custo_usd_est         NUMERIC(10,6),
+        criado_em             TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_uso_api_user ON uso_api(user_id);
+      CREATE INDEX IF NOT EXISTS idx_uso_api_criado ON uso_api(criado_em);
+
       CREATE TABLE IF NOT EXISTS talhoes (
         id            TEXT PRIMARY KEY,
         user_id       TEXT REFERENCES usuarios(user_id) ON DELETE CASCADE,
@@ -349,6 +365,53 @@ async function dbSalvarAnalise(userId, talhaoId, diagnosticos, fotoThumb, regiao
     } catch(e) { console.error("dbSalvarAnalise:", e.message); }
   }
   return true;
+}
+
+// ── CUSTO REAL POR ANALISE (a partir do usage retornado pela API) ──────
+// Precos por milhao de tokens (USD), Junho/2026. Atualize se a Anthropic mudar a tabela.
+var PRECOS_USD_POR_MTOK = {
+  "claude-sonnet-4-6":          { input: 3.00,  output: 15.00 },
+  "claude-haiku-4-5-20251001":  { input: 0.80,  output: 4.00  }
+};
+
+function calcularCustoUSD(modelo, usage) {
+  if (!usage) return null;
+  var precos = PRECOS_USD_POR_MTOK[modelo];
+  if (!precos) return null;
+  var inputTok   = usage.input_tokens || 0;
+  var outputTok  = usage.output_tokens || 0;
+  var cacheWrite = usage.cache_creation_input_tokens || 0;
+  var cacheRead  = usage.cache_read_input_tokens || 0;
+  // cache write custa 1.25x o input normal; cache read custa 0.1x o input normal
+  var custo =
+    (inputTok   / 1e6) * precos.input +
+    (cacheWrite / 1e6) * precos.input * 1.25 +
+    (cacheRead  / 1e6) * precos.input * 0.10 +
+    (outputTok  / 1e6) * precos.output;
+  return custo;
+}
+
+// Loga o uso real (tokens + custo estimado) de uma analise no banco.
+// Chamar sempre que a API Anthropic responder, passando o objeto "usage" cru
+// retornado por ela. Nao quebra o fluxo principal se falhar (best-effort).
+async function logUsoAnalise(userId, tipo, modelo, usage, regiao) {
+  if (!pool) return;
+  try {
+    var custo = calcularCustoUSD(modelo, usage);
+    await pool.query(
+      `INSERT INTO uso_api (user_id, tipo, modelo, regiao,
+         input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, custo_usd_est)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        userId||"anonimo", tipo, modelo, regiao||"",
+        usage ? (usage.input_tokens||0) : null,
+        usage ? (usage.output_tokens||0) : null,
+        usage ? (usage.cache_creation_input_tokens||0) : null,
+        usage ? (usage.cache_read_input_tokens||0) : null,
+        custo
+      ]
+    );
+  } catch(e) { console.error("logUsoAnalise:", e.message); }
 }
 
 // ── RATE LIMITING ──────────────────────────────────────────────
@@ -614,6 +677,48 @@ app.get("/usuarios", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
+// ── ADMIN: RELATORIO DE CUSTO REAL DA API ──────────────────────
+// Mostra custo estimado por tipo de analise, total geral, e ranking de
+// usuarios que mais geram custo. Use ?dias=30 para mudar a janela (padrao 30).
+app.get("/custo-api", async function(req, res) {
+  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
+  if (!pool) return res.json({ erro:"Sem banco de dados conectado." });
+  try {
+    var dias = parseInt(req.query.dias) || 30;
+    var porTipo = await pool.query(
+      `SELECT tipo, modelo, COUNT(*) as qtd,
+              SUM(input_tokens) as input_total, SUM(output_tokens) as output_total,
+              SUM(cache_creation_tokens) as cache_write_total, SUM(cache_read_tokens) as cache_read_total,
+              ROUND(SUM(custo_usd_est)::numeric, 4) as custo_total_usd,
+              ROUND(AVG(custo_usd_est)::numeric, 5) as custo_medio_usd
+       FROM uso_api
+       WHERE criado_em >= NOW() - ($1 || ' days')::interval
+       GROUP BY tipo, modelo ORDER BY custo_total_usd DESC`,
+      [dias]
+    );
+    var totalGeral = await pool.query(
+      `SELECT COUNT(*) as total_analises, ROUND(SUM(custo_usd_est)::numeric, 4) as custo_total_usd
+       FROM uso_api WHERE criado_em >= NOW() - ($1 || ' days')::interval`,
+      [dias]
+    );
+    var topUsuarios = await pool.query(
+      `SELECT user_id, COUNT(*) as qtd, ROUND(SUM(custo_usd_est)::numeric, 4) as custo_usd
+       FROM uso_api WHERE criado_em >= NOW() - ($1 || ' days')::interval
+       GROUP BY user_id ORDER BY custo_usd DESC LIMIT 15`,
+      [dias]
+    );
+    var totalUsd = parseFloat(totalGeral.rows[0].custo_total_usd) || 0;
+    res.json({
+      periodo_dias: dias,
+      total_analises: parseInt(totalGeral.rows[0].total_analises),
+      custo_total_usd: totalUsd,
+      custo_total_brl_estimado: Math.round(totalUsd * 5.30 * 100) / 100,
+      por_tipo: porTipo.rows,
+      top_15_usuarios_por_custo: topUsuarios.rows
+    });
+  } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
 // ── WEBHOOK MERCADO PAGO ──────────────────────────────────────
 app.post("/webhook-pagamento", async function(req, res) {
   console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
@@ -770,6 +875,7 @@ app.post("/diagnostico", async function(req, res) {
     var Readable = require("stream").Readable;
     var stream = Readable.fromWeb(r.body);
     var buf="", texto="", parciaisEnviados=0, completosEnviados=0, diagsCompletos=[];
+    var usageCapturado={input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0};
 
     function detectarParciais() {
       var re=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
@@ -812,6 +918,15 @@ app.post("/diagnostico", async function(req, res) {
         if(d==="[DONE]") return;
         try {
           var ev=JSON.parse(d);
+          if(ev.type==="message_start"&&ev.message&&ev.message.usage){
+            var u0=ev.message.usage;
+            usageCapturado.input_tokens=u0.input_tokens||0;
+            usageCapturado.cache_creation_input_tokens=u0.cache_creation_input_tokens||0;
+            usageCapturado.cache_read_input_tokens=u0.cache_read_input_tokens||0;
+          }
+          if(ev.type==="message_delta"&&ev.usage){
+            usageCapturado.output_tokens=ev.usage.output_tokens||usageCapturado.output_tokens;
+          }
           if(ev.type==="content_block_delta"&&ev.delta&&ev.delta.text){
             texto+=ev.delta.text;
             detectarParciais();
@@ -828,6 +943,7 @@ app.post("/diagnostico", async function(req, res) {
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
+      logUsoAnalise(userId, "foto", "claude-sonnet-4-6", usageCapturado, regiao);
       encerrar();
     });
 
@@ -874,6 +990,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
+    logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado);
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -881,6 +998,7 @@ app.post("/diagnostico-json", async function(req, res) {
 // ── PLANO DE AÇÃO ─── Haiku | max_tokens:800 ──────────────────
 app.post("/plano-acao", async function(req, res) {
   var diagnosticos=req.body.diagnosticos||[], regiao=req.body.regiao||null;
+  var userId=req.body.userId||"anonimo";
   if(diagnosticos.length===0) return res.json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
 
   var regiaoCtx=regiao?" Regiao: "+regiao+".":"";
@@ -917,6 +1035,7 @@ app.post("/plano-acao", async function(req, res) {
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    logUsoAnalise(userId, "plano-acao", "claude-haiku-4-5-20251001", d.usage, regiao);
     res.json(resultado||{ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
   } catch(e) {
     res.json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
@@ -955,6 +1074,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -962,6 +1082,7 @@ app.post("/diagnostico-video", async function(req, res) {
 // ── ANÁLISE DE SOLO ─── Sonnet | max_tokens:1200 ─────────────
 app.post("/analise-solo", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  var userId=req.body.userId||"anonimo";
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
   var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper e Embrapa.\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}}}";
   try {
@@ -978,6 +1099,7 @@ app.post("/analise-solo", async function(req, res) {
     var d=await r.json();
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{acao:"Nao foi possivel ler o laudo. Verifique a foto e tente novamente.",valores:{}});
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -989,6 +1111,7 @@ app.post("/analise-solo", async function(req, res) {
 // com corda-de-viola por falta de descricao visual.
 app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  var userId=req.body.userId||"anonimo";
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
   var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro.\n\n"+
 "REGRA MAIS IMPORTANTE: Identifique TODAS as especies de plantas daninhas visiveis na imagem.\n\n"+
@@ -1023,6 +1146,7 @@ app.post("/identifica-daninha", async function(req, res) {
     console.log("STATUS DANINHA:", r.status, "| RESPOSTA:", JSON.stringify(d).substring(0,500));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);
     if(resultado){
       if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
       if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];

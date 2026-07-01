@@ -1015,7 +1015,12 @@ app.post("/plano-acao", async function(req, res) {
   var regiaoCtx=regiao?" Regiao: "+regiao+".":"";
   var resumoDiags=diagnosticos.map(function(d,i){
     var f=d.fungicidas&&d.fungicidas.length>0
-      ?d.fungicidas.map(function(f){return(f.nome_comercial||f.nome)+" ("+f.tipo+")"}).join(", ")
+      ?d.fungicidas.map(function(f){
+          var dose=(f.dose_min!=null&&f.dose_max!=null&&f.unidade&&f.por)
+            ?" DOSE EXATA A USAR: "+f.dose_min+"-"+f.dose_max+f.unidade+"/"+f.por+" (NAO altere esta dose nem a unidade)"
+            :"";
+          return (f.nome_comercial||f.nome)+" ("+f.tipo+")"+dose;
+        }).join("; ")
       :"sem fungicida indicado";
     var cat=CATEGORIA_DIAGNOSTICO[d.diagnostico]||"categoria nao especificada — nao presuma, use so o nome";
     return (i+1)+". "+d.diagnostico+" ["+cat+"] estagio "+d.estagio+" — produtos individuais: "+f;
@@ -1031,9 +1036,10 @@ app.post("/plano-acao", async function(req, res) {
 "3. PERMITIDO: protetor cuproso com qualquer sistemico.\n"+
 "4. PERMITIDO: Cercobin com qualquer produto.\n"+
 "5. Intervalo minimo: 14-21 dias.\n\n"+
+"DOSE DOS PRODUTOS: quando um produto individual vier com 'DOSE EXATA A USAR', copie exatamente esse valor e unidade (kg ou L, conforme informado) ao mencionar a dose nos campos urgente/em_21_dias. NUNCA troque a unidade (ex: nao converta kg para mL) nem cite uma dose diferente da fornecida — voce nao tem acesso a bula do produto, use apenas o valor dado.\n\n"+
 "CATEGORIA DE CADA DIAGNOSTICO: cada item da lista vem com sua categoria entre colchetes (ex: [doenca fungica], [doenca BACTERIANA], [praga], [deficiencia nutricional]). USE ESSA CATEGORIA EXATA no resumo_geral e demais campos — NUNCA infira ou generalize a categoria pelo tipo de produto usado (ex: dois problemas tratados ambos com cuprico NAO significa que sao da mesma categoria biologica).\n\n"+
 "REGRA DO CAMPO NUTRICAO — EVITAR INVENCAO:\n"+
-"So recomende correcao de um nutriente se: (a) esse nutriente aparece explicitamente na lista de diagnosticos recebida, OU (b) ha uma relacao causal direta e conhecida com uma doenca listada (ex: Mg baixo favorece antracnose — cite a relacao). NUNCA acrescente nutrientes (Zn, B, Ca, K, etc.) que nao foram diagnosticados nem tem relacao causal citada, mesmo que pareçam 'boas praticas gerais'. Se nenhum diagnostico de deficiencia foi recebido e nao ha relacao causal clara, deixe nutricao como string vazia ou apenas sugira analise foliar/solo, sem prescrever produto ou dose.\n\n"+
+"So recomende correcao de um nutriente especifico (nome do nutriente + dose) se: (a) esse nutriente aparece explicitamente na lista de diagnosticos recebida, OU (b) ha uma relacao causal direta e conhecida com uma doenca listada e voce EXPLICITA essa relacao (ex: 'Mg baixo favorece antracnose'). Se nenhum diagnostico de deficiencia foi recebido e nao ha relacao causal clara e citada, NAO mencione nenhum nutriente pelo nome (nem 'de forma especulativa', nem como 'sugestao geral') — apenas escreva 'Nenhuma deficiencia nutricional diagnosticada. Recomenda-se analise foliar/solo periodica.' ou deixe o campo vazio.\n\n"+
 "SEJA DIRETO E CONCISO: cada campo deve ter no maximo 3-4 frases curtas ou bullets objetivos. Evite explicacoes longas, repeticao de justificativas, ou sub-listas extensas. Priorize as informacoes mais acionaveis.\n\n"+
 "FORMATO JSON:\n"+
 "{\"resumo_geral\":\"...\",\"urgente\":\"...\",\"em_21_dias\":\"...\",\"nutricao\":\"...\",\"resumo\":\"frase curta\"}";

@@ -997,7 +997,16 @@ app.post("/diagnostico-json", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
-// ── PLANO DE AÇÃO ─── Haiku | max_tokens:800 ──────────────────
+// ── PLANO DE AÇÃO ─── Haiku | max_tokens:2000 ──────────────────
+var CATEGORIA_DIAGNOSTICO = {
+  ferrugem:"doenca fungica", cercosporiose:"doenca fungica", ascochyta:"doenca fungica",
+  antracnose:"doenca fungica", phoma:"doenca fungica", mancha_manteigosa:"doenca fungica",
+  corynespora:"doenca fungica", koleroga:"doenca fungica",
+  aureolada:"doenca BACTERIANA (nao fungica — fungicida sistemico triazol nao tem efeito, usar so cuprico)",
+  bicho:"praga (inseticida)", acaro:"praga (acaricida)", cochonilha:"praga (inseticida)", broca:"praga (inseticida)",
+  nitrogenio:"deficiencia nutricional", magnesio:"deficiencia nutricional", potassio:"deficiencia nutricional",
+  ferro:"deficiencia nutricional", calcio:"deficiencia nutricional", boro:"deficiencia nutricional", zinco:"deficiencia nutricional"
+};
 app.post("/plano-acao", async function(req, res) {
   var diagnosticos=req.body.diagnosticos||[], regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
@@ -1008,7 +1017,8 @@ app.post("/plano-acao", async function(req, res) {
     var f=d.fungicidas&&d.fungicidas.length>0
       ?d.fungicidas.map(function(f){return(f.nome_comercial||f.nome)+" ("+f.tipo+")"}).join(", ")
       :"sem fungicida indicado";
-    return (i+1)+". "+d.diagnostico+" estagio "+d.estagio+" — produtos individuais: "+f;
+    var cat=CATEGORIA_DIAGNOSTICO[d.diagnostico]||"categoria nao especificada — nao presuma, use so o nome";
+    return (i+1)+". "+d.diagnostico+" ["+cat+"] estagio "+d.estagio+" — produtos individuais: "+f;
   }).join("\n");
 
   var sistemaStatic =
@@ -1021,6 +1031,7 @@ app.post("/plano-acao", async function(req, res) {
 "3. PERMITIDO: protetor cuproso com qualquer sistemico.\n"+
 "4. PERMITIDO: Cercobin com qualquer produto.\n"+
 "5. Intervalo minimo: 14-21 dias.\n\n"+
+"CATEGORIA DE CADA DIAGNOSTICO: cada item da lista vem com sua categoria entre colchetes (ex: [doenca fungica], [doenca BACTERIANA], [praga], [deficiencia nutricional]). USE ESSA CATEGORIA EXATA no resumo_geral e demais campos — NUNCA infira ou generalize a categoria pelo tipo de produto usado (ex: dois problemas tratados ambos com cuprico NAO significa que sao da mesma categoria biologica).\n\n"+
 "REGRA DO CAMPO NUTRICAO — EVITAR INVENCAO:\n"+
 "So recomende correcao de um nutriente se: (a) esse nutriente aparece explicitamente na lista de diagnosticos recebida, OU (b) ha uma relacao causal direta e conhecida com uma doenca listada (ex: Mg baixo favorece antracnose — cite a relacao). NUNCA acrescente nutrientes (Zn, B, Ca, K, etc.) que nao foram diagnosticados nem tem relacao causal citada, mesmo que pareçam 'boas praticas gerais'. Se nenhum diagnostico de deficiencia foi recebido e nao ha relacao causal clara, deixe nutricao como string vazia ou apenas sugira analise foliar/solo, sem prescrever produto ou dose.\n\n"+
 "SEJA DIRETO E CONCISO: cada campo deve ter no maximo 3-4 frases curtas ou bullets objetivos. Evite explicacoes longas, repeticao de justificativas, ou sub-listas extensas. Priorize as informacoes mais acionaveis.\n\n"+

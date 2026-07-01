@@ -1021,6 +1021,7 @@ app.post("/plano-acao", async function(req, res) {
 "3. PERMITIDO: protetor cuproso com qualquer sistemico.\n"+
 "4. PERMITIDO: Cercobin com qualquer produto.\n"+
 "5. Intervalo minimo: 14-21 dias.\n\n"+
+"SEJA DIRETO E CONCISO: cada campo deve ter no maximo 3-4 frases curtas ou bullets objetivos. Evite explicacoes longas, repeticao de justificativas, ou sub-listas extensas. Priorize as informacoes mais acionaveis.\n\n"+
 "FORMATO JSON:\n"+
 "{\"resumo_geral\":\"...\",\"urgente\":\"...\",\"em_21_dias\":\"...\",\"nutricao\":\"...\",\"resumo\":\"frase curta\"}";
 
@@ -1030,7 +1031,7 @@ app.post("/plano-acao", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:2000,
         system:[ { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } } ],
         messages:[{role:"user",content:[{type:"text",text:promptUsuario}]}]})
     });

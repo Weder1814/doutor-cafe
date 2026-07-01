@@ -985,14 +985,16 @@ app.post("/diagnostico-json", async function(req, res) {
       ]}]})
     });
     var d=await r.json();
+    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-json:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-json — texto recebido:", txt);
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
     logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado);
-  } catch(e) { res.status(500).json({ erro:e.message }); }
+  } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
 // ── PLANO DE AÇÃO ─── Haiku | max_tokens:800 ──────────────────
@@ -1033,12 +1035,20 @@ app.post("/plano-acao", async function(req, res) {
         messages:[{role:"user",content:[{type:"text",text:promptUsuario}]}]})
     });
     var d=await r.json();
+    if(d.error){
+      console.error("ERRO ANTHROPIC /plano-acao:", JSON.stringify(d.error));
+      return res.status(502).json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"", erro:"Servico de IA indisponivel no momento. Tente novamente em instantes." });
+    }
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    if(!resultado){
+      console.error("ERRO PARSE /plano-acao — texto recebido:", txt);
+    }
     logUsoAnalise(userId, "plano-acao", "claude-haiku-4-5-20251001", d.usage, regiao);
-    res.json(resultado||{ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
+    res.json(resultado||{ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"", erro:"Nao foi possivel gerar o plano. Tente novamente." });
   } catch(e) {
-    res.json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
+    console.error("ERRO EXCECAO /plano-acao:", e.message);
+    res.status(500).json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"", erro:"Erro de conexao. Tente novamente." });
   }
 });
 
@@ -1072,11 +1082,13 @@ app.post("/diagnostico-video", async function(req, res) {
         messages:[{role:"user",content}]})
     });
     var d=await r.json();
+    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-video:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
     logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
-  } catch(e) { res.status(500).json({ erro:e.message }); }
+  } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
 // ── ANÁLISE DE SOLO ─── Sonnet | max_tokens:1200 ─────────────
@@ -1097,11 +1109,13 @@ app.post("/analise-solo", async function(req, res) {
         messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
     });
     var d=await r.json();
+    if(d.error) console.error("ERRO ANTHROPIC /analise-solo:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
+    if(!resultado&&!d.error) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
     logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{acao:"Nao foi possivel ler o laudo. Verifique a foto e tente novamente.",valores:{}});
-  } catch(e) { res.status(500).json({ erro:e.message }); }
+  } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
 // ── IDENTIFICA DANINHA ─── Haiku | max_tokens:800 ────────────
@@ -1144,6 +1158,7 @@ app.post("/identifica-daninha", async function(req, res) {
     });
     var d=await r.json();
     console.log("STATUS DANINHA:", r.status, "| RESPOSTA:", JSON.stringify(d).substring(0,500));
+    if(d.error) console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
     logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);

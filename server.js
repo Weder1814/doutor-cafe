@@ -1021,6 +1021,8 @@ app.post("/plano-acao", async function(req, res) {
 "3. PERMITIDO: protetor cuproso com qualquer sistemico.\n"+
 "4. PERMITIDO: Cercobin com qualquer produto.\n"+
 "5. Intervalo minimo: 14-21 dias.\n\n"+
+"REGRA DO CAMPO NUTRICAO — EVITAR INVENCAO:\n"+
+"So recomende correcao de um nutriente se: (a) esse nutriente aparece explicitamente na lista de diagnosticos recebida, OU (b) ha uma relacao causal direta e conhecida com uma doenca listada (ex: Mg baixo favorece antracnose — cite a relacao). NUNCA acrescente nutrientes (Zn, B, Ca, K, etc.) que nao foram diagnosticados nem tem relacao causal citada, mesmo que pareçam 'boas praticas gerais'. Se nenhum diagnostico de deficiencia foi recebido e nao ha relacao causal clara, deixe nutricao como string vazia ou apenas sugira analise foliar/solo, sem prescrever produto ou dose.\n\n"+
 "SEJA DIRETO E CONCISO: cada campo deve ter no maximo 3-4 frases curtas ou bullets objetivos. Evite explicacoes longas, repeticao de justificativas, ou sub-listas extensas. Priorize as informacoes mais acionaveis.\n\n"+
 "FORMATO JSON:\n"+
 "{\"resumo_geral\":\"...\",\"urgente\":\"...\",\"em_21_dias\":\"...\",\"nutricao\":\"...\",\"resumo\":\"frase curta\"}";

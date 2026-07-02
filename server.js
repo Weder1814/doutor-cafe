@@ -449,33 +449,44 @@ var PLANOS = {
 app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe API", db: pool?"postgres":"memoria" }); });
 app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now() }); });
 
-// ── PREÇO DO CAFÉ (NY "C" futures via Yahoo Finance) ───────────
-// Fonte NAO-OFICIAL (endpoint publico nao documentado da Yahoo). Cache de 2h
-// para reduzir chamadas e risco de bloqueio. Se falhar, devolve o ultimo
-// cache disponivel marcado como "stale", ou erro — NUNCA inventa numero.
+// ── PREÇO DO CAFÉ (Coffee C via Alpha Vantage — API oficial) ───
+// Requer variavel de ambiente ALPHAVANTAGE_API_KEY no Railway (gratis em
+// alphavantage.co). Cache de 4h para respeitar limite de 25 chamadas/dia
+// do plano gratuito (2 chamadas por atualizacao: cafe + cambio).
+var ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_API_KEY;
 var _cachePrecoCafe = { data: null, timestamp: 0 };
-var CACHE_PRECO_MS = 2 * 60 * 60 * 1000; // 2 horas
+var CACHE_PRECO_MS = 4 * 60 * 60 * 1000; // 4 horas
 app.get("/preco-cafe", async function(req, res) {
   var agora = Date.now();
   if (_cachePrecoCafe.data && (agora - _cachePrecoCafe.timestamp) < CACHE_PRECO_MS) {
     return res.json(_cachePrecoCafe.data);
   }
+  if (!ALPHAVANTAGE_KEY) {
+    console.error("ERRO /preco-cafe: ALPHAVANTAGE_API_KEY nao configurada no Railway");
+    return res.status(503).json({ erro: "indisponivel" });
+  }
   try {
-    var headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
-    var [rKC, rBRL] = await Promise.all([
-      fetch("https://query1.finance.yahoo.com/v8/finance/chart/KC=F", { headers: headers }),
-      fetch("https://query1.finance.yahoo.com/v8/finance/chart/BRL=X", { headers: headers })
+    var [rCafe, rCambio] = await Promise.all([
+      fetch("https://www.alphavantage.co/query?function=COFFEE&interval=daily&apikey=" + ALPHAVANTAGE_KEY),
+      fetch("https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=BRL&apikey=" + ALPHAVANTAGE_KEY)
     ]);
-    var dKC = await rKC.json();
-    var dBRL = await rBRL.json();
-    var metaKC = dKC.chart && dKC.chart.result && dKC.chart.result[0] && dKC.chart.result[0].meta;
-    var metaBRL = dBRL.chart && dBRL.chart.result && dBRL.chart.result[0] && dBRL.chart.result[0].meta;
-    if (!metaKC || !metaBRL) throw new Error("Resposta da Yahoo sem meta esperada");
+    var dCafe = await rCafe.json();
+    var dCambio = await rCambio.json();
 
-    var precoAtual = metaKC.regularMarketPrice;
-    var precoAnterior = metaKC.chartPreviousClose || metaKC.previousClose;
-    var dolar = metaBRL.regularMarketPrice;
-    if (precoAtual==null || precoAnterior==null || dolar==null) throw new Error("Campos de preco ausentes");
+    if (dCafe.Note || dCafe.Information) throw new Error("Alpha Vantage limite/aviso: " + (dCafe.Note || dCafe.Information));
+    if (dCambio.Note || dCambio.Information) throw new Error("Alpha Vantage limite/aviso (cambio): " + (dCambio.Note || dCambio.Information));
+
+    var serie = dCafe.data;
+    if (!serie || serie.length < 2) throw new Error("Serie de cafe vazia ou insuficiente");
+    // A API retorna do mais recente para o mais antigo; pula valores nulos/vazios (".")
+    var pontosValidos = serie.filter(function(p){ return p.value && p.value !== "."; });
+    if (pontosValidos.length < 2) throw new Error("Sem pontos validos suficientes na serie");
+    var precoAtual = parseFloat(pontosValidos[0].value);
+    var precoAnterior = parseFloat(pontosValidos[1].value);
+
+    var taxaCambio = dCambio["Realtime Currency Exchange Rate"];
+    var dolar = taxaCambio && parseFloat(taxaCambio["5. Exchange Rate"]);
+    if (isNaN(precoAtual) || isNaN(precoAnterior) || !dolar || isNaN(dolar)) throw new Error("Campos de preco/cambio invalidos");
 
     var pontos = precoAtual - precoAnterior;
     var pct = (pontos / precoAnterior) * 100;
@@ -488,6 +499,7 @@ app.get("/preco-cafe", async function(req, res) {
       variacao_pct: Math.round(pct * 100) / 100,
       dolar: Math.round(dolar * 100) / 100,
       preco_saca_estimado_reais: Math.round(precoSacaEstimado * 100) / 100,
+      data_referencia: pontosValidos[0].date,
       atualizado_em: new Date().toISOString(),
       stale: false
     };

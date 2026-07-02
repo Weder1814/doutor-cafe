@@ -531,24 +531,48 @@ app.post("/cadastrar-usuario", async function(req, res) {
     return res.status(400).json({ erro:"CPF inválido. Verifique os números digitados." });
   }
 
-  if (cpf) {
-    try {
-      var existente = await dbGetUserByCPF(cpf);
-      if (existente) {
-        var restantes = analisesRestantes(existente);
-        return res.json({
-          ok:true,
-          userId: existente.user_id||existente.userId,
-          jaExistia:true,
-          plano: existente.plano||"gratuito",
-          analisesUsadas: existente.analises_usadas||existente.analisesUsadas||0,
-          analisesRestantes: restantes
-        });
-      }
-    } catch(e) { console.error("verificarCPF:", e.message); }
-  }
-
   try {
+    // 1. Esse user_id (mesmo dispositivo) ja tem cadastro? So atualiza perfil,
+    //    NUNCA reseta uso/plano — isso e o que causava o contador "pulando".
+    var jaTemEsseId = await dbGetUser(userId);
+    if (jaTemEsseId) {
+      await dbSaveUser({
+        userId: userId,
+        cpf: cpf || jaTemEsseId.cpf || "",
+        celular: celular || jaTemEsseId.celular || "",
+        nome: nome,
+        pin: pin || jaTemEsseId.pin || "",
+        email: email || jaTemEsseId.email || "",
+        regiao: regiao || jaTemEsseId.regiao || "",
+        plano: jaTemEsseId.plano || "gratuito",
+        analisesUsadas: jaTemEsseId.analises_usadas || jaTemEsseId.analisesUsadas || 0,
+        mesReset: jaTemEsseId.mes_reset || jaTemEsseId.mesReset || ""
+      });
+      return res.json({
+        ok:true, userId:userId, jaExistia:true,
+        plano: jaTemEsseId.plano||"gratuito",
+        analisesUsadas: jaTemEsseId.analises_usadas||jaTemEsseId.analisesUsadas||0,
+        analisesRestantes: analisesRestantes(jaTemEsseId)
+      });
+    }
+
+    // 2. Existe outra conta com esse CPF ou celular? (evita duplicata quando o
+    //    id local do dispositivo muda, ex: cache limpo, reinstalacao)
+    var existente = null;
+    if (cpf) { try { existente = await dbGetUserByCPF(cpf); } catch(e) { console.error("verificarCPF:", e.message); } }
+    if (!existente && celular) { try { existente = await dbGetUserByCelular(celular); } catch(e) { console.error("verificarCelular:", e.message); } }
+    if (existente) {
+      return res.json({
+        ok:true,
+        userId: existente.user_id||existente.userId,
+        jaExistia:true,
+        plano: existente.plano||"gratuito",
+        analisesUsadas: existente.analises_usadas||existente.analisesUsadas||0,
+        analisesRestantes: analisesRestantes(existente)
+      });
+    }
+
+    // 3. Usuario genuinamente novo — so aqui comeca com 0 analises usadas.
     await dbSaveUser({ userId, cpf, celular, nome, pin, email, regiao, plano:"gratuito", analisesUsadas:0, mesReset:"" });
     res.json({ ok:true, userId, analisesRestantes: LIMITES.gratuito });
   } catch(e) {

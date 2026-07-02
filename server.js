@@ -449,6 +449,60 @@ var PLANOS = {
 app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe API", db: pool?"postgres":"memoria" }); });
 app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now() }); });
 
+// ── PREÇO DO CAFÉ (NY "C" futures via Yahoo Finance) ───────────
+// Fonte NAO-OFICIAL (endpoint publico nao documentado da Yahoo). Cache de 2h
+// para reduzir chamadas e risco de bloqueio. Se falhar, devolve o ultimo
+// cache disponivel marcado como "stale", ou erro — NUNCA inventa numero.
+var _cachePrecoCafe = { data: null, timestamp: 0 };
+var CACHE_PRECO_MS = 2 * 60 * 60 * 1000; // 2 horas
+app.get("/preco-cafe", async function(req, res) {
+  var agora = Date.now();
+  if (_cachePrecoCafe.data && (agora - _cachePrecoCafe.timestamp) < CACHE_PRECO_MS) {
+    return res.json(_cachePrecoCafe.data);
+  }
+  try {
+    var headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
+    var [rKC, rBRL] = await Promise.all([
+      fetch("https://query1.finance.yahoo.com/v8/finance/chart/KC=F", { headers: headers }),
+      fetch("https://query1.finance.yahoo.com/v8/finance/chart/BRL=X", { headers: headers })
+    ]);
+    var dKC = await rKC.json();
+    var dBRL = await rBRL.json();
+    var metaKC = dKC.chart && dKC.chart.result && dKC.chart.result[0] && dKC.chart.result[0].meta;
+    var metaBRL = dBRL.chart && dBRL.chart.result && dBRL.chart.result[0] && dBRL.chart.result[0].meta;
+    if (!metaKC || !metaBRL) throw new Error("Resposta da Yahoo sem meta esperada");
+
+    var precoAtual = metaKC.regularMarketPrice;
+    var precoAnterior = metaKC.chartPreviousClose || metaKC.previousClose;
+    var dolar = metaBRL.regularMarketPrice;
+    if (precoAtual==null || precoAnterior==null || dolar==null) throw new Error("Campos de preco ausentes");
+
+    var pontos = precoAtual - precoAnterior;
+    var pct = (pontos / precoAnterior) * 100;
+    // 1 saca = 60kg = 132.277 lb. Preco NY em centavos de USD/lb.
+    var precoSacaEstimado = (precoAtual / 100) * 132.277 * dolar;
+
+    var resultado = {
+      preco_ny_centavos_lb: Math.round(precoAtual * 100) / 100,
+      variacao_pontos: Math.round(pontos * 100) / 100,
+      variacao_pct: Math.round(pct * 100) / 100,
+      dolar: Math.round(dolar * 100) / 100,
+      preco_saca_estimado_reais: Math.round(precoSacaEstimado * 100) / 100,
+      atualizado_em: new Date().toISOString(),
+      stale: false
+    };
+    _cachePrecoCafe = { data: resultado, timestamp: agora };
+    res.json(resultado);
+  } catch (e) {
+    console.error("ERRO /preco-cafe:", e.message);
+    if (_cachePrecoCafe.data) {
+      res.json(Object.assign({}, _cachePrecoCafe.data, { stale: true }));
+    } else {
+      res.status(503).json({ erro: "indisponivel" });
+    }
+  }
+});
+
 // ── CADASTRAR USUÁRIO ─────────────────────────────────────────
 app.post("/cadastrar-usuario", async function(req, res) {
   var userId  = req.body.userId;

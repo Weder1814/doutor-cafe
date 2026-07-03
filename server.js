@@ -176,6 +176,8 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mes_reset TEXT DEFAULT ''`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS videos_usados INTEGER DEFAULT 0`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mp_preapproval_id TEXT`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS assinatura_status TEXT`);
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);
@@ -354,6 +356,30 @@ async function dbAtualizarPlano(userId, plano, planoId) {
   return true;
 }
 
+// Atualiza plano + guarda o id da assinatura recorrente (preapproval) e seu status.
+// Usado pelo fluxo de assinatura via Card Payment Brick (sem redirect pro MP).
+async function dbAtualizarAssinatura(userId, plano, planoId, preapprovalId, status) {
+  var mes = mesAtual();
+  if (pool) {
+    try {
+      await pool.query(
+        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, mp_preapproval_id=$5, assinatura_status=$6, atualizado_em=NOW() WHERE user_id=$1",
+        [userId, plano, planoId||"", mes, preapprovalId||null, status||null]
+      );
+      return true;
+    } catch(e) { console.error("dbAtualizarAssinatura:", e.message); }
+  }
+  if (usuariosMemoria[userId]) {
+    usuariosMemoria[userId].plano = plano;
+    usuariosMemoria[userId].planoId = planoId;
+    usuariosMemoria[userId].analisesUsadas = 0;
+    usuariosMemoria[userId].mesReset = mes;
+    usuariosMemoria[userId].mpPreapprovalId = preapprovalId;
+    usuariosMemoria[userId].assinaturaStatus = status;
+  }
+  return true;
+}
+
 async function dbSalvarAnalise(userId, talhaoId, diagnosticos, fotoThumb, regiao) {
   if (pool) {
     try {
@@ -437,13 +463,16 @@ setInterval(function() {
 
 // ── PLANOS ────────────────────────────────────────────────────
 var PLANOS = {
-  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130 },
+  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130, preapproval_plan_id: process.env.MP_PLAN_ID_BASICO },
   basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:130 },
-  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:250 },
+  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:250, preapproval_plan_id: process.env.MP_PLAN_ID_PRO },
   pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:250 },
-  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:400 },
+  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:400, preapproval_plan_id: process.env.MP_PLAN_ID_PREMIUM },
   premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:400 }
 };
+// Nota: só os planos MENSAIS viram assinatura recorrente (preapproval) via Card Payment
+// Brick, sem sair do app. Os ANUAIS continuam usando /gerar-pix (PIX) ou podem ser
+// migrados depois pra preapproval anual também, se preferir.
 
 // ── ENDPOINTS BÁSICOS ─────────────────────────────────────────
 app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe API", db: pool?"postgres":"memoria" }); });
@@ -813,6 +842,26 @@ app.get("/custo-api", async function(req, res) {
 app.post("/webhook-pagamento", async function(req, res) {
   console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
   var data = req.body;
+
+  // Eventos de assinatura recorrente (preapproval): cobrança recusada, cancelamento
+  // feito pelo próprio cliente direto no app do Mercado Pago, etc.
+  if (data.type === "subscription_preapproval" && data.data && data.data.id) {
+    try {
+      var rs = await fetch("https://api.mercadopago.com/preapproval/"+data.data.id, { headers:{ "Authorization":"Bearer "+MP_TOKEN } });
+      var assinatura = await rs.json();
+      if (assinatura.external_reference) {
+        var userId = assinatura.external_reference;
+        if (assinatura.status === "cancelled" || assinatura.status === "paused") {
+          await dbAtualizarAssinatura(userId, "gratuito", "", assinatura.id, assinatura.status);
+          console.log("⚠️ Assinatura", assinatura.status, "para", userId);
+        } else if (pool) {
+          await pool.query("UPDATE usuarios SET assinatura_status=$2 WHERE user_id=$1", [userId, assinatura.status]);
+        }
+      }
+    } catch(e) { console.error("Webhook preapproval erro:", e.message); }
+    return res.json({ ok:true });
+  }
+
   if (data.type === "payment" && data.data && data.data.id) {
     try {
       var r = await fetch("https://api.mercadopago.com/v1/payments/"+data.data.id, {
@@ -874,19 +923,81 @@ app.post("/gerar-pix", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
+// ── CRIAR ASSINATURA (Card Payment Brick — sem sair do app) ────
+// O frontend renderiza o Card Payment Brick, tokeniza o cartão, e manda
+// o card_token_id pra cá. A gente cria a assinatura recorrente direto na
+// API do Mercado Pago (/preapproval), sem nenhum redirect pro domínio deles.
 app.post("/criar-assinatura", async function(req, res) {
-  var planoId = req.body.plano, email = req.body.email||"produtor@doutorcafe.app", userId = req.body.userId, plano = PLANOS[planoId];
+  var planoId = req.body.plano, email = req.body.email, userId = req.body.userId, cardTokenId = req.body.card_token_id;
+  var plano = PLANOS[planoId];
+
   if (!plano) return res.status(400).json({ erro:"Plano inválido" });
+  if (!plano.preapproval_plan_id) return res.status(400).json({ erro:"Este plano ainda não tem preapproval_plan_id configurado (rode criar-plano-assinatura.js e defina a variável de ambiente)." });
+  if (!email || !userId || !cardTokenId) return res.status(400).json({ erro:"Campos obrigatórios: email, userId, card_token_id" });
+
   var body = {
-    items:[{ title:plano.nome, quantity:1, unit_price:plano.valor, currency_id:"BRL" }], payer:{ email },
-    back_urls:{ success:"https://doutor-cafe-app.vercel.app?pagamento=sucesso&plano="+planoId+"&user="+userId, failure:"https://doutor-cafe-app.vercel.app?pagamento=falha", pending:"https://doutor-cafe-app.vercel.app?pagamento=pendente" },
-    auto_approve:false, notification_url:BASE_URL+"/webhook-pagamento", metadata:{ plano_id:planoId, user_id:userId, analises:plano.analises }
+    preapproval_plan_id: plano.preapproval_plan_id,
+    reason: plano.nome,
+    external_reference: userId,
+    payer_email: email,
+    card_token_id: cardTokenId,
+    status: "authorized"
   };
+
   try {
-    var r = await fetch("https://api.mercadopago.com/checkout/preferences", { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN }, body:JSON.stringify(body) });
+    var r = await fetch("https://api.mercadopago.com/preapproval", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN, "X-Idempotency-Key":userId+"_"+planoId+"_"+Date.now() },
+      body:JSON.stringify(body)
+    });
     var d = await r.json();
-    if (d.id) res.json({ url:d.init_point, id:d.id });
-    else res.status(500).json({ erro:"Erro ao criar preferência", detalhe:d.message||d.error });
+
+    if (!r.ok) {
+      console.error("Erro Mercado Pago /preapproval:", JSON.stringify(d));
+      return res.status(r.status).json({ erro: d.message||"Não foi possível criar a assinatura.", detalhe:d });
+    }
+
+    if (d.status === "authorized") {
+      var tipo = planoId.indexOf("premium")>-1?"premium":planoId.indexOf("pro")>-1?"pro":"basico";
+      await dbAtualizarAssinatura(userId, tipo, planoId, d.id, d.status);
+      if (pool) {
+        try {
+          await pool.query("INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
+            [String(d.id), userId, planoId, "approved", plano.valor]);
+        } catch(e) {}
+      }
+    }
+
+    res.json({ sucesso: d.status === "authorized", status:d.status, preapproval_id:d.id, next_payment_date:d.next_payment_date });
+  } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
+// Consulta o status atual de uma assinatura (tela "minha assinatura")
+app.get("/assinatura-status/:userId", async function(req, res) {
+  try {
+    var u = await dbGetUser(req.params.userId);
+    if (!u || !u.mp_preapproval_id) return res.json({ status:"sem_assinatura" });
+    var r = await fetch("https://api.mercadopago.com/preapproval/"+u.mp_preapproval_id, { headers:{ "Authorization":"Bearer "+MP_TOKEN } });
+    var d = await r.json();
+    if (!r.ok) return res.status(r.status).json({ erro:d.message||"Assinatura não encontrada." });
+    res.json({ status:d.status, next_payment_date:d.next_payment_date, reason:d.reason, plano:u.plano });
+  } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
+// Cancela a assinatura recorrente (o cliente pode cancelar quando quiser)
+app.post("/cancelar-assinatura/:userId", async function(req, res) {
+  try {
+    var u = await dbGetUser(req.params.userId);
+    if (!u || !u.mp_preapproval_id) return res.status(400).json({ erro:"Usuário não tem assinatura ativa." });
+    var r = await fetch("https://api.mercadopago.com/preapproval/"+u.mp_preapproval_id, {
+      method:"PUT",
+      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN },
+      body:JSON.stringify({ status:"cancelled" })
+    });
+    var d = await r.json();
+    if (!r.ok) return res.status(r.status).json({ erro:d.message||"Não foi possível cancelar." });
+    await dbAtualizarAssinatura(req.params.userId, "gratuito", "", u.mp_preapproval_id, "cancelled");
+    res.json({ sucesso:true, status:d.status });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 

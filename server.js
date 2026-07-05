@@ -197,6 +197,11 @@ async function initDB() {
       auth TEXT NOT NULL,
       criado_em TIMESTAMP DEFAULT NOW()
     )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS cache_preco_cafe (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      dados JSONB NOT NULL,
+      atualizado_em TIMESTAMP DEFAULT NOW()
+    )`);
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);
@@ -468,15 +473,14 @@ setInterval(function() {
 // ── PLANOS ────────────────────────────────────────────────────
 var PLANOS = {
   basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130, preapproval_plan_id: process.env.MP_PLAN_ID_BASICO },
-  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:130 },
+  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:130, preapproval_plan_id: process.env.MP_PLAN_ID_BASICO_ANUAL },
   pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:250, preapproval_plan_id: process.env.MP_PLAN_ID_PRO },
-  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:250 },
+  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:250, preapproval_plan_id: process.env.MP_PLAN_ID_PRO_ANUAL },
   premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:400, preapproval_plan_id: process.env.MP_PLAN_ID_PREMIUM },
-  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:400 }
+  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:400, preapproval_plan_id: process.env.MP_PLAN_ID_PREMIUM_ANUAL }
 };
-// Nota: só os planos MENSAIS viram assinatura recorrente (preapproval) via Card Payment
-// Brick, sem sair do app. Os ANUAIS continuam usando /gerar-pix (PIX) ou podem ser
-// migrados depois pra preapproval anual também, se preferir.
+// Todos os planos (mensais e anuais) usam preapproval (assinatura recorrente)
+// via Card Payment Brick, sem sair do app. O anual cobra 1x a cada 12 meses.
 
 // ── ENDPOINTS BÁSICOS ─────────────────────────────────────────
 app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe API", db: pool?"postgres":"memoria" }); });
@@ -486,16 +490,49 @@ app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now() }); });
 // Requer variavel de ambiente ALPHAVANTAGE_API_KEY no Railway (gratis em
 // alphavantage.co). Cache de 4h para respeitar limite de 25 chamadas/dia
 // do plano gratuito (2 chamadas por atualizacao: cafe + cambio).
+// O cache fica NO BANCO (nao so em memoria) porque cada redeploy do Railway
+// reinicia o processo — sem isso, redeploys frequentes (comuns durante o
+// desenvolvimento) fariam o servidor "esquecer" o cache e gastar chamadas
+// novas toda hora, estourando a cota gratuita rapido.
 var ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_API_KEY;
-var _cachePrecoCafe = { data: null, timestamp: 0 };
+var _cachePrecoCafeMemoria = { data: null, timestamp: 0 }; // fallback quando nao ha banco (dev local)
 var CACHE_PRECO_MS = 4 * 60 * 60 * 1000; // 4 horas
+
+async function lerCachePrecoCafe() {
+  if (pool) {
+    try {
+      var r = await pool.query("SELECT dados, atualizado_em FROM cache_preco_cafe WHERE id=1");
+      if (r.rows.length > 0) {
+        return { data: r.rows[0].dados, timestamp: new Date(r.rows[0].atualizado_em).getTime() };
+      }
+      return { data: null, timestamp: 0 };
+    } catch(e) { console.error("lerCachePrecoCafe:", e.message); }
+  }
+  return _cachePrecoCafeMemoria;
+}
+
+async function salvarCachePrecoCafe(dados) {
+  if (pool) {
+    try {
+      await pool.query(
+        "INSERT INTO cache_preco_cafe (id, dados, atualizado_em) VALUES (1,$1,NOW()) ON CONFLICT (id) DO UPDATE SET dados=$1, atualizado_em=NOW()",
+        [dados]
+      );
+      return;
+    } catch(e) { console.error("salvarCachePrecoCafe:", e.message); }
+  }
+  _cachePrecoCafeMemoria = { data: dados, timestamp: Date.now() };
+}
+
 app.get("/preco-cafe", async function(req, res) {
   var agora = Date.now();
-  if (_cachePrecoCafe.data && (agora - _cachePrecoCafe.timestamp) < CACHE_PRECO_MS) {
-    return res.json(_cachePrecoCafe.data);
+  var cache = await lerCachePrecoCafe();
+  if (cache.data && (agora - cache.timestamp) < CACHE_PRECO_MS) {
+    return res.json(cache.data);
   }
   if (!ALPHAVANTAGE_KEY) {
     console.error("ERRO /preco-cafe: ALPHAVANTAGE_API_KEY nao configurada no Railway");
+    if (cache.data) return res.json(Object.assign({}, cache.data, { stale: true }));
     return res.status(503).json({ erro: "indisponivel" });
   }
   try {
@@ -536,12 +573,12 @@ app.get("/preco-cafe", async function(req, res) {
       atualizado_em: new Date().toISOString(),
       stale: false
     };
-    _cachePrecoCafe = { data: resultado, timestamp: agora };
+    await salvarCachePrecoCafe(resultado);
     res.json(resultado);
   } catch (e) {
     console.error("ERRO /preco-cafe:", e.message);
-    if (_cachePrecoCafe.data) {
-      res.json(Object.assign({}, _cachePrecoCafe.data, { stale: true }));
+    if (cache.data) {
+      res.json(Object.assign({}, cache.data, { stale: true }));
     } else {
       res.status(503).json({ erro: "indisponivel" });
     }

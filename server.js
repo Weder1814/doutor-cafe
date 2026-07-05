@@ -1,4 +1,13 @@
 var express = require("express");
+var webpush = require("web-push");
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    "mailto:doutorcafe.app@gmail.com",
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
 var cors = require("cors");
 var app = express();
 
@@ -178,6 +187,15 @@ async function initDB() {
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS videos_usados INTEGER DEFAULT 0`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mp_preapproval_id TEXT`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS assinatura_status TEXT`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS proximo_pagamento DATE`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS lembrete_enviado_em DATE`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+      user_id TEXT PRIMARY KEY,
+      endpoint TEXT NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      criado_em TIMESTAMP DEFAULT NOW()
+    )`);
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);
@@ -358,13 +376,13 @@ async function dbAtualizarPlano(userId, plano, planoId) {
 
 // Atualiza plano + guarda o id da assinatura recorrente (preapproval) e seu status.
 // Usado pelo fluxo de assinatura via Card Payment Brick (sem redirect pro MP).
-async function dbAtualizarAssinatura(userId, plano, planoId, preapprovalId, status) {
+async function dbAtualizarAssinatura(userId, plano, planoId, preapprovalId, status, proximoPagamento) {
   var mes = mesAtual();
   if (pool) {
     try {
       await pool.query(
-        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, mp_preapproval_id=$5, assinatura_status=$6, atualizado_em=NOW() WHERE user_id=$1",
-        [userId, plano, planoId||"", mes, preapprovalId||null, status||null]
+        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, mp_preapproval_id=$5, assinatura_status=$6, proximo_pagamento=$7, atualizado_em=NOW() WHERE user_id=$1",
+        [userId, plano, planoId||"", mes, preapprovalId||null, status||null, proximoPagamento||null]
       );
       return true;
     } catch(e) { console.error("dbAtualizarAssinatura:", e.message); }
@@ -376,6 +394,7 @@ async function dbAtualizarAssinatura(userId, plano, planoId, preapprovalId, stat
     usuariosMemoria[userId].mesReset = mes;
     usuariosMemoria[userId].mpPreapprovalId = preapprovalId;
     usuariosMemoria[userId].assinaturaStatus = status;
+    usuariosMemoria[userId].proximoPagamento = proximoPagamento;
   }
   return true;
 }
@@ -852,10 +871,11 @@ app.post("/webhook-pagamento", async function(req, res) {
       if (assinatura.external_reference) {
         var userId = assinatura.external_reference;
         if (assinatura.status === "cancelled" || assinatura.status === "paused") {
-          await dbAtualizarAssinatura(userId, "gratuito", "", assinatura.id, assinatura.status);
+          await dbAtualizarAssinatura(userId, "gratuito", "", assinatura.id, assinatura.status, null);
           console.log("⚠️ Assinatura", assinatura.status, "para", userId);
         } else if (pool) {
-          await pool.query("UPDATE usuarios SET assinatura_status=$2 WHERE user_id=$1", [userId, assinatura.status]);
+          await pool.query("UPDATE usuarios SET assinatura_status=$2, proximo_pagamento=$3 WHERE user_id=$1",
+            [userId, assinatura.status, assinatura.next_payment_date ? assinatura.next_payment_date.substr(0,10) : null]);
         }
       }
     } catch(e) { console.error("Webhook preapproval erro:", e.message); }
@@ -959,7 +979,7 @@ app.post("/criar-assinatura", async function(req, res) {
 
     if (d.status === "authorized") {
       var tipo = planoId.indexOf("premium")>-1?"premium":planoId.indexOf("pro")>-1?"pro":"basico";
-      await dbAtualizarAssinatura(userId, tipo, planoId, d.id, d.status);
+      await dbAtualizarAssinatura(userId, tipo, planoId, d.id, d.status, d.next_payment_date ? d.next_payment_date.substr(0,10) : null);
       if (pool) {
         try {
           await pool.query("INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
@@ -996,8 +1016,70 @@ app.post("/cancelar-assinatura/:userId", async function(req, res) {
     });
     var d = await r.json();
     if (!r.ok) return res.status(r.status).json({ erro:d.message||"Não foi possível cancelar." });
-    await dbAtualizarAssinatura(req.params.userId, "gratuito", "", u.mp_preapproval_id, "cancelled");
+    await dbAtualizarAssinatura(req.params.userId, "gratuito", "", u.mp_preapproval_id, "cancelled", null);
     res.json({ sucesso:true, status:d.status });
+  } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
+// ── PUSH: lembrete de renovação de assinatura ───────────────────
+// O frontend chama isso depois que o usuário aceita receber notificações
+// (Notification.requestPermission + serviceWorker.pushManager.subscribe)
+app.post("/salvar-push-subscription", async function(req, res) {
+  var userId = req.body.userId, sub = req.body.subscription;
+  if (!userId || !sub || !sub.endpoint || !sub.keys) return res.status(400).json({ erro:"Dados de inscrição incompletos." });
+  try {
+    if (pool) {
+      await pool.query(
+        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4) " +
+        "ON CONFLICT (user_id) DO UPDATE SET endpoint=$2, p256dh=$3, auth=$4",
+        [userId, sub.endpoint, sub.keys.p256dh, sub.keys.auth]
+      );
+    }
+    res.json({ sucesso:true });
+  } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
+// Chame essa rota 1x por dia via cron externo (ex: cron-job.org, ou o Railway Cron)
+// GET https://doutor-cafe-production.up.railway.app/cron-lembrete-renovacao
+app.get("/cron-lembrete-renovacao", async function(req, res) {
+  if (!pool) return res.json({ enviados:0, motivo:"sem banco" });
+  try {
+    var hoje = new Date();
+    var em2dias = new Date(hoje.getTime() + 2*24*60*60*1000).toISOString().substr(0,10);
+    var hojeStr = hoje.toISOString().substr(0,10);
+
+    var alvo = await pool.query(
+      "SELECT u.user_id, u.plano, ps.endpoint, ps.p256dh, ps.auth " +
+      "FROM usuarios u JOIN push_subscriptions ps ON ps.user_id = u.user_id " +
+      "WHERE u.assinatura_status = 'authorized' AND u.proximo_pagamento = $1 " +
+      "AND (u.lembrete_enviado_em IS NULL OR u.lembrete_enviado_em <> $2)",
+      [em2dias, hojeStr]
+    );
+
+    var valorPorPlano = { basico:29.90, pro:39.90, premium:49.90 };
+    var enviados = 0;
+
+    for (var i=0; i<alvo.rows.length; i++) {
+      var row = alvo.rows[i];
+      var valor = valorPorPlano[row.plano] || 0;
+      var payload = JSON.stringify({
+        title: "Sua assinatura renova em 2 dias",
+        body: "Cobrança de R$" + valor.toFixed(2).replace(".",",") + " será feita automaticamente em " + em2dias.split("-").reverse().join("/") + ". Cancele no app se não quiser renovar.",
+        url: "/assinatura"
+      });
+      try {
+        await webpush.sendNotification({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } }, payload);
+        await pool.query("UPDATE usuarios SET lembrete_enviado_em=$2 WHERE user_id=$1", [row.user_id, hojeStr]);
+        enviados++;
+      } catch(e) {
+        console.error("Push falhou pra", row.user_id, e.message);
+        if (e.statusCode === 410 || e.statusCode === 404) {
+          await pool.query("DELETE FROM push_subscriptions WHERE user_id=$1", [row.user_id]);
+        }
+      }
+    }
+
+    res.json({ enviados: enviados, verificados: alvo.rows.length });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 

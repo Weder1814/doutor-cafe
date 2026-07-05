@@ -19,6 +19,7 @@ var MP_TOKEN   = process.env.MP_ACCESS_TOKEN;
 var BASE_URL   = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
 var DB_URL     = process.env.DATABASE_URL;
 var KEY        = process.env.ANTHROPIC_API_KEY;
+var ADMIN_SENHA = process.env.ADMIN_SENHA || "doutorcafe2026";
 
 // ── POSTGRESQL ─────────────────────────────────────────────────
 var Pool = null;
@@ -281,23 +282,17 @@ async function dbIncrementarAnalise(userId) {
   var mes = mesAtual();
   if (pool) {
     try {
-      var r = await pool.query("SELECT plano, mes_reset FROM usuarios WHERE user_id=$1", [userId]);
-      if (r.rows.length > 0) {
-        var u = r.rows[0];
-        var plano = u.plano || "gratuito";
-        var mesReset = u.mes_reset || "";
-        if (plano !== "gratuito" && mesReset !== mes) {
-          await pool.query(
-            "UPDATE usuarios SET analises_usadas=1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
-            [userId, mes]
-          );
-        } else {
-          await pool.query(
-            "UPDATE usuarios SET analises_usadas=analises_usadas+1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
-            [userId, plano === "gratuito" ? mesReset : mes]
-          );
-        }
-      }
+      // Query unica e atomica: evita condicao de corrida entre ler o estado
+      // atual e decidir se reseta o contador (duas analises quase simultaneas
+      // nao devem conseguir "roubar" uma analise extra fora do limite).
+      await pool.query(
+        `UPDATE usuarios SET
+           analises_usadas = CASE WHEN plano <> 'gratuito' AND mes_reset <> $2 THEN 1 ELSE analises_usadas + 1 END,
+           mes_reset = CASE WHEN plano = 'gratuito' THEN mes_reset ELSE $2 END,
+           atualizado_em = NOW()
+         WHERE user_id = $1`,
+        [userId, mes]
+      );
       return true;
     } catch(e) { console.error("dbIncrementarAnalise:", e.message); }
   }
@@ -322,23 +317,13 @@ async function dbIncrementarVideo(userId) {
   var mes = mesAtual();
   if (pool) {
     try {
-      var r = await pool.query("SELECT plano, mes_reset, videos_usados FROM usuarios WHERE user_id=$1", [userId]);
-      if (r.rows.length > 0) {
-        var u = r.rows[0];
-        var plano = u.plano || "gratuito";
-        var mesReset = u.mes_reset || "";
-        if (plano !== "gratuito" && mesReset !== mes) {
-          await pool.query(
-            "UPDATE usuarios SET videos_usados=1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
-            [userId, mes]
-          );
-        } else {
-          await pool.query(
-            "UPDATE usuarios SET videos_usados=videos_usados+1, atualizado_em=NOW() WHERE user_id=$1",
-            [userId]
-          );
-        }
-      }
+      await pool.query(
+        `UPDATE usuarios SET
+           videos_usados = CASE WHEN plano <> 'gratuito' AND mes_reset <> $2 THEN 1 ELSE videos_usados + 1 END,
+           atualizado_em = NOW()
+         WHERE user_id = $1`,
+        [userId, mes]
+      );
       return true;
     } catch(e) { console.error("dbIncrementarVideo:", e.message); }
   }
@@ -805,7 +790,7 @@ app.get("/historico/:userId", async function(req, res) {
 
 // ── ADMIN: LISTAR USUÁRIOS ────────────────────────────────────
 app.get("/usuarios", async function(req, res) {
-  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
+  if (req.query.senha !== ADMIN_SENHA) return res.status(401).json({ erro:"Nao autorizado" });
   try {
     if (pool) {
       var r = await pool.query("SELECT user_id,nome,celular,email,regiao,plano,analises_usadas,mes_reset,criado_em FROM usuarios ORDER BY criado_em DESC");
@@ -819,7 +804,7 @@ app.get("/usuarios", async function(req, res) {
 // Mostra custo estimado por tipo de analise, total geral, e ranking de
 // usuarios que mais geram custo. Use ?dias=30 para mudar a janela (padrao 30).
 app.get("/custo-api", async function(req, res) {
-  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
+  if (req.query.senha !== ADMIN_SENHA) return res.status(401).json({ erro:"Nao autorizado" });
   if (!pool) return res.json({ erro:"Sem banco de dados conectado." });
   try {
     var dias = parseInt(req.query.dias) || 30;
@@ -1007,8 +992,19 @@ app.get("/assinatura-status/:userId", async function(req, res) {
 // Cancela a assinatura recorrente (o cliente pode cancelar quando quiser)
 app.post("/cancelar-assinatura/:userId", async function(req, res) {
   try {
+    var pinInformado = (req.body.pin||"").replace(/[^0-9]/g,"");
     var u = await dbGetUser(req.params.userId);
-    if (!u || !u.mp_preapproval_id) return res.status(400).json({ erro:"Usuário não tem assinatura ativa." });
+    if (!u) return res.status(404).json({ erro:"Usuário não encontrado." });
+    // Exige o PIN de novo pra confirmar — cancelamento mexe com dinheiro
+    // (parar cobranca futura), entao so o userId (facil de vazar via rede)
+    // nao e suficiente pra autorizar essa acao.
+    if (!pinInformado || pinInformado.length !== 4) {
+      return res.status(400).json({ erro:"Digite seu PIN de 4 dígitos pra confirmar o cancelamento." });
+    }
+    if (!u.pin || u.pin !== pinInformado) {
+      return res.status(401).json({ erro:"PIN incorreto." });
+    }
+    if (!u.mp_preapproval_id) return res.status(400).json({ erro:"Usuário não tem assinatura ativa." });
     var r = await fetch("https://api.mercadopago.com/preapproval/"+u.mp_preapproval_id, {
       method:"PUT",
       headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN },
@@ -1155,10 +1151,24 @@ app.post("/diagnostico", async function(req, res) {
     })
   })
   .then(function(r) {
+    // Se a Anthropic recusou a chamada (401/429/500 etc), o corpo NAO e um
+    // stream SSE valido — e um JSON de erro simples. Detectar isso ANTES de
+    // tentar interpretar como stream, senao cai no fallback falso "saudavel".
+    if (!r.ok) {
+      return r.text().then(function(txtErro) {
+        var msgErro = "Servico de IA indisponivel (HTTP "+r.status+").";
+        try { var j=JSON.parse(txtErro); if(j.error&&j.error.message) msgErro=j.error.message; } catch(e){}
+        console.error("ERRO HTTP Anthropic /diagnostico:", r.status, txtErro.substring(0,300));
+        res.write("data: "+JSON.stringify({ tipo:"erro", msg: msgErro })+"\n\n");
+        encerrar();
+      });
+    }
+
     var Readable = require("stream").Readable;
     var stream = Readable.fromWeb(r.body);
     var buf="", texto="", parciaisEnviados=0, completosEnviados=0, diagsCompletos=[];
     var usageCapturado={input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0};
+    var erroReal=null; // preenchido se a Anthropic mandar um evento type:"error" no meio do stream
 
     function detectarParciais() {
       var re=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
@@ -1201,6 +1211,10 @@ app.post("/diagnostico", async function(req, res) {
         if(d==="[DONE]") return;
         try {
           var ev=JSON.parse(d);
+          if(ev.type==="error"){
+            erroReal = (ev.error&&ev.error.message) || "Erro da IA durante a analise.";
+            console.error("ERRO Anthropic mid-stream /diagnostico:", JSON.stringify(ev));
+          }
           if(ev.type==="message_start"&&ev.message&&ev.message.usage){
             var u0=ev.message.usage;
             usageCapturado.input_tokens=u0.input_tokens||0;
@@ -1220,6 +1234,15 @@ app.post("/diagnostico", async function(req, res) {
     });
 
     stream.on("end", function() {
+      // Erro real da IA no meio do stream E nenhum diagnostico completo foi
+      // capturado antes disso: avisar o erro de verdade, NUNCA mascarar como
+      // "saudavel" falso — isso poderia enganar o produtor sobre a lavoura.
+      if (erroReal && diagsCompletos.length===0) {
+        res.write("data: "+JSON.stringify({ tipo:"erro", msg: erroReal })+"\n\n");
+        logUsoAnalise(userId, "foto", "claude-sonnet-4-6", usageCapturado, regiao);
+        encerrar();
+        return;
+      }
       var resultado=extrairJSON(texto);
       if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length){
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
@@ -1268,10 +1291,14 @@ app.post("/diagnostico-json", async function(req, res) {
       ]}]})
     });
     var d=await r.json();
-    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-json:", JSON.stringify(d.error));
+    if(d.error) {
+      console.error("ERRO ANTHROPIC /diagnostico-json:", JSON.stringify(d.error));
+      logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
+      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
+    }
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-json — texto recebido:", txt);
+    if(!resultado) console.error("ERRO PARSE /diagnostico-json — texto recebido:", txt);
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
@@ -1408,10 +1435,14 @@ app.post("/diagnostico-video", async function(req, res) {
         messages:[{role:"user",content}]})
     });
     var d=await r.json();
-    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-video:", JSON.stringify(d.error));
+    if(d.error) {
+      console.error("ERRO ANTHROPIC /diagnostico-video:", JSON.stringify(d.error));
+      logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
+      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
+    }
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
+    if(!resultado) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
     logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1435,10 +1466,14 @@ app.post("/analise-solo", async function(req, res) {
         messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
     });
     var d=await r.json();
-    if(d.error) console.error("ERRO ANTHROPIC /analise-solo:", JSON.stringify(d.error));
+    if(d.error) {
+      console.error("ERRO ANTHROPIC /analise-solo:", JSON.stringify(d.error));
+      logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
+      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
+    }
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    if(!resultado&&!d.error) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
+    if(!resultado) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
     logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{acao:"Nao foi possivel ler o laudo. Verifique a foto e tente novamente.",valores:{}});
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1484,7 +1519,11 @@ app.post("/identifica-daninha", async function(req, res) {
     });
     var d=await r.json();
     console.log("STATUS DANINHA:", r.status, "| RESPOSTA:", JSON.stringify(d).substring(0,500));
-    if(d.error) console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
+    if(d.error) {
+      console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
+      logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);
+      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
+    }
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
     logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);

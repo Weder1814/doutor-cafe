@@ -1290,6 +1290,23 @@ var CATEGORIA_DIAGNOSTICO = {
   nitrogenio:"deficiencia nutricional", magnesio:"deficiencia nutricional", potassio:"deficiencia nutricional",
   ferro:"deficiencia nutricional", calcio:"deficiencia nutricional", boro:"deficiencia nutricional", zinco:"deficiencia nutricional"
 };
+// Nomes amigaveis pro produtor — usados no texto gerado (plano de acao), evita
+// o Haiku repetir a chave crua (ex: "bicho") em vez do nome real (ex: "Bicho mineiro").
+// Mantem sincronizado com o objeto NOMES_VOZ do frontend.
+var NOMES_AMIGAVEIS = {
+  ferrugem:"Ferrugem do cafe", bicho:"Bicho mineiro", cercosporiose:"Cercosporiose",
+  aureolada:"Mancha aureolada", phoma:"Phoma", antracnose:"Antracnose", ascochyta:"Mancha Ascochyta",
+  manteigosa:"Mancha manteigosa", mancha_manteigosa:"Mancha manteigosa", roseliniose:"Roseliniose",
+  helmintosporiose:"Helmintosporiose", broca:"Broca do cafe", acaro:"Acaro vermelho",
+  acaro_ferrugem:"Acaro ferrugem falsa", cigarra:"Cigarra do cafeeiro", cochonilha:"Cochonilha",
+  lagarta:"Lagarta desfolhadora", nematoide:"Nematoide das galhas", nitrogenio:"Deficiencia de nitrogenio",
+  magnesio:"Deficiencia de magnesio", potassio:"Deficiencia de potassio", fosforo:"Deficiencia de fosforo",
+  calcio:"Deficiencia de calcio", enxofre:"Deficiencia de enxofre", boro:"Deficiencia de boro",
+  zinco:"Deficiencia de zinco", ferro:"Deficiencia de ferro", manganes:"Deficiencia de manganes",
+  cobre:"Deficiencia de cobre", estresse_hidrico:"Estresse hidrico", fitotoxicidade:"Fitotoxicidade",
+  escaldadura:"Escaldadura solar", corynespora:"Mancha de Corynespora", koleroga:"Koleroga (queima do fio)",
+  rizoctoniose:"Rizoctoniose tardia", cochonilha_raiz:"Cochonilha das raizes", saudavel:"Planta saudavel"
+};
 app.post("/plano-acao", async function(req, res) {
   var diagnosticos=req.body.diagnosticos||[], regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
@@ -1306,7 +1323,8 @@ app.post("/plano-acao", async function(req, res) {
         }).join("; ")
       :"sem fungicida indicado";
     var cat=CATEGORIA_DIAGNOSTICO[d.diagnostico]||"categoria nao especificada — nao presuma, use so o nome";
-    return (i+1)+". "+d.diagnostico+" ["+cat+"] estagio "+d.estagio+" — produtos individuais: "+f;
+    var nomeAmigavel=NOMES_AMIGAVEIS[d.diagnostico]||d.diagnostico;
+    return (i+1)+". "+nomeAmigavel+" ["+cat+"] estagio "+d.estagio+" — produtos individuais: "+f;
   }).join("\n");
 
   var sistemaStatic =
@@ -1527,7 +1545,8 @@ function buildPromptStatic(isVideo) {
 "REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n"+
 "PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix): manchas AMARELO-ALARANJADAS face INFERIOR, po alaranjado. Se encontrar QUALQUER sinal alaranjado: DIAGNOSTIQUE como ferrugem.\n\n"+
 "DOENCAS FUNGICAS:\nferrugem=pustulas ALARANJADAS face INFERIOR.\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nascochyta=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo extenso, favorecida por clima ameno 15-25C.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares.\nphoma=manchas NECROTICAS negras SEM halo FOLHAS NOVAS.\naureolada=bacteriana manchas pardas HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS.\ncorynespora=manchas IRREGULARES marrom-avermelhadas halo amarelo MAIORES que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas por FIOS DE MICELIO.\n\n"+
-"PRAGAS:\nbicho=TRILHAS SERPENTINAS castanhas dentro da folha.\nacaro=folha BRONZEADA acinzentada opaca.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+
+"PRAGAS:\nbicho=MINA (galeria) ENTRE as camadas da folha, formato IRREGULAR SERPENTEANTE ou em MANCHA, esbranquicada/translucida quando recente, ficando PARDACENTA SECA e QUEBRADICA (aspecto de papel) com o tempo. SEM halo concentrico, SEM halo amarelo definido, contorno tende a seguir nervuras. Frequente MULTIPLAS minas pequenas na mesma folha, podendo se juntar. As vezes com um pequeno orificio de saida do adulto.\nacaro=folha BRONZEADA acinzentada opaca.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+
+"ATENCAO DIFERENCIACAO bicho x doenca fungica: lesao de bicho mineiro fica DENTRO da folha (entre as duas epidermes, aspecto de bolha/papel seco) e NUNCA tem halo concentrico nem halo amarelo bem definido. Se a lesao tiver halo concentrico (ascochyta) ou halo amarelo extenso (aureolada/corynespora) ou bordas afundadas pretas (antracnose), NAO classifique como bicho mineiro mesmo que o formato seja irregular. Na duvida entre bicho mineiro e doenca fungica, verifique: (1) a mancha parece uma bolha/descolamento da superficie ou uma mancha na propria superficie? bolha=bicho, superficie=doenca. (2) tem varias minas pequenas espalhadas ou poucas manchas grandes? varias pequenas=bicho, poucas grandes=doenca.\n\n"+
 "DEFICIENCIAS:\nnitrogenio=folha TODA AMARELA UNIFORME folhas velhas.\nmagnesio=nervuras VERDES tecido AMARELO internerval.\npotassio=QUEIMA bordas e pontas folhas velhas.\nferro=folhas NOVAS ESBRANQUICADAS nervuras verdes.\ncalcio=folhas NOVAS deformadas ENCURVADAS.\nboro=folhas NOVAS QUEBRADICAS.\nzinco=folhas NOVAS ESTREITAS roseta.\n\n"+
 "FRUTOS:\nfruto_verde=verde firme sem lesoes.\nfruto_maduro=VERMELHO ou AMARELO cereja brilhante.\nfruto_passado=ESCURECIDO enrugado seco.\nbroca=FURO CIRCULAR escuro 1-2mm.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras.\n\n"+
 "PRODUTOS:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nascochyta: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nphoma: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14. Mancozebe 800WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\naureolada: ATENCAO doenca BACTERIANA nao fungica — fungicida sistemico triazol NAO tem efeito, usar SOMENTE cupricos com acao bactericida. Oxicloreto Cobre 840WP protetor 4-4,5kg/ha proporcao_por_litro:4 unidade_proporcao:g intervalo:15 obs:acao_bactericida. Hidroxido Cobre 770WG protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:15 obs:acao_bactericida.\nmancha_manteigosa: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\ncorynespora: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nkoleroga: Oxicloreto Cobre 840WP protetor 2,5-3kg/ha proporcao_por_litro:3 unidade_proporcao:g intervalo:14 obs:associar_desbaste_ramos_internos_e_poda_para_ventilacao.\nbicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\ncochonilha: Imidacloprido 700WG inseticida 0,3-0,5kg/ha proporcao_por_litro:0.4 unidade_proporcao:g intervalo:30.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+

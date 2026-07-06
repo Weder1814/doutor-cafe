@@ -1,13 +1,4 @@
 var express = require("express");
-var webpush = require("web-push");
-
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(
-    "mailto:doutorcafe.app@gmail.com",
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  );
-}
 var cors = require("cors");
 var app = express();
 
@@ -19,7 +10,6 @@ var MP_TOKEN   = process.env.MP_ACCESS_TOKEN;
 var BASE_URL   = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
 var DB_URL     = process.env.DATABASE_URL;
 var KEY        = process.env.ANTHROPIC_API_KEY;
-var ADMIN_SENHA = process.env.ADMIN_SENHA || "doutorcafe2026";
 
 // ── POSTGRESQL ─────────────────────────────────────────────────
 var Pool = null;
@@ -186,22 +176,6 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mes_reset TEXT DEFAULT ''`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS videos_usados INTEGER DEFAULT 0`);
-    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mp_preapproval_id TEXT`);
-    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS assinatura_status TEXT`);
-    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS proximo_pagamento DATE`);
-    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS lembrete_enviado_em DATE`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
-      user_id TEXT PRIMARY KEY,
-      endpoint TEXT NOT NULL,
-      p256dh TEXT NOT NULL,
-      auth TEXT NOT NULL,
-      criado_em TIMESTAMP DEFAULT NOW()
-    )`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS cache_preco_cafe (
-      id INTEGER PRIMARY KEY DEFAULT 1,
-      dados JSONB NOT NULL,
-      atualizado_em TIMESTAMP DEFAULT NOW()
-    )`);
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);
@@ -287,17 +261,23 @@ async function dbIncrementarAnalise(userId) {
   var mes = mesAtual();
   if (pool) {
     try {
-      // Query unica e atomica: evita condicao de corrida entre ler o estado
-      // atual e decidir se reseta o contador (duas analises quase simultaneas
-      // nao devem conseguir "roubar" uma analise extra fora do limite).
-      await pool.query(
-        `UPDATE usuarios SET
-           analises_usadas = CASE WHEN plano <> 'gratuito' AND mes_reset <> $2 THEN 1 ELSE analises_usadas + 1 END,
-           mes_reset = CASE WHEN plano = 'gratuito' THEN mes_reset ELSE $2 END,
-           atualizado_em = NOW()
-         WHERE user_id = $1`,
-        [userId, mes]
-      );
+      var r = await pool.query("SELECT plano, mes_reset FROM usuarios WHERE user_id=$1", [userId]);
+      if (r.rows.length > 0) {
+        var u = r.rows[0];
+        var plano = u.plano || "gratuito";
+        var mesReset = u.mes_reset || "";
+        if (plano !== "gratuito" && mesReset !== mes) {
+          await pool.query(
+            "UPDATE usuarios SET analises_usadas=1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
+            [userId, mes]
+          );
+        } else {
+          await pool.query(
+            "UPDATE usuarios SET analises_usadas=analises_usadas+1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
+            [userId, plano === "gratuito" ? mesReset : mes]
+          );
+        }
+      }
       return true;
     } catch(e) { console.error("dbIncrementarAnalise:", e.message); }
   }
@@ -322,13 +302,23 @@ async function dbIncrementarVideo(userId) {
   var mes = mesAtual();
   if (pool) {
     try {
-      await pool.query(
-        `UPDATE usuarios SET
-           videos_usados = CASE WHEN plano <> 'gratuito' AND mes_reset <> $2 THEN 1 ELSE videos_usados + 1 END,
-           atualizado_em = NOW()
-         WHERE user_id = $1`,
-        [userId, mes]
-      );
+      var r = await pool.query("SELECT plano, mes_reset, videos_usados FROM usuarios WHERE user_id=$1", [userId]);
+      if (r.rows.length > 0) {
+        var u = r.rows[0];
+        var plano = u.plano || "gratuito";
+        var mesReset = u.mes_reset || "";
+        if (plano !== "gratuito" && mesReset !== mes) {
+          await pool.query(
+            "UPDATE usuarios SET videos_usados=1, mes_reset=$2, atualizado_em=NOW() WHERE user_id=$1",
+            [userId, mes]
+          );
+        } else {
+          await pool.query(
+            "UPDATE usuarios SET videos_usados=videos_usados+1, atualizado_em=NOW() WHERE user_id=$1",
+            [userId]
+          );
+        }
+      }
       return true;
     } catch(e) { console.error("dbIncrementarVideo:", e.message); }
   }
@@ -360,31 +350,6 @@ async function dbAtualizarPlano(userId, plano, planoId) {
     usuariosMemoria[userId].planoId = planoId;
     usuariosMemoria[userId].analisesUsadas = 0;
     usuariosMemoria[userId].mesReset = mes;
-  }
-  return true;
-}
-
-// Atualiza plano + guarda o id da assinatura recorrente (preapproval) e seu status.
-// Usado pelo fluxo de assinatura via Card Payment Brick (sem redirect pro MP).
-async function dbAtualizarAssinatura(userId, plano, planoId, preapprovalId, status, proximoPagamento) {
-  var mes = mesAtual();
-  if (pool) {
-    try {
-      await pool.query(
-        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, mp_preapproval_id=$5, assinatura_status=$6, proximo_pagamento=$7, atualizado_em=NOW() WHERE user_id=$1",
-        [userId, plano, planoId||"", mes, preapprovalId||null, status||null, proximoPagamento||null]
-      );
-      return true;
-    } catch(e) { console.error("dbAtualizarAssinatura:", e.message); }
-  }
-  if (usuariosMemoria[userId]) {
-    usuariosMemoria[userId].plano = plano;
-    usuariosMemoria[userId].planoId = planoId;
-    usuariosMemoria[userId].analisesUsadas = 0;
-    usuariosMemoria[userId].mesReset = mes;
-    usuariosMemoria[userId].mpPreapprovalId = preapprovalId;
-    usuariosMemoria[userId].assinaturaStatus = status;
-    usuariosMemoria[userId].proximoPagamento = proximoPagamento;
   }
   return true;
 }
@@ -472,15 +437,13 @@ setInterval(function() {
 
 // ── PLANOS ────────────────────────────────────────────────────
 var PLANOS = {
-  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130, preapproval_plan_id: process.env.MP_PLAN_ID_BASICO },
-  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:130, preapproval_plan_id: process.env.MP_PLAN_ID_BASICO_ANUAL },
-  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:250, preapproval_plan_id: process.env.MP_PLAN_ID_PRO },
-  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:250, preapproval_plan_id: process.env.MP_PLAN_ID_PRO_ANUAL },
-  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:400, preapproval_plan_id: process.env.MP_PLAN_ID_PREMIUM },
-  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:400, preapproval_plan_id: process.env.MP_PLAN_ID_PREMIUM_ANUAL }
+  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130 },
+  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:130 },
+  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:250 },
+  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:250 },
+  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:400 },
+  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:400 }
 };
-// Todos os planos (mensais e anuais) usam preapproval (assinatura recorrente)
-// via Card Payment Brick, sem sair do app. O anual cobra 1x a cada 12 meses.
 
 // ── ENDPOINTS BÁSICOS ─────────────────────────────────────────
 app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe API", db: pool?"postgres":"memoria" }); });
@@ -490,49 +453,16 @@ app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now() }); });
 // Requer variavel de ambiente ALPHAVANTAGE_API_KEY no Railway (gratis em
 // alphavantage.co). Cache de 4h para respeitar limite de 25 chamadas/dia
 // do plano gratuito (2 chamadas por atualizacao: cafe + cambio).
-// O cache fica NO BANCO (nao so em memoria) porque cada redeploy do Railway
-// reinicia o processo — sem isso, redeploys frequentes (comuns durante o
-// desenvolvimento) fariam o servidor "esquecer" o cache e gastar chamadas
-// novas toda hora, estourando a cota gratuita rapido.
 var ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_API_KEY;
-var _cachePrecoCafeMemoria = { data: null, timestamp: 0 }; // fallback quando nao ha banco (dev local)
+var _cachePrecoCafe = { data: null, timestamp: 0 };
 var CACHE_PRECO_MS = 4 * 60 * 60 * 1000; // 4 horas
-
-async function lerCachePrecoCafe() {
-  if (pool) {
-    try {
-      var r = await pool.query("SELECT dados, atualizado_em FROM cache_preco_cafe WHERE id=1");
-      if (r.rows.length > 0) {
-        return { data: r.rows[0].dados, timestamp: new Date(r.rows[0].atualizado_em).getTime() };
-      }
-      return { data: null, timestamp: 0 };
-    } catch(e) { console.error("lerCachePrecoCafe:", e.message); }
-  }
-  return _cachePrecoCafeMemoria;
-}
-
-async function salvarCachePrecoCafe(dados) {
-  if (pool) {
-    try {
-      await pool.query(
-        "INSERT INTO cache_preco_cafe (id, dados, atualizado_em) VALUES (1,$1,NOW()) ON CONFLICT (id) DO UPDATE SET dados=$1, atualizado_em=NOW()",
-        [dados]
-      );
-      return;
-    } catch(e) { console.error("salvarCachePrecoCafe:", e.message); }
-  }
-  _cachePrecoCafeMemoria = { data: dados, timestamp: Date.now() };
-}
-
 app.get("/preco-cafe", async function(req, res) {
   var agora = Date.now();
-  var cache = await lerCachePrecoCafe();
-  if (cache.data && (agora - cache.timestamp) < CACHE_PRECO_MS) {
-    return res.json(cache.data);
+  if (_cachePrecoCafe.data && (agora - _cachePrecoCafe.timestamp) < CACHE_PRECO_MS) {
+    return res.json(_cachePrecoCafe.data);
   }
   if (!ALPHAVANTAGE_KEY) {
     console.error("ERRO /preco-cafe: ALPHAVANTAGE_API_KEY nao configurada no Railway");
-    if (cache.data) return res.json(Object.assign({}, cache.data, { stale: true }));
     return res.status(503).json({ erro: "indisponivel" });
   }
   try {
@@ -573,12 +503,12 @@ app.get("/preco-cafe", async function(req, res) {
       atualizado_em: new Date().toISOString(),
       stale: false
     };
-    await salvarCachePrecoCafe(resultado);
+    _cachePrecoCafe = { data: resultado, timestamp: agora };
     res.json(resultado);
   } catch (e) {
     console.error("ERRO /preco-cafe:", e.message);
-    if (cache.data) {
-      res.json(Object.assign({}, cache.data, { stale: true }));
+    if (_cachePrecoCafe.data) {
+      res.json(Object.assign({}, _cachePrecoCafe.data, { stale: true }));
     } else {
       res.status(503).json({ erro: "indisponivel" });
     }
@@ -827,7 +757,7 @@ app.get("/historico/:userId", async function(req, res) {
 
 // ── ADMIN: LISTAR USUÁRIOS ────────────────────────────────────
 app.get("/usuarios", async function(req, res) {
-  if (req.query.senha !== ADMIN_SENHA) return res.status(401).json({ erro:"Nao autorizado" });
+  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
   try {
     if (pool) {
       var r = await pool.query("SELECT user_id,nome,celular,email,regiao,plano,analises_usadas,mes_reset,criado_em FROM usuarios ORDER BY criado_em DESC");
@@ -841,7 +771,7 @@ app.get("/usuarios", async function(req, res) {
 // Mostra custo estimado por tipo de analise, total geral, e ranking de
 // usuarios que mais geram custo. Use ?dias=30 para mudar a janela (padrao 30).
 app.get("/custo-api", async function(req, res) {
-  if (req.query.senha !== ADMIN_SENHA) return res.status(401).json({ erro:"Nao autorizado" });
+  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
   if (!pool) return res.json({ erro:"Sem banco de dados conectado." });
   try {
     var dias = parseInt(req.query.dias) || 30;
@@ -883,27 +813,6 @@ app.get("/custo-api", async function(req, res) {
 app.post("/webhook-pagamento", async function(req, res) {
   console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
   var data = req.body;
-
-  // Eventos de assinatura recorrente (preapproval): cobrança recusada, cancelamento
-  // feito pelo próprio cliente direto no app do Mercado Pago, etc.
-  if (data.type === "subscription_preapproval" && data.data && data.data.id) {
-    try {
-      var rs = await fetch("https://api.mercadopago.com/preapproval/"+data.data.id, { headers:{ "Authorization":"Bearer "+MP_TOKEN } });
-      var assinatura = await rs.json();
-      if (assinatura.external_reference) {
-        var userId = assinatura.external_reference;
-        if (assinatura.status === "cancelled" || assinatura.status === "paused") {
-          await dbAtualizarAssinatura(userId, "gratuito", "", assinatura.id, assinatura.status, null);
-          console.log("⚠️ Assinatura", assinatura.status, "para", userId);
-        } else if (pool) {
-          await pool.query("UPDATE usuarios SET assinatura_status=$2, proximo_pagamento=$3 WHERE user_id=$1",
-            [userId, assinatura.status, assinatura.next_payment_date ? assinatura.next_payment_date.substr(0,10) : null]);
-        }
-      }
-    } catch(e) { console.error("Webhook preapproval erro:", e.message); }
-    return res.json({ ok:true });
-  }
-
   if (data.type === "payment" && data.data && data.data.id) {
     try {
       var r = await fetch("https://api.mercadopago.com/v1/payments/"+data.data.id, {
@@ -965,154 +874,19 @@ app.post("/gerar-pix", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── CRIAR ASSINATURA (Card Payment Brick — sem sair do app) ────
-// O frontend renderiza o Card Payment Brick, tokeniza o cartão, e manda
-// o card_token_id pra cá. A gente cria a assinatura recorrente direto na
-// API do Mercado Pago (/preapproval), sem nenhum redirect pro domínio deles.
 app.post("/criar-assinatura", async function(req, res) {
-  var planoId = req.body.plano, email = req.body.email, userId = req.body.userId, cardTokenId = req.body.card_token_id;
-  var plano = PLANOS[planoId];
-
+  var planoId = req.body.plano, email = req.body.email||"produtor@doutorcafe.app", userId = req.body.userId, plano = PLANOS[planoId];
   if (!plano) return res.status(400).json({ erro:"Plano inválido" });
-  if (!plano.preapproval_plan_id) return res.status(400).json({ erro:"Este plano ainda não tem preapproval_plan_id configurado (rode criar-plano-assinatura.js e defina a variável de ambiente)." });
-  if (!email || !userId || !cardTokenId) return res.status(400).json({ erro:"Campos obrigatórios: email, userId, card_token_id" });
-
   var body = {
-    preapproval_plan_id: plano.preapproval_plan_id,
-    reason: plano.nome,
-    external_reference: userId,
-    payer_email: email,
-    card_token_id: cardTokenId,
-    status: "authorized"
+    items:[{ title:plano.nome, quantity:1, unit_price:plano.valor, currency_id:"BRL" }], payer:{ email },
+    back_urls:{ success:"https://doutor-cafe-app.vercel.app?pagamento=sucesso&plano="+planoId+"&user="+userId, failure:"https://doutor-cafe-app.vercel.app?pagamento=falha", pending:"https://doutor-cafe-app.vercel.app?pagamento=pendente" },
+    auto_approve:false, notification_url:BASE_URL+"/webhook-pagamento", metadata:{ plano_id:planoId, user_id:userId, analises:plano.analises }
   };
-
   try {
-    var r = await fetch("https://api.mercadopago.com/preapproval", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN, "X-Idempotency-Key":userId+"_"+planoId+"_"+Date.now() },
-      body:JSON.stringify(body)
-    });
+    var r = await fetch("https://api.mercadopago.com/checkout/preferences", { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN }, body:JSON.stringify(body) });
     var d = await r.json();
-
-    if (!r.ok) {
-      console.error("Erro Mercado Pago /preapproval:", JSON.stringify(d));
-      return res.status(r.status).json({ erro: d.message||"Não foi possível criar a assinatura.", detalhe:d });
-    }
-
-    if (d.status === "authorized") {
-      var tipo = planoId.indexOf("premium")>-1?"premium":planoId.indexOf("pro")>-1?"pro":"basico";
-      await dbAtualizarAssinatura(userId, tipo, planoId, d.id, d.status, d.next_payment_date ? d.next_payment_date.substr(0,10) : null);
-      if (pool) {
-        try {
-          await pool.query("INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
-            [String(d.id), userId, planoId, "approved", plano.valor]);
-        } catch(e) {}
-      }
-    }
-
-    res.json({ sucesso: d.status === "authorized", status:d.status, preapproval_id:d.id, next_payment_date:d.next_payment_date });
-  } catch(e) { res.status(500).json({ erro:e.message }); }
-});
-
-// Consulta o status atual de uma assinatura (tela "minha assinatura")
-app.get("/assinatura-status/:userId", async function(req, res) {
-  try {
-    var u = await dbGetUser(req.params.userId);
-    if (!u || !u.mp_preapproval_id) return res.json({ status:"sem_assinatura" });
-    var r = await fetch("https://api.mercadopago.com/preapproval/"+u.mp_preapproval_id, { headers:{ "Authorization":"Bearer "+MP_TOKEN } });
-    var d = await r.json();
-    if (!r.ok) return res.status(r.status).json({ erro:d.message||"Assinatura não encontrada." });
-    res.json({ status:d.status, next_payment_date:d.next_payment_date, reason:d.reason, plano:u.plano });
-  } catch(e) { res.status(500).json({ erro:e.message }); }
-});
-
-// Cancela a assinatura recorrente (o cliente pode cancelar quando quiser)
-app.post("/cancelar-assinatura/:userId", async function(req, res) {
-  try {
-    var pinInformado = (req.body.pin||"").replace(/[^0-9]/g,"");
-    var u = await dbGetUser(req.params.userId);
-    if (!u) return res.status(404).json({ erro:"Usuário não encontrado." });
-    // Exige o PIN de novo pra confirmar — cancelamento mexe com dinheiro
-    // (parar cobranca futura), entao so o userId (facil de vazar via rede)
-    // nao e suficiente pra autorizar essa acao.
-    if (!pinInformado || pinInformado.length !== 4) {
-      return res.status(400).json({ erro:"Digite seu PIN de 4 dígitos pra confirmar o cancelamento." });
-    }
-    if (!u.pin || u.pin !== pinInformado) {
-      return res.status(401).json({ erro:"PIN incorreto." });
-    }
-    if (!u.mp_preapproval_id) return res.status(400).json({ erro:"Usuário não tem assinatura ativa." });
-    var r = await fetch("https://api.mercadopago.com/preapproval/"+u.mp_preapproval_id, {
-      method:"PUT",
-      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN },
-      body:JSON.stringify({ status:"cancelled" })
-    });
-    var d = await r.json();
-    if (!r.ok) return res.status(r.status).json({ erro:d.message||"Não foi possível cancelar." });
-    await dbAtualizarAssinatura(req.params.userId, "gratuito", "", u.mp_preapproval_id, "cancelled", null);
-    res.json({ sucesso:true, status:d.status });
-  } catch(e) { res.status(500).json({ erro:e.message }); }
-});
-
-// ── PUSH: lembrete de renovação de assinatura ───────────────────
-// O frontend chama isso depois que o usuário aceita receber notificações
-// (Notification.requestPermission + serviceWorker.pushManager.subscribe)
-app.post("/salvar-push-subscription", async function(req, res) {
-  var userId = req.body.userId, sub = req.body.subscription;
-  if (!userId || !sub || !sub.endpoint || !sub.keys) return res.status(400).json({ erro:"Dados de inscrição incompletos." });
-  try {
-    if (pool) {
-      await pool.query(
-        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4) " +
-        "ON CONFLICT (user_id) DO UPDATE SET endpoint=$2, p256dh=$3, auth=$4",
-        [userId, sub.endpoint, sub.keys.p256dh, sub.keys.auth]
-      );
-    }
-    res.json({ sucesso:true });
-  } catch(e) { res.status(500).json({ erro:e.message }); }
-});
-
-// Chame essa rota 1x por dia via cron externo (ex: cron-job.org, ou o Railway Cron)
-// GET https://doutor-cafe-production.up.railway.app/cron-lembrete-renovacao
-app.get("/cron-lembrete-renovacao", async function(req, res) {
-  if (!pool) return res.json({ enviados:0, motivo:"sem banco" });
-  try {
-    var hoje = new Date();
-    var em2dias = new Date(hoje.getTime() + 2*24*60*60*1000).toISOString().substr(0,10);
-    var hojeStr = hoje.toISOString().substr(0,10);
-
-    var alvo = await pool.query(
-      "SELECT u.user_id, u.plano, ps.endpoint, ps.p256dh, ps.auth " +
-      "FROM usuarios u JOIN push_subscriptions ps ON ps.user_id = u.user_id " +
-      "WHERE u.assinatura_status = 'authorized' AND u.proximo_pagamento = $1 " +
-      "AND (u.lembrete_enviado_em IS NULL OR u.lembrete_enviado_em <> $2)",
-      [em2dias, hojeStr]
-    );
-
-    var valorPorPlano = { basico:29.90, pro:39.90, premium:49.90 };
-    var enviados = 0;
-
-    for (var i=0; i<alvo.rows.length; i++) {
-      var row = alvo.rows[i];
-      var valor = valorPorPlano[row.plano] || 0;
-      var payload = JSON.stringify({
-        title: "Sua assinatura renova em 2 dias",
-        body: "Cobrança de R$" + valor.toFixed(2).replace(".",",") + " será feita automaticamente em " + em2dias.split("-").reverse().join("/") + ". Cancele no app se não quiser renovar.",
-        url: "/assinatura"
-      });
-      try {
-        await webpush.sendNotification({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } }, payload);
-        await pool.query("UPDATE usuarios SET lembrete_enviado_em=$2 WHERE user_id=$1", [row.user_id, hojeStr]);
-        enviados++;
-      } catch(e) {
-        console.error("Push falhou pra", row.user_id, e.message);
-        if (e.statusCode === 410 || e.statusCode === 404) {
-          await pool.query("DELETE FROM push_subscriptions WHERE user_id=$1", [row.user_id]);
-        }
-      }
-    }
-
-    res.json({ enviados: enviados, verificados: alvo.rows.length });
+    if (d.id) res.json({ url:d.init_point, id:d.id });
+    else res.status(500).json({ erro:"Erro ao criar preferência", detalhe:d.message||d.error });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
@@ -1177,7 +951,7 @@ app.post("/diagnostico", async function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
-    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, stream:true,
+    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, temperature:0.2, stream:true,
       system:[
         { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
         { type:"text", text: contextoRegional }
@@ -1188,24 +962,10 @@ app.post("/diagnostico", async function(req, res) {
     })
   })
   .then(function(r) {
-    // Se a Anthropic recusou a chamada (401/429/500 etc), o corpo NAO e um
-    // stream SSE valido — e um JSON de erro simples. Detectar isso ANTES de
-    // tentar interpretar como stream, senao cai no fallback falso "saudavel".
-    if (!r.ok) {
-      return r.text().then(function(txtErro) {
-        var msgErro = "Servico de IA indisponivel (HTTP "+r.status+").";
-        try { var j=JSON.parse(txtErro); if(j.error&&j.error.message) msgErro=j.error.message; } catch(e){}
-        console.error("ERRO HTTP Anthropic /diagnostico:", r.status, txtErro.substring(0,300));
-        res.write("data: "+JSON.stringify({ tipo:"erro", msg: msgErro })+"\n\n");
-        encerrar();
-      });
-    }
-
     var Readable = require("stream").Readable;
     var stream = Readable.fromWeb(r.body);
     var buf="", texto="", parciaisEnviados=0, completosEnviados=0, diagsCompletos=[];
     var usageCapturado={input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0};
-    var erroReal=null; // preenchido se a Anthropic mandar um evento type:"error" no meio do stream
 
     function detectarParciais() {
       var re=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
@@ -1248,10 +1008,6 @@ app.post("/diagnostico", async function(req, res) {
         if(d==="[DONE]") return;
         try {
           var ev=JSON.parse(d);
-          if(ev.type==="error"){
-            erroReal = (ev.error&&ev.error.message) || "Erro da IA durante a analise.";
-            console.error("ERRO Anthropic mid-stream /diagnostico:", JSON.stringify(ev));
-          }
           if(ev.type==="message_start"&&ev.message&&ev.message.usage){
             var u0=ev.message.usage;
             usageCapturado.input_tokens=u0.input_tokens||0;
@@ -1271,15 +1027,6 @@ app.post("/diagnostico", async function(req, res) {
     });
 
     stream.on("end", function() {
-      // Erro real da IA no meio do stream E nenhum diagnostico completo foi
-      // capturado antes disso: avisar o erro de verdade, NUNCA mascarar como
-      // "saudavel" falso — isso poderia enganar o produtor sobre a lavoura.
-      if (erroReal && diagsCompletos.length===0) {
-        res.write("data: "+JSON.stringify({ tipo:"erro", msg: erroReal })+"\n\n");
-        logUsoAnalise(userId, "foto", "claude-sonnet-4-6", usageCapturado, regiao);
-        encerrar();
-        return;
-      }
       var resultado=extrairJSON(texto);
       if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length){
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
@@ -1318,7 +1065,7 @@ app.post("/diagnostico-json", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0.2,
         system:[
           { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
           { type:"text", text: contextoRegional }
@@ -1328,14 +1075,10 @@ app.post("/diagnostico-json", async function(req, res) {
       ]}]})
     });
     var d=await r.json();
-    if(d.error) {
-      console.error("ERRO ANTHROPIC /diagnostico-json:", JSON.stringify(d.error));
-      logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
-      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
-    }
+    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-json:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    if(!resultado) console.error("ERRO PARSE /diagnostico-json — texto recebido:", txt);
+    if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-json — texto recebido:", txt);
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
@@ -1350,26 +1093,9 @@ var CATEGORIA_DIAGNOSTICO = {
   antracnose:"doenca fungica", phoma:"doenca fungica", mancha_manteigosa:"doenca fungica",
   corynespora:"doenca fungica", koleroga:"doenca fungica",
   aureolada:"doenca BACTERIANA (nao fungica — fungicida sistemico triazol nao tem efeito, usar so cuprico)",
-  bicho_mineiro:"praga (inseticida)", acaro:"praga (acaricida)", cochonilha:"praga (inseticida)", broca:"praga (inseticida)",
+  bicho:"praga (inseticida)", acaro:"praga (acaricida)", cochonilha:"praga (inseticida)", broca:"praga (inseticida)",
   nitrogenio:"deficiencia nutricional", magnesio:"deficiencia nutricional", potassio:"deficiencia nutricional",
   ferro:"deficiencia nutricional", calcio:"deficiencia nutricional", boro:"deficiencia nutricional", zinco:"deficiencia nutricional"
-};
-// Nomes amigaveis pro produtor — usados no texto gerado (plano de acao), evita
-// o Haiku repetir a chave crua (ex: "bicho_mineiro") sem formatacao amigavel.
-// Mantem sincronizado com o objeto NOMES_VOZ do frontend.
-var NOMES_AMIGAVEIS = {
-  ferrugem:"Ferrugem do cafe", bicho_mineiro:"Bicho mineiro", cercosporiose:"Cercosporiose",
-  aureolada:"Mancha aureolada", phoma:"Phoma", antracnose:"Antracnose", ascochyta:"Mancha Ascochyta",
-  manteigosa:"Mancha manteigosa", mancha_manteigosa:"Mancha manteigosa", roseliniose:"Roseliniose",
-  helmintosporiose:"Helmintosporiose", broca:"Broca do cafe", acaro:"Acaro vermelho",
-  acaro_ferrugem:"Acaro ferrugem falsa", cigarra:"Cigarra do cafeeiro", cochonilha:"Cochonilha",
-  lagarta:"Lagarta desfolhadora", nematoide:"Nematoide das galhas", nitrogenio:"Deficiencia de nitrogenio",
-  magnesio:"Deficiencia de magnesio", potassio:"Deficiencia de potassio", fosforo:"Deficiencia de fosforo",
-  calcio:"Deficiencia de calcio", enxofre:"Deficiencia de enxofre", boro:"Deficiencia de boro",
-  zinco:"Deficiencia de zinco", ferro:"Deficiencia de ferro", manganes:"Deficiencia de manganes",
-  cobre:"Deficiencia de cobre", estresse_hidrico:"Estresse hidrico", fitotoxicidade:"Fitotoxicidade",
-  escaldadura:"Escaldadura solar", corynespora:"Mancha de Corynespora", koleroga:"Koleroga (queima do fio)",
-  rizoctoniose:"Rizoctoniose tardia", cochonilha_raiz:"Cochonilha das raizes", saudavel:"Planta saudavel"
 };
 app.post("/plano-acao", async function(req, res) {
   var diagnosticos=req.body.diagnosticos||[], regiao=req.body.regiao||null;
@@ -1387,8 +1113,7 @@ app.post("/plano-acao", async function(req, res) {
         }).join("; ")
       :"sem fungicida indicado";
     var cat=CATEGORIA_DIAGNOSTICO[d.diagnostico]||"categoria nao especificada — nao presuma, use so o nome";
-    var nomeAmigavel=NOMES_AMIGAVEIS[d.diagnostico]||d.diagnostico;
-    return (i+1)+". "+nomeAmigavel+" ["+cat+"] estagio "+d.estagio+" — produtos individuais: "+f;
+    return (i+1)+". "+d.diagnostico+" ["+cat+"] estagio "+d.estagio+" — produtos individuais: "+f;
   }).join("\n");
 
   var sistemaStatic =
@@ -1464,7 +1189,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0.2,
         system:[
           { type:"text", text: buildPromptStatic(true), cache_control:{ type:"ephemeral" } },
           { type:"text", text: contextoRegional }
@@ -1472,14 +1197,10 @@ app.post("/diagnostico-video", async function(req, res) {
         messages:[{role:"user",content}]})
     });
     var d=await r.json();
-    if(d.error) {
-      console.error("ERRO ANTHROPIC /diagnostico-video:", JSON.stringify(d.error));
-      logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
-      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
-    }
+    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-video:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    if(!resultado) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
+    if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
     logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1503,14 +1224,10 @@ app.post("/analise-solo", async function(req, res) {
         messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
     });
     var d=await r.json();
-    if(d.error) {
-      console.error("ERRO ANTHROPIC /analise-solo:", JSON.stringify(d.error));
-      logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
-      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
-    }
+    if(d.error) console.error("ERRO ANTHROPIC /analise-solo:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    if(!resultado) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
+    if(!resultado&&!d.error) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
     logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{acao:"Nao foi possivel ler o laudo. Verifique a foto e tente novamente.",valores:{}});
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1556,11 +1273,7 @@ app.post("/identifica-daninha", async function(req, res) {
     });
     var d=await r.json();
     console.log("STATUS DANINHA:", r.status, "| RESPOSTA:", JSON.stringify(d).substring(0,500));
-    if(d.error) {
-      console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
-      logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);
-      return res.status(502).json({ erro: (d.error.message||"Servico de IA indisponivel no momento. Tente novamente em instantes.") });
-    }
+    if(d.error) console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
     logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);
@@ -1621,11 +1334,10 @@ function buildPromptStatic(isVideo) {
 "REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n"+
 "PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix): manchas AMARELO-ALARANJADAS face INFERIOR, po alaranjado. Se encontrar QUALQUER sinal alaranjado: DIAGNOSTIQUE como ferrugem.\n\n"+
 "DOENCAS FUNGICAS:\nferrugem=pustulas ALARANJADAS face INFERIOR.\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nascochyta=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo extenso, favorecida por clima ameno 15-25C.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares.\nphoma=manchas NECROTICAS negras SEM halo FOLHAS NOVAS.\naureolada=bacteriana manchas pardas HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS.\ncorynespora=manchas IRREGULARES marrom-avermelhadas halo amarelo MAIORES que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas por FIOS DE MICELIO.\n\n"+
-"PRAGAS:\nbicho_mineiro=MINA (galeria) ENTRE as camadas da folha, formato IRREGULAR SERPENTEANTE ou em MANCHA, esbranquicada/translucida quando recente, ficando PARDACENTA SECA e QUEBRADICA (aspecto de papel) com o tempo. SEM halo concentrico, SEM halo amarelo definido, contorno tende a seguir nervuras. Frequente MULTIPLAS minas pequenas na mesma folha, podendo se juntar. As vezes com um pequeno orificio de saida do adulto.\nacaro=folha BRONZEADA acinzentada opaca.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+
-"ATENCAO DIFERENCIACAO bicho_mineiro x doenca fungica: lesao de bicho mineiro fica DENTRO da folha (entre as duas epidermes, aspecto de bolha/papel seco) e NUNCA tem halo concentrico nem halo amarelo bem definido. Se a lesao tiver halo concentrico (ascochyta) ou halo amarelo extenso (aureolada/corynespora) ou bordas afundadas pretas (antracnose), NAO classifique como bicho_mineiro mesmo que o formato seja irregular. Na duvida entre bicho_mineiro e doenca fungica, verifique: (1) a mancha parece uma bolha/descolamento da superficie ou uma mancha na propria superficie? bolha=bicho_mineiro, superficie=doenca. (2) tem varias minas pequenas espalhadas ou poucas manchas grandes? varias pequenas=bicho_mineiro, poucas grandes=doenca.\nIMPORTANTE: a chave no JSON deve ser exatamente \"bicho_mineiro\" (com underscore), nunca apenas \"bicho\".\n\n"+
+"PRAGAS:\nbicho=TRILHAS SERPENTINAS castanhas dentro da folha.\nacaro=folha BRONZEADA acinzentada opaca.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+
 "DEFICIENCIAS:\nnitrogenio=folha TODA AMARELA UNIFORME folhas velhas.\nmagnesio=nervuras VERDES tecido AMARELO internerval.\npotassio=QUEIMA bordas e pontas folhas velhas.\nferro=folhas NOVAS ESBRANQUICADAS nervuras verdes.\ncalcio=folhas NOVAS deformadas ENCURVADAS.\nboro=folhas NOVAS QUEBRADICAS.\nzinco=folhas NOVAS ESTREITAS roseta.\n\n"+
 "FRUTOS:\nfruto_verde=verde firme sem lesoes.\nfruto_maduro=VERMELHO ou AMARELO cereja brilhante.\nfruto_passado=ESCURECIDO enrugado seco.\nbroca=FURO CIRCULAR escuro 1-2mm.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras.\n\n"+
-"PRODUTOS:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nascochyta: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nphoma: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14. Mancozebe 800WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\naureolada: ATENCAO doenca BACTERIANA nao fungica — fungicida sistemico triazol NAO tem efeito, usar SOMENTE cupricos com acao bactericida. Oxicloreto Cobre 840WP protetor 4-4,5kg/ha proporcao_por_litro:4 unidade_proporcao:g intervalo:15 obs:acao_bactericida. Hidroxido Cobre 770WG protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:15 obs:acao_bactericida.\nmancha_manteigosa: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\ncorynespora: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nkoleroga: Oxicloreto Cobre 840WP protetor 2,5-3kg/ha proporcao_por_litro:3 unidade_proporcao:g intervalo:14 obs:associar_desbaste_ramos_internos_e_poda_para_ventilacao.\nbicho_mineiro: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\ncochonilha: Imidacloprido 700WG inseticida 0,3-0,5kg/ha proporcao_por_litro:0.4 unidade_proporcao:g intervalo:30.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+
+"PRODUTOS:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nascochyta: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nphoma: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14. Mancozebe 800WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\naureolada: ATENCAO doenca BACTERIANA nao fungica — fungicida sistemico triazol NAO tem efeito, usar SOMENTE cupricos com acao bactericida. Oxicloreto Cobre 840WP protetor 4-4,5kg/ha proporcao_por_litro:4 unidade_proporcao:g intervalo:15 obs:acao_bactericida. Hidroxido Cobre 770WG protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:15 obs:acao_bactericida.\nmancha_manteigosa: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\ncorynespora: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nkoleroga: Oxicloreto Cobre 840WP protetor 2,5-3kg/ha proporcao_por_litro:3 unidade_proporcao:g intervalo:14 obs:associar_desbaste_ramos_internos_e_poda_para_ventilacao.\nbicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\ncochonilha: Imidacloprido 700WG inseticida 0,3-0,5kg/ha proporcao_por_litro:0.4 unidade_proporcao:g intervalo:30.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+
 "INSTRUCOES FINAIS: Liste TODOS os problemas. Ordene do mais grave. Deficiencias nutricionais: fungicidas:[]. NUNCA retorne saudavel se houver sintoma.\n"+
 "No campo 'acao', use linguagem simples para produtor leigo: use APENAS o nome generico do produto com a formulacao exata da lista PRODUTOS (ex: 'Oxicloreto de Cobre 840WP'), NUNCA invente ou cite nome comercial/marca de memoria — associar a marca errada ao ingrediente errado pode levar o produtor a comprar o produto incorreto. Explique rapidamente (3-6 palavras) qualquer termo tecnico como K2O/P2O5, calda, fertirrigacao, carencia, pos-emergencia.\n"+
 "IMPORTANTE no campo 'nome' de cada fungicida: SEMPRE inclua o codigo de formulacao (WP, WG, SC, EC etc) exatamente como aparece na lista PRODUTOS acima — ex: 'Oxicloreto de Cobre 840WP', NUNCA apenas 'Oxicloreto de Cobre'. O app usa esse codigo para orientar a ordem de mistura no tanque; omiti-lo quebra essa funcionalidade.\n\n"+

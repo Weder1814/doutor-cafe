@@ -1119,13 +1119,14 @@ app.post("/plano-acao", async function(req, res) {
   var sistemaStatic =
 "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira.\n\n"+
 "REGRAS OBRIGATORIAS DE COMPATIBILIDADE — VIOLACAO E ERRO GRAVE:\n"+
-"1. PROIBIDO: dois triazois na mesma calda OU em aplicacoes consecutivas sem intervalo adequado.\n"+
-"   TRIAZOIS: Tebuconazol=Folicur, Ciproconazol=Priori Xtra/Opera, Difenoconazol=Amistar Top/Score, Epoxiconazol=Opera.\n"+
-"   ROTACAO CORRETA apos Amistar Top: Cercobin+Cuprogarb. Apos Folicur: Priori Xtra ou Amistar Top. Apos Priori Xtra: Folicur ou Amistar Top.\n"+
-"2. PROIBIDO: duas estrobilurinas juntas.\n"+
-"3. PERMITIDO: protetor cuproso com qualquer sistemico.\n"+
-"4. PERMITIDO: Cercobin com qualquer produto.\n"+
+"1. PROIBIDO: dois fungicidas do grupo TRIAZOL na mesma calda OU em aplicacoes consecutivas sem intervalo adequado.\n"+
+"   TRIAZOIS (mesmo grupo, nao combinar/repetir entre si): Tebuconazol, Ciproconazol, Difenoconazol, Epoxiconazol.\n"+
+"   ROTACAO CORRETA: ao reaplicar, troque o MECANISMO DE ACAO (nao repita o mesmo grupo quimico em aplicacoes consecutivas). Ex: apos um triazol, use na proxima aplicacao um protetor cuprico + Tiofanato Metilico.\n"+
+"2. PROIBIDO: dois fungicidas do grupo ESTROBILURINA juntos (ex: Azoxistrobina, Piraclostrobina, Trifloxistrobina).\n"+
+"3. PERMITIDO: protetor cuproso (cobre) com qualquer sistemico.\n"+
+"4. PERMITIDO: Tiofanato Metilico com qualquer outro produto.\n"+
 "5. Intervalo minimo: 14-21 dias.\n\n"+
+"NUNCA cite nomes comerciais/marcas (proprios ou de memoria) nesta secao ou em qualquer campo de resposta — use somente nomes genericos (ingrediente ativo) e grupo quimico/mecanismo de acao.\n\n"+
 "DOSE DOS PRODUTOS: quando um produto individual vier com 'DOSE EXATA A USAR', copie exatamente esse valor e unidade (kg ou L, conforme informado) ao mencionar a dose nos campos urgente/em_21_dias. NUNCA troque a unidade (ex: nao converta kg para mL) nem cite uma dose diferente da fornecida — voce nao tem acesso a bula do produto, use apenas o valor dado.\n\n"+
 "CATEGORIA DE CADA DIAGNOSTICO: cada item da lista vem com sua categoria entre colchetes (ex: [doenca fungica], [doenca BACTERIANA], [praga], [deficiencia nutricional]). USE ESSA CATEGORIA EXATA no resumo_geral e demais campos — NUNCA infira ou generalize a categoria pelo tipo de produto usado (ex: dois problemas tratados ambos com cuprico NAO significa que sao da mesma categoria biologica).\n\n"+
 "REGRA DO CAMPO NUTRICAO — EVITAR INVENCAO:\n"+
@@ -1257,8 +1258,9 @@ app.post("/identifica-daninha", async function(req, res) {
 "10. TRAPOERABA (Commelina benghalensis): RASTEIRA suculenta enraizando nos nos, folhas OVALADAS lanceoladas com bainha que envolve o caule (tipica de Commelinaceae), flores pequenas AZUIS com 3 petalas (2 grandes + 1 pequena). Solo UMIDO e sombreado, comum em areas irrigadas. 2,4-D, dificil controle por reenraizamento dos fragmentos.\n"+
 "11. GUANXUMA (Sida spp.): ARBUSTIVA ereta 50cm-1,5m, caule fibroso lenhoso na base, folhas OVALADAS serrilhadas com peciolo longo, flores AMARELAS pequenas com 5 petalas, frutos em capsula segmentada tipo \"queijinho\". Solo DEGRADADO ou de baixa fertilidade. 2,4-D.\n"+
 "12. MARIA-PRETINHA (Solanum americanum): ERETA ramificada 30cm-1m, folhas OVALADAS com bordas onduladas, flores BRANCAS pequenas em forma de estrela com anteras amarelas (tipica de Solanaceae), frutos em BAGAS REDONDAS pretas brilhantes quando maduras, TOXICA para consumo. Solo fertil, comum em areas de cultivo. Glifosato, 2,4-D.\n\n"+
+"IMPORTANTE no campo 'nome' de cada produto: use o nome generico (ingrediente ativo, ex: Saflufenacil, Carfentrazona-etilica, Glifosato) com a formulacao quando souber. Nomes comerciais citados nas notas acima sao apenas referencia interna — NAO os repita como se fossem o nome do produto, pois o produtor pode ter acesso a uma marca diferente com o mesmo generico.\n\n"+
 "RESPONDA SOMENTE JSON:\n"+
-"{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome comercial\",\"dose\":\"dose pratica\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\"}],\"indicador_geral\":\"o que indica sobre o solo\",\"manejo_integrado\":\"estrategia geral\"}";
+"{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome generico (ingrediente ativo) com formulacao, ex: Saflufenacil 700WG\",\"dose\":\"dose pratica\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\"}],\"indicador_geral\":\"o que indica sobre o solo\",\"manejo_integrado\":\"estrategia geral\"}";
 
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{

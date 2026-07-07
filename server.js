@@ -10,6 +10,14 @@ var MP_TOKEN   = process.env.MP_ACCESS_TOKEN;
 var BASE_URL   = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
 var DB_URL     = process.env.DATABASE_URL;
 var KEY        = process.env.ANTHROPIC_API_KEY;
+var ADMIN_SENHA = process.env.ADMIN_SENHA; // NUNCA hardcode: defina no Railway
+if (!ADMIN_SENHA) console.warn("⚠️ ADMIN_SENHA não definida — endpoints /usuarios e /custo-api ficarão bloqueados por segurança.");
+
+// Autorização dos endpoints administrativos. Sem ADMIN_SENHA configurada,
+// bloqueia por padrão (fail-closed) em vez de aceitar uma senha fixa conhecida.
+function adminAutorizado(req) {
+  return !!ADMIN_SENHA && req.query.senha === ADMIN_SENHA;
+}
 
 // ── POSTGRESQL ─────────────────────────────────────────────────
 var Pool = null;
@@ -435,6 +443,32 @@ setInterval(function() {
   Object.keys(rateMap).forEach(function(k){ if (agora > rateMap[k].resetAt) delete rateMap[k]; });
 }, 5 * 60 * 1000);
 
+// ── RATE LIMITING DE LOGIN (anti força-bruta de PIN) ───────────
+// PIN de 4 digitos so tem 10.000 combinacoes. Sem limite, e varrivel em minutos.
+// Limita tentativas por IP: 10 por 15 minutos.
+var loginRateMap = {};
+var LOGIN_MAX = 10;
+var LOGIN_JANELA = 15 * 60 * 1000;
+function ipDaReq(req) {
+  var xff = req.headers["x-forwarded-for"];
+  if (xff) return String(xff).split(",")[0].trim();
+  return (req.socket && req.socket.remoteAddress) || "desconhecido";
+}
+function checkLoginRate(req) {
+  var ip = ipDaReq(req);
+  var agora = Date.now();
+  if (!loginRateMap[ip] || agora > loginRateMap[ip].resetAt) {
+    loginRateMap[ip] = { count: 1, resetAt: agora + LOGIN_JANELA };
+    return true;
+  }
+  loginRateMap[ip].count++;
+  return loginRateMap[ip].count <= LOGIN_MAX;
+}
+setInterval(function() {
+  var agora = Date.now();
+  Object.keys(loginRateMap).forEach(function(k){ if (agora > loginRateMap[k].resetAt) delete loginRateMap[k]; });
+}, 5 * 60 * 1000);
+
 // ── PLANOS ────────────────────────────────────────────────────
 var PLANOS = {
   basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130 },
@@ -582,6 +616,7 @@ app.post("/cadastrar-usuario", async function(req, res) {
 
 // ── LOGIN CELULAR + PIN (mantido para compatibilidade) ────────
 app.post("/entrar", async function(req, res) {
+  if (!checkLoginRate(req)) return res.status(429).json({ erro:"Muitas tentativas de login. Aguarde 15 minutos." });
   var celular = (req.body.celular||"").replace(/[^0-9]/g,"");
   var pin     = (req.body.pin||"").replace(/[^0-9]/g,"");
 
@@ -612,6 +647,7 @@ app.post("/entrar", async function(req, res) {
 
 // ── NOVO: LOGIN APENAS POR PIN ────────────────────────────────
 app.post("/entrar-pin", async function(req, res) {
+  if (!checkLoginRate(req)) return res.status(429).json({ erro:"Muitas tentativas de login. Aguarde 15 minutos." });
   var pin = (req.body.pin||"").replace(/[^0-9]/g,"");
 
   if (!pin || pin.length !== 4) return res.status(400).json({ erro:"PIN deve ter 4 digitos." });
@@ -764,7 +800,7 @@ app.get("/historico/:userId", async function(req, res) {
 
 // ── ADMIN: LISTAR USUÁRIOS ────────────────────────────────────
 app.get("/usuarios", async function(req, res) {
-  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
+  if (!adminAutorizado(req)) return res.status(401).json({ erro:"Nao autorizado" });
   try {
     if (pool) {
       var r = await pool.query("SELECT user_id,nome,celular,email,regiao,plano,analises_usadas,mes_reset,criado_em FROM usuarios ORDER BY criado_em DESC");
@@ -778,7 +814,7 @@ app.get("/usuarios", async function(req, res) {
 // Mostra custo estimado por tipo de analise, total geral, e ranking de
 // usuarios que mais geram custo. Use ?dias=30 para mudar a janela (padrao 30).
 app.get("/custo-api", async function(req, res) {
-  if (req.query.senha !== "doutorcafe2026") return res.status(401).json({ erro:"Nao autorizado" });
+  if (!adminAutorizado(req)) return res.status(401).json({ erro:"Nao autorizado" });
   if (!pool) return res.json({ erro:"Sem banco de dados conectado." });
   try {
     var dias = parseInt(req.query.dias) || 30;
@@ -1347,6 +1383,12 @@ function buildPromptStatic(isVideo) {
 "- confianca 'baixa': sinal sutil, inicial ou ambiguo. Use quando em duvida — NAO escolha agressivamente entre doencas parecidas.\n"+
 "- Priorize o diagnostico pela EVIDENCIA VISUAL mais forte e caracteristica, nao por probabilidade regional.\n"+
 "- Se so ha manchas inespecificas sem padrao caracteristico, prefira relatar UM achado de baixa confianca a inventar varios.\n\n"+
+"CALIBRACAO DE SEVERIDADE (estagio) — EVITAR INVERSAO ENTRE ANALISES DA MESMA FOLHA (critico):\n"+
+"- O campo 'estagio' (1 a 5) so deve diferenciar dois problemas quando a diferenca visual de AVANCO entre eles for CLARA e inequivoca.\n"+
+"- Se dois ou mais problemas tem avanco visual SEMELHANTE (ex: duas deficiencias nutricionais ambas moderadas), atribua a eles o MESMO estagio. NAO invente estagios diferentes so para desempatar — isso gera resultados inconsistentes entre analises da mesma folha.\n"+
+"- Na duvida entre estagio 1 e 2, use SEMPRE o MENOR (1) e sinalize a incerteza no campo 'visto'. 'estagio 4 ou 5' exige sinais evidentes e extensos de dano.\n"+
+"- Quando houver empate de severidade entre deficiencias nutricionais, NAO tente ranquear uma acima da outra; no campo 'acao' dessas deficiencias, oriente confirmar a prioridade por analise de solo/foliar antes de ajustar doses.\n"+
+"- A ordem de listagem entre itens de MESMA gravidade e MESMO estagio nao e relevante — nao force uma ordem so para preencher; mantenha estavel.\n\n"+
 "NAO force o diagnostico de ferrugem: so diagnostique ferrugem se houver pustulas/po ALARANJADO caracteristico (idealmente face inferior). Manchas amareladas genericas SEM o po alaranjado NAO sao ferrugem — podem ser deficiencia, cercosporiose inicial ou outra causa. Avalie pela evidencia real, nao por prioridade.\n\n"+
 "DOENCAS FUNGICAS:\nferrugem=pustulas ALARANJADAS face INFERIOR, po alaranjado (SEM isso, nao e ferrugem).\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nascochyta=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo extenso, favorecida por clima ameno 15-25C.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares.\nphoma=manchas NECROTICAS negras SEM halo FOLHAS NOVAS.\naureolada=bacteriana manchas pardas HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS.\ncorynespora=manchas IRREGULARES marrom-avermelhadas halo amarelo MAIORES que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas por FIOS DE MICELIO.\n\n"+
 "PRAGAS:\nbicho=TRILHAS SERPENTINAS castanhas dentro da folha.\nacaro=folha BRONZEADA acinzentada opaca.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+

@@ -663,10 +663,17 @@ app.post("/incrementar-analise", async function(req, res) {
   if (!userId) return res.json({ ok:true });
   var u = await dbGetUser(userId);
   if (u && analisesRestantes(u) <= 0) {
-    return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+    return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true, analisesRestantes:0 });
   }
   await dbIncrementarAnalise(userId);
-  res.json({ ok:true });
+  var atualizado = await dbGetUser(userId);
+  res.json({
+    ok:true,
+    plano: (atualizado&&atualizado.plano)||"gratuito",
+    analisesUsadas: (atualizado&&(atualizado.analises_usadas||atualizado.analisesUsadas))||0,
+    analisesRestantes: atualizado ? analisesRestantes(atualizado) : null,
+    limite: LIMITES[(atualizado&&atualizado.plano)||"gratuito"]||15
+  });
 });
 
 // ── INCREMENTAR VIDEO (sub-limite) ──────────────────────────────
@@ -951,7 +958,7 @@ app.post("/diagnostico", async function(req, res) {
   fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
     headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
-    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, temperature:0.2, stream:true,
+    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, temperature:0, stream:true,
       system:[
         { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
         { type:"text", text: contextoRegional }
@@ -1065,7 +1072,7 @@ app.post("/diagnostico-json", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0.2,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
         system:[
           { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
           { type:"text", text: contextoRegional }
@@ -1146,7 +1153,7 @@ app.post("/plano-acao", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:2000,
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:2000,temperature:0,
         system:[ { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } } ],
         messages:[{role:"user",content:[{type:"text",text:promptUsuario}]}]})
     });
@@ -1190,7 +1197,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0.2,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
         system:[
           { type:"text", text: buildPromptStatic(true), cache_control:{ type:"ephemeral" } },
           { type:"text", text: contextoRegional }
@@ -1217,7 +1224,7 @@ app.post("/analise-solo", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,temperature:0,
         system:[
           { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } },
           { type:"text", text: contexto||"Sem contexto regional adicional." }
@@ -1266,7 +1273,7 @@ app.post("/identifica-daninha", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:800,temperature:0,
         system:[
           { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } },
           { type:"text", text: contexto||"Sem contexto regional adicional." }
@@ -1333,14 +1340,20 @@ function buildContextoRegional(regiao, altitude, isVideo) {
 
 function buildPromptStatic(isVideo) {
   return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia.\n\n"+
-"REGRA MAIS IMPORTANTE: Voce DEVE listar TODOS os problemas visiveis na imagem. Nunca omita um diagnostico por ja ter encontrado outro. NUNCA diagnostique saudavel se houver qualquer mancha, lesao, descoloracao ou sintoma visivel na folha.\n\n"+
-"PRIORIDADE MAXIMA — FERRUGEM (Hemileia vastatrix): manchas AMARELO-ALARANJADAS face INFERIOR, po alaranjado. Se encontrar QUALQUER sinal alaranjado: DIAGNOSTIQUE como ferrugem.\n\n"+
-"DOENCAS FUNGICAS:\nferrugem=pustulas ALARANJADAS face INFERIOR.\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nascochyta=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo extenso, favorecida por clima ameno 15-25C.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares.\nphoma=manchas NECROTICAS negras SEM halo FOLHAS NOVAS.\naureolada=bacteriana manchas pardas HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS.\ncorynespora=manchas IRREGULARES marrom-avermelhadas halo amarelo MAIORES que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas por FIOS DE MICELIO.\n\n"+
+"REGRA MAIS IMPORTANTE: Liste os problemas que voce consegue identificar com razoavel seguranca a partir dos sinais VISIVEIS na imagem. E melhor ser CONSISTENTE e PRECISO do que detectar muitos problemas. Se um sintoma for ambiguo ou sutil, use confianca 'baixa' e explique a incerteza no campo 'visto' — NUNCA invente um diagnostico especifico para um sinal que poderia ser varias coisas.\n\n"+
+"CONSISTENCIA E CALIBRACAO DE CONFIANCA (critico): a mesma folha deve gerar o mesmo diagnostico. Para isso:\n"+
+"- confianca 'alta': sintoma CLASSICO e inequivoco, multiplos sinais concordantes. Ex: clorose internerval com nervuras verdes = magnesio.\n"+
+"- confianca 'media': sintoma compativel mas nao definitivo, poderia ter 1-2 causas alternativas.\n"+
+"- confianca 'baixa': sinal sutil, inicial ou ambiguo. Use quando em duvida — NAO escolha agressivamente entre doencas parecidas.\n"+
+"- Priorize o diagnostico pela EVIDENCIA VISUAL mais forte e caracteristica, nao por probabilidade regional.\n"+
+"- Se so ha manchas inespecificas sem padrao caracteristico, prefira relatar UM achado de baixa confianca a inventar varios.\n\n"+
+"NAO force o diagnostico de ferrugem: so diagnostique ferrugem se houver pustulas/po ALARANJADO caracteristico (idealmente face inferior). Manchas amareladas genericas SEM o po alaranjado NAO sao ferrugem — podem ser deficiencia, cercosporiose inicial ou outra causa. Avalie pela evidencia real, nao por prioridade.\n\n"+
+"DOENCAS FUNGICAS:\nferrugem=pustulas ALARANJADAS face INFERIOR, po alaranjado (SEM isso, nao e ferrugem).\ncercosporiose=manchas CIRCULARES centro BRANCO-ACINZENTADO halo amarelo FINO.\nascochyta=manchas GRANDES marrom-escuras HALOS CONCENTRICOS halo amarelo extenso, favorecida por clima ameno 15-25C.\nantracnose=lesoes AFUNDADAS pretas bordas irregulares.\nphoma=manchas NECROTICAS negras SEM halo FOLHAS NOVAS.\naureolada=bacteriana manchas pardas HALO AMARELO GRANDE.\nmancha_manteigosa=manchas ENCHARCADAS OLEOSAS.\ncorynespora=manchas IRREGULARES marrom-avermelhadas halo amarelo MAIORES que cercosporiose.\nkoleroga=FOLHAS CAIDAS presas por FIOS DE MICELIO.\n\n"+
 "PRAGAS:\nbicho=TRILHAS SERPENTINAS castanhas dentro da folha.\nacaro=folha BRONZEADA acinzentada opaca.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+
 "DEFICIENCIAS:\nnitrogenio=folha TODA AMARELA UNIFORME folhas velhas.\nmagnesio=nervuras VERDES tecido AMARELO internerval.\npotassio=QUEIMA bordas e pontas folhas velhas.\nferro=folhas NOVAS ESBRANQUICADAS nervuras verdes.\ncalcio=folhas NOVAS deformadas ENCURVADAS.\nboro=folhas NOVAS QUEBRADICAS.\nzinco=folhas NOVAS ESTREITAS roseta.\n\n"+
 "FRUTOS:\nfruto_verde=verde firme sem lesoes.\nfruto_maduro=VERMELHO ou AMARELO cereja brilhante.\nfruto_passado=ESCURECIDO enrugado seco.\nbroca=FURO CIRCULAR escuro 1-2mm.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras.\n\n"+
 "PRODUTOS:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nascochyta: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nphoma: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14. Mancozebe 800WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\naureolada: ATENCAO doenca BACTERIANA nao fungica — fungicida sistemico triazol NAO tem efeito, usar SOMENTE cupricos com acao bactericida. Oxicloreto Cobre 840WP protetor 4-4,5kg/ha proporcao_por_litro:4 unidade_proporcao:g intervalo:15 obs:acao_bactericida. Hidroxido Cobre 770WG protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:15 obs:acao_bactericida.\nmancha_manteigosa: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\ncorynespora: Azoxistrobina+Difenoconazol sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nkoleroga: Oxicloreto Cobre 840WP protetor 2,5-3kg/ha proporcao_por_litro:3 unidade_proporcao:g intervalo:14 obs:associar_desbaste_ramos_internos_e_poda_para_ventilacao.\nbicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\ncochonilha: Imidacloprido 700WG inseticida 0,3-0,5kg/ha proporcao_por_litro:0.4 unidade_proporcao:g intervalo:30.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+
-"INSTRUCOES FINAIS: Liste TODOS os problemas. Ordene do mais grave. Deficiencias nutricionais: fungicidas:[]. NUNCA retorne saudavel se houver sintoma.\n"+
+"INSTRUCOES FINAIS: Relate os problemas com evidencia visual real, ordenados por GRAVIDADE (doenca/praga ativa primeiro, depois deficiencias) e dentro da mesma gravidade por ordem de CONFIANCA (alta antes de baixa). Deficiencias nutricionais: fungicidas:[]. Use confianca 'baixa' quando o sinal for ambiguo em vez de arriscar um diagnostico especifico errado. So retorne saudavel se a folha estiver realmente sem sintomas visiveis.\n"+
 "No campo 'acao', use linguagem simples para produtor leigo: use APENAS o nome generico do produto com a formulacao exata da lista PRODUTOS (ex: 'Oxicloreto de Cobre 840WP'), NUNCA invente ou cite nome comercial/marca de memoria — associar a marca errada ao ingrediente errado pode levar o produtor a comprar o produto incorreto. Explique rapidamente (3-6 palavras) qualquer termo tecnico como K2O/P2O5, calda, fertirrigacao, carencia, pos-emergencia.\n"+
 "IMPORTANTE no campo 'nome' de cada fungicida: SEMPRE inclua o codigo de formulacao (WP, WG, SC, EC etc) exatamente como aparece na lista PRODUTOS acima — ex: 'Oxicloreto de Cobre 840WP', NUNCA apenas 'Oxicloreto de Cobre'. O app usa esse codigo para orientar a ordem de mistura no tanque; omiti-lo quebra essa funcionalidade.\n\n"+
 "RESPONDA SOMENTE JSON:\n"+

@@ -66,7 +66,8 @@ var LIMITES = {
   gratuito: 15,
   basico:   130,
   pro:      250,
-  premium:  400
+  premium:  400,
+  admin:    999999
 };
 
 // ── LIMITE SEPARADO PARA VIDEO (custa ~2x uma foto: 4 frames analisados) ──
@@ -74,7 +75,8 @@ var VIDEO_LIMITES = {
   gratuito: 2,
   basico:   10,
   pro:      25,
-  premium:  50
+  premium:  50,
+  admin:    999999
 };
 
 function mesAtual() {
@@ -184,6 +186,13 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mes_reset TEXT DEFAULT ''`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS videos_usados INTEGER DEFAULT 0`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cache_preco_cafe (
+        id          INTEGER PRIMARY KEY DEFAULT 1,
+        dados       JSONB,
+        atualizado_em TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);
@@ -488,15 +497,45 @@ app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now() }); });
 // alphavantage.co). Cache de 4h para respeitar limite de 25 chamadas/dia
 // do plano gratuito (2 chamadas por atualizacao: cafe + cambio).
 var ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_API_KEY;
-var _cachePrecoCafe = { data: null, timestamp: 0 };
-var CACHE_PRECO_MS = 4 * 60 * 60 * 1000; // 4 horas
+var _cachePrecoCafe = { data: null, timestamp: 0 }; // fallback em memoria (secundario)
+var CACHE_PRECO_MS = 6 * 60 * 60 * 1000; // 6 horas (2 chamadas/atualizacao => max ~8/dia, folga vs limite de 25)
+
+// Le o cache do preco no PostgreSQL. Sobrevive a reinicios/deploys, entao a
+// Alpha Vantage e chamada no maximo poucas vezes por dia (nunca estoura as 25).
+async function lerCachePrecoDB() {
+  if (!pool) return null;
+  try {
+    var r = await pool.query("SELECT dados, atualizado_em FROM cache_preco_cafe WHERE id=1");
+    if (r.rows.length === 0) return null;
+    return { data: r.rows[0].dados, timestamp: new Date(r.rows[0].atualizado_em).getTime() };
+  } catch(e) { console.error("lerCachePrecoDB:", e.message); return null; }
+}
+async function salvarCachePrecoDB(dados) {
+  if (!pool) return;
+  try {
+    await pool.query(
+      "INSERT INTO cache_preco_cafe (id, dados, atualizado_em) VALUES (1, $1, NOW()) " +
+      "ON CONFLICT (id) DO UPDATE SET dados=EXCLUDED.dados, atualizado_em=NOW()",
+      [JSON.stringify(dados)]
+    );
+  } catch(e) { console.error("salvarCachePrecoDB:", e.message); }
+}
+
 app.get("/preco-cafe", async function(req, res) {
   var agora = Date.now();
+  // 1) cache do banco (fonte de verdade, sobrevive a restart)
+  var cacheDB = await lerCachePrecoDB();
+  if (cacheDB && cacheDB.data && (agora - cacheDB.timestamp) < CACHE_PRECO_MS) {
+    _cachePrecoCafe = cacheDB;
+    return res.json(cacheDB.data);
+  }
+  // 2) cache em memoria (caso o banco esteja fora)
   if (_cachePrecoCafe.data && (agora - _cachePrecoCafe.timestamp) < CACHE_PRECO_MS) {
     return res.json(_cachePrecoCafe.data);
   }
   if (!ALPHAVANTAGE_KEY) {
     console.error("ERRO /preco-cafe: ALPHAVANTAGE_API_KEY nao configurada no Railway");
+    if (cacheDB && cacheDB.data) return res.json(Object.assign({}, cacheDB.data, { stale: true }));
     return res.status(503).json({ erro: "indisponivel" });
   }
   try {
@@ -538,11 +577,14 @@ app.get("/preco-cafe", async function(req, res) {
       stale: false
     };
     _cachePrecoCafe = { data: resultado, timestamp: agora };
+    await salvarCachePrecoDB(resultado);
     res.json(resultado);
   } catch (e) {
     console.error("ERRO /preco-cafe:", e.message);
-    if (_cachePrecoCafe.data) {
-      res.json(Object.assign({}, _cachePrecoCafe.data, { stale: true }));
+    // Em caso de erro/limite, serve o ultimo dado conhecido (banco ou memoria)
+    var fallback = (cacheDB && cacheDB.data) ? cacheDB.data : _cachePrecoCafe.data;
+    if (fallback) {
+      res.json(Object.assign({}, fallback, { stale: true }));
     } else {
       res.status(503).json({ erro: "indisponivel" });
     }
@@ -808,6 +850,40 @@ app.get("/usuarios", async function(req, res) {
     }
     res.json({ total:Object.keys(usuariosMemoria).length, usuarios:Object.values(usuariosMemoria) });
   } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
+// ── ADMIN: DEFINIR PLANO DE UM USUARIO (por CPF) ───────────────
+// Libera/ajusta o plano de qualquer conta sem precisar de deploy.
+// Ex (plano admin = analises praticamente infinitas):
+//   POST /admin/definir-plano  { "senha":"SUA_ADMIN_SENHA", "cpf":"00000000000", "plano":"admin" }
+// Planos validos: gratuito, basico, pro, premium, admin
+app.post("/admin/definir-plano", async function(req, res) {
+  var senha = req.body.senha || req.query.senha;
+  if (!ADMIN_SENHA || senha !== ADMIN_SENHA) return res.status(401).json({ erro:"Nao autorizado" });
+
+  var cpf = (req.body.cpf || "").replace(/[^0-9]/g, "");
+  var plano = (req.body.plano || "").trim().toLowerCase();
+  var PLANOS_VALIDOS = ["gratuito", "basico", "pro", "premium", "admin"];
+
+  if (cpf.length !== 11) return res.status(400).json({ erro:"CPF invalido (11 digitos)." });
+  if (PLANOS_VALIDOS.indexOf(plano) === -1) return res.status(400).json({ erro:"Plano invalido.", planos_validos: PLANOS_VALIDOS });
+
+  try {
+    var u = await dbGetUserByCPF(cpf);
+    if (!u) return res.status(404).json({ erro:"Nenhum usuario com esse CPF." });
+    var userId = u.user_id || u.userId;
+    await dbAtualizarPlano(userId, plano, plano === "admin" ? "admin_manual" : "");
+    res.json({
+      ok: true,
+      userId: userId,
+      nome: u.nome,
+      plano_novo: plano,
+      limite_analises: LIMITES[plano],
+      limite_videos: VIDEO_LIMITES[plano]
+    });
+  } catch(e) {
+    res.status(500).json({ erro:e.message });
+  }
 });
 
 // ── ADMIN: RELATORIO DE CUSTO REAL DA API ──────────────────────

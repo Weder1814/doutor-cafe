@@ -498,7 +498,7 @@ app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now() }); });
 // do plano gratuito (2 chamadas por atualizacao: cafe + cambio).
 var ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_API_KEY;
 var _cachePrecoCafe = { data: null, timestamp: 0 }; // fallback em memoria (secundario)
-var CACHE_PRECO_MS = 6 * 60 * 60 * 1000; // 6 horas (2 chamadas/atualizacao => max ~8/dia, folga vs limite de 25)
+var CACHE_PRECO_MS = 12 * 60 * 60 * 1000; // 12 horas (1 chamada AlphaVantage/atualizacao => max ~2/dia)
 
 // Le o cache do preco no PostgreSQL. Sobrevive a reinicios/deploys, entao a
 // Alpha Vantage e chamada no maximo poucas vezes por dia (nunca estoura as 25).
@@ -521,6 +521,18 @@ async function salvarCachePrecoDB(dados) {
   } catch(e) { console.error("salvarCachePrecoDB:", e.message); }
 }
 
+// Busca o dolar de fonte gratuita e SEM limite (AwesomeAPI, brasileira).
+// Retorna o valor numerico ou null se falhar — nunca lanca erro, para nao
+// derrubar o preco do cafe so porque o cambio ficou indisponivel.
+async function buscarDolar() {
+  try {
+    var r = await fetch("https://economia.awesomeapi.com.br/last/USD-BRL");
+    var d = await r.json();
+    var bid = d && d.USDBRL && parseFloat(d.USDBRL.bid);
+    return (bid && !isNaN(bid)) ? bid : null;
+  } catch(e) { console.error("buscarDolar:", e.message); return null; }
+}
+
 app.get("/preco-cafe", async function(req, res) {
   var agora = Date.now();
   // 1) cache do banco (fonte de verdade, sobrevive a restart)
@@ -539,15 +551,14 @@ app.get("/preco-cafe", async function(req, res) {
     return res.status(503).json({ erro: "indisponivel" });
   }
   try {
-    var [rCafe, rCambio] = await Promise.all([
+    // So o cafe usa a Alpha Vantage (1 chamada). O dolar vem de fonte sem limite.
+    var [rCafe, dolar] = await Promise.all([
       fetch("https://www.alphavantage.co/query?function=COFFEE&interval=daily&apikey=" + ALPHAVANTAGE_KEY),
-      fetch("https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=BRL&apikey=" + ALPHAVANTAGE_KEY)
+      buscarDolar()
     ]);
     var dCafe = await rCafe.json();
-    var dCambio = await rCambio.json();
 
     if (dCafe.Note || dCafe.Information) throw new Error("Alpha Vantage limite/aviso: " + (dCafe.Note || dCafe.Information));
-    if (dCambio.Note || dCambio.Information) throw new Error("Alpha Vantage limite/aviso (cambio): " + (dCambio.Note || dCambio.Information));
 
     var serie = dCafe.data;
     if (!serie || serie.length < 2) throw new Error("Serie de cafe vazia ou insuficiente");
@@ -556,22 +567,23 @@ app.get("/preco-cafe", async function(req, res) {
     if (pontosValidos.length < 2) throw new Error("Sem pontos validos suficientes na serie");
     var precoAtual = parseFloat(pontosValidos[0].value);
     var precoAnterior = parseFloat(pontosValidos[1].value);
-
-    var taxaCambio = dCambio["Realtime Currency Exchange Rate"];
-    var dolar = taxaCambio && parseFloat(taxaCambio["5. Exchange Rate"]);
-    if (isNaN(precoAtual) || isNaN(precoAnterior) || !dolar || isNaN(dolar)) throw new Error("Campos de preco/cambio invalidos");
+    if (isNaN(precoAtual) || isNaN(precoAnterior)) throw new Error("Campos de preco invalidos");
 
     var pontos = precoAtual - precoAnterior;
     var pct = (pontos / precoAnterior) * 100;
-    // 1 saca = 60kg = 132.277 lb. Preco NY em centavos de USD/lb.
-    var precoSacaEstimado = (precoAtual / 100) * 132.277 * dolar;
+
+    // Cambio e OPCIONAL: se o dolar veio, calcula a saca em reais; se nao, deixa null
+    // e o app mostra so o preco internacional + variacao (degradacao elegante).
+    var temCambio = (dolar && !isNaN(dolar));
+    var precoSacaEstimado = temCambio ? (precoAtual / 100) * 132.277 * dolar : null; // 1 saca=60kg=132.277lb
 
     var resultado = {
       preco_ny_centavos_lb: Math.round(precoAtual * 100) / 100,
       variacao_pontos: Math.round(pontos * 100) / 100,
       variacao_pct: Math.round(pct * 100) / 100,
-      dolar: Math.round(dolar * 100) / 100,
-      preco_saca_estimado_reais: Math.round(precoSacaEstimado * 100) / 100,
+      dolar: temCambio ? Math.round(dolar * 100) / 100 : null,
+      preco_saca_estimado_reais: temCambio ? Math.round(precoSacaEstimado * 100) / 100 : null,
+      cambio_indisponivel: !temCambio,
       data_referencia: pontosValidos[0].date,
       atualizado_em: new Date().toISOString(),
       stale: false

@@ -1372,7 +1372,7 @@ app.post("/analise-solo", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
-// ── IDENTIFICA DANINHA ─── SONNET (temporario p/ medicao de custo real) | max_tokens:1000 ────────────
+// ── IDENTIFICA DANINHA ─── SONNET (temporario p/ medicao de custo real) | max_tokens:1600 ────────────
 // ATUALIZADO: todas as 12 plantas agora possuem descritores visuais completos
 // (habito de crescimento, caule, folha, flor/fruto, traco distintivo) para
 // reduzir confusao entre especies parecidas — ex: caruru sendo confundido
@@ -1427,7 +1427,7 @@ app.post("/identifica-daninha", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,temperature:0,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1600,temperature:0,
         system:[
           { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } },
           { type:"text", text: contexto||"Sem contexto regional adicional." }
@@ -1445,7 +1445,7 @@ app.post("/identifica-daninha", async function(req, res) {
       if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
       res.json(resultado);
     } else {
-      console.error("EXTRAIRJSON FALHOU. Texto recebido:", txt.substring(0,500));
+      console.error("EXTRAIRJSON FALHOU. stop_reason:", d.stop_reason, "| Tamanho texto:", txt.length, "| Ultimos 300 chars:", txt.substring(Math.max(0,txt.length-300)));
       res.json({plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""});
     }
   } catch(e) { console.error("ERRO DANINHA CATCH:", e.message, e.stack); res.status(500).json({ erro:e.message }); }

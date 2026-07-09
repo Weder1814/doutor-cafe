@@ -1372,7 +1372,7 @@ app.post("/analise-solo", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
-// ── IDENTIFICA DANINHA ─── Haiku | max_tokens:800 ────────────
+// ── IDENTIFICA DANINHA ─── Sonnet | max_tokens:800 ────────────
 // ATUALIZADO: todas as 12 plantas agora possuem descritores visuais completos
 // (habito de crescimento, caule, folha, flor/fruto, traco distintivo) para
 // reduzir confusao entre especies parecidas — ex: caruru sendo confundido

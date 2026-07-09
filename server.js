@@ -1372,7 +1372,7 @@ app.post("/analise-solo", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
-// ── IDENTIFICA DANINHA ─── Haiku | max_tokens:800 ────────────
+// ── IDENTIFICA DANINHA ─── SONNET (temporario p/ medicao de custo real) | max_tokens:1000 ────────────
 // ATUALIZADO: todas as 12 plantas agora possuem descritores visuais completos
 // (habito de crescimento, caule, folha, flor/fruto, traco distintivo) para
 // reduzir confusao entre especies parecidas — ex: caruru sendo confundido
@@ -1397,6 +1397,7 @@ app.post("/identifica-daninha", async function(req, res) {
 "TESTE DECISIVO (use SEMPRE): (1) As folhas saem ao longo de um caule que sobe, alternadas/opostas? => FOLHA LARGA (grupo A), mesmo que as folhas sejam estreitas. (2) As folhas saem todas da base? entao veja o caule: triangular = TIRIRICA (C); redondo com nos = CAPIM (B). (3) A MARGEM da folha tem dentes/recortes visiveis (irregular, nao lisa)? Capim e tiririca SEMPRE tem margem LISA/inteira — margem denteada ou recortada so existe em folha larga. Dentro de folha larga com dentes: se a folha continua UMA PECA SO (dentes so na beirada, sem dividir a folha) = pode ser BUVA; se os recortes vao fundo e DIVIDEM a folha em segmentos separados (quase ate a nervura central) = LOSNA-BRANCA.\n"+
 "ATENCAO AO ANGULO DA FOTO (erro comum): uma foto tirada de CIMA PARA BAIXO, direto no topo/broto de uma planta erguida, mostra as folhas se espalhando em RODA ao redor do centro — isso PARECE uma roseta saindo da base (como tiririca), mas NAO E, e sim uma planta de caule unico vista de cima. Antes de concluir 'folhas da base', verifique se da pra ver claramente um UNICO CAULE ERGUIDO abaixo do conjunto de folhas (mesmo que so a base do caule apareca no canto). Se houver duvida sobre o angulo (nao da pra confirmar se as folhas saem de um caule ereto ou realmente da base do solo), use confianca 'baixa' ou 'media' e peca uma FOTO DE LADO mostrando a planta inteira (da base ate o topo) no campo 'acao', em vez de cravar tiririca so pela forma circular do topo.\n"+
 "REGRA DE OURO 1: BUVA vs TIRIRICA — a BUVA e alta (ate 2m), folhas ESTREITAS ALTERNADAS subindo por um caule UNICO e redondo, com flores/pappus algodonoso no topo. A TIRIRICA e baixa, folhas saem DA BASE em 3 fileiras, caule TRIANGULAR. Se a planta e alta e tem folhas subindo pelo caule, e BUVA, NUNCA tiririca.\n"+
+"REGRA DE OURO 1B: BUVA vs LOSNA-BRANCA E UM CASO DIFICIL — a diferenca de profundidade de recorte na folha pode ser sutil e nao e 100% confiavel sozinha (buva pode ter folha bem serrilhada tambem). O traco REALMENTE decisivo entre essas duas e a INFLORESCENCIA: buva=capitulos pequenos esbranquicados/creme que viram pluma/pappus algodonoso; losna=capitulos brancos pequenos SEMIGLOBOSOS distintos. Se a foto NAO mostra claramente a flor/inflorescencia DA PROPRIA planta em foco (nao de outra planta ao fundo desfocada), NAO atribua confianca 'alta' para nenhuma das duas — use 'media', mencione as DUAS possibilidades no campo 'acao' e peca uma foto que inclua a flor/inflorescencia para confirmar.\n"+
 "REGRA DE OURO 2: cor da flor e decisiva. Flor AZUL/lilas com 3 petalas + caule suculento = TRAPOERABA. Flor BRANCA em estrela com folhas opostas asperas = POAIA-BRANCA (NAO e trapoeraba).\n\n"+
 "REGRA MAIS IMPORTANTE 2: Identifique as especies de plantas daninhas visiveis na imagem que voce reconhece com seguranca.\n\n"+
 "PLANTAS DANINHAS DO CAFE:\n"+
@@ -1426,7 +1427,7 @@ app.post("/identifica-daninha", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:1000,temperature:0,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,temperature:0,
         system:[
           { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } },
           { type:"text", text: contexto||"Sem contexto regional adicional." }
@@ -1438,7 +1439,7 @@ app.post("/identifica-daninha", async function(req, res) {
     if(d.error) console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);
+    logUsoAnalise(userId, "daninha", "claude-sonnet-4-6", d.usage, regiao);
     if(resultado){
       if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
       if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];

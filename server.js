@@ -1164,6 +1164,7 @@ app.post("/diagnostico", async function(req, res) {
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
       resultado=garantirAvisoFerrugem(resultado);
+      resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", "claude-sonnet-4-6", usageCapturado, regiao);
       encerrar();
@@ -1215,6 +1216,7 @@ app.post("/diagnostico-json", async function(req, res) {
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
     resultado=garantirAvisoFerrugem(resultado);
+    resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado);
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1336,6 +1338,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
     resultado=garantirAvisoFerrugem(resultado);
+    resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1375,7 +1378,7 @@ app.post("/analise-solo", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
-// ── IDENTIFICA DANINHA ─── HAIKU (teste comparativo vs Sonnet, ver /custo-api) | max_tokens:1600 ────────────
+// ── IDENTIFICA DANINHA ─── SONNET (definitivo — Haiku testado e reprovado: 3/3 erros, alucinação visual) | max_tokens:1600 ────────────
 // ATUALIZADO: todas as 12 plantas agora possuem descritores visuais completos
 // (habito de crescimento, caule, folha, flor/fruto, traco distintivo) para
 // reduzir confusao entre especies parecidas — ex: caruru sendo confundido
@@ -1430,7 +1433,7 @@ app.post("/identifica-daninha", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:1600,temperature:0,
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1600,temperature:0,
         system:[
           { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } },
           { type:"text", text: contexto||"Sem contexto regional adicional." }
@@ -1442,7 +1445,7 @@ app.post("/identifica-daninha", async function(req, res) {
     if(d.error) console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);
+    logUsoAnalise(userId, "daninha", "claude-sonnet-4-6", d.usage, regiao);
     if(resultado){
       if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
       if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
@@ -1475,6 +1478,58 @@ function garantirAvisoFerrugem(resultado) {
       var acaoAtual=(d.acao||"");
       var jaTemAviso=/face\s*(de\s*)?baixo|face\s*inferior/i.test(acaoAtual);
       if(!jaTemAviso) d.acao=AVISO_FACE_BAIXO+acaoAtual;
+    }
+  });
+  return resultado;
+}
+
+// ── GALERIA DE REFERENCIA VISUAL ────────────────────────────────
+// Fotos proprias (nao buscadas na web a cada analise — sem custo extra, sem
+// risco de direito autoral, sem atraso). Hospedar em:
+// https://doutor-cafe-app.vercel.app/referencias/<chave>.jpg
+// Basta subir os arquivos com esses nomes exatos na pasta /public/referencias
+// do projeto Vercel (doutor-cafe-app) — nao precisa mexer em codigo depois.
+// Preencher 1 foto boa e representativa por chave (a legenda pode citar o
+// estagio/traço mostrado na foto escolhida).
+var BASE_REFERENCIAS = "https://doutor-cafe-app.vercel.app/referencias/";
+var REFERENCIAS_VISUAIS = {
+  // doencas fungicas
+  "ferrugem":          { arquivo:"ferrugem.jpg",          legenda:"Ferrugem: pústulas/pó alaranjado na face de baixo da folha" },
+  "cercosporiose":      { arquivo:"cercosporiose.jpg",      legenda:"Cercosporiose: mancha circular com centro branco-acinzentado e halo amarelo fino" },
+  "ascochyta":          { arquivo:"ascochyta.jpg",          legenda:"Ascochyta: mancha arredondada marrom-clara com anéis concêntricos" },
+  "antracnose":         { arquivo:"antracnose.jpg",         legenda:"Antracnose: lesão afundada preta de bordas irregulares" },
+  "phoma":              { arquivo:"phoma.jpg",              legenda:"Phoma: mancha escura pela borda da folha nova, causando encurvamento" },
+  "aureolada":          { arquivo:"aureolada.jpg",          legenda:"Aureolada (bacteriana): mancha parda com halo amarelo grande, seca ramos" },
+  "mancha_manteigosa":  { arquivo:"mancha_manteigosa.jpg",  legenda:"Mancha manteigosa: lesão encharcada e oleosa" },
+  "corynespora":        { arquivo:"corynespora.jpg",        legenda:"Corynespora (mancha-alvo): anéis concêntricos com centro escuro" },
+  "koleroga":           { arquivo:"koleroga.jpg",           legenda:"Koleroga: folhas caídas presas por fios de micélio" },
+  // pragas
+  "bicho":              { arquivo:"bicho_mineiro.jpg",      legenda:"Bicho-mineiro: trilhas serpentinas castanhas dentro da folha" },
+  "acaro":              { arquivo:"acaro.jpg",              legenda:"Ácaro: folha bronzeada/acinzentada opaca" },
+  "cochonilha":         { arquivo:"cochonilha.jpg",         legenda:"Cochonilha: massas brancas algodonosas nos ramos" },
+  "broca":              { arquivo:"broca.jpg",              legenda:"Broca: furo circular pequeno no fruto" },
+  // deficiencias nutricionais
+  "nitrogenio":         { arquivo:"deficiencia_nitrogenio.jpg", legenda:"Deficiência de Nitrogênio: folha toda amarela uniforme (folhas velhas)" },
+  "fosforo":            { arquivo:"deficiencia_fosforo.jpg",    legenda:"Deficiência de Fósforo: tom avermelhado/arroxeado em folhas velhas" },
+  "magnesio":           { arquivo:"deficiencia_magnesio.jpg",   legenda:"Deficiência de Magnésio: nervuras verdes com tecido amarelo entre elas" },
+  "potassio":           { arquivo:"deficiencia_potassio.jpg",   legenda:"Deficiência de Potássio: queima/necrose nas bordas e pontas (folhas velhas)" },
+  "ferro":              { arquivo:"deficiencia_ferro.jpg",      legenda:"Deficiência de Ferro: folhas novas esbranquiçadas com nervuras verdes" },
+  "calcio":             { arquivo:"deficiencia_calcio.jpg",     legenda:"Deficiência de Cálcio: folhas novas deformadas e encurvadas" },
+  "boro":               { arquivo:"deficiencia_boro.jpg",       legenda:"Deficiência de Boro: folhas novas pequenas e quebradiças em roseta" },
+  "zinco":              { arquivo:"deficiencia_zinco.jpg",      legenda:"Deficiência de Zinco: folhas novas estreitas e alongadas em roseta" }
+};
+// So anexa a foto de referencia quando a confianca vier baixa (e' exatamente
+// o cenario em que o produtor precisa de mais um jeito de conferir visualmente
+// alem do texto). Confianca alta/media nao precisa — o diagnostico ja e' claro.
+function anexarReferenciaVisual(resultado) {
+  if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
+  resultado.diagnosticos.forEach(function(d){
+    if(d&&d.confianca==="baixa"){
+      var ref=REFERENCIAS_VISUAIS[d.diagnostico];
+      if(ref){
+        d.imagem_referencia=BASE_REFERENCIAS+ref.arquivo;
+        d.imagem_referencia_legenda=ref.legenda;
+      }
     }
   });
   return resultado;

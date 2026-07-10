@@ -1075,6 +1075,12 @@ app.post("/diagnostico", async function(req, res) {
   res.setHeader("Connection","keep-alive");
   res.setHeader("X-Accel-Buffering","no");
   res.flushHeaders();
+  // Padding inicial: o header X-Accel-Buffering so funciona em proxy NGINX.
+  // O proxy da Railway pode ignorar esse header e "represar" a resposta ate
+  // fechar a conexao, anulando o streaming. Mandar um comentario SSE grande
+  // logo de cara costuma estourar o buffer interno do proxy e forcar ele a
+  // comecar a repassar os pedacos de verdade, em vez de acumular tudo.
+  res.write(": " + new Array(8193).join(" ") + "\n\n");
 
   var ping = setInterval(function(){ try { res.write(": ping\n\n"); } catch(e){ clearInterval(ping); } }, 5000);
   function encerrar() { clearInterval(ping); try { res.end(); } catch(e){} }
@@ -1436,6 +1442,8 @@ app.post("/identifica-daninha", async function(req, res) {
   res.setHeader("Connection","keep-alive");
   res.setHeader("X-Accel-Buffering","no");
   res.flushHeaders();
+  // Mesmo truque de padding do /diagnostico — ver comentario la.
+  res.write(": " + new Array(8193).join(" ") + "\n\n");
 
   var ping = setInterval(function(){ try { res.write(": ping\n\n"); } catch(e){ clearInterval(ping); } }, 5000);
   function encerrarDaninha() { clearInterval(ping); try { res.end(); } catch(e){} }

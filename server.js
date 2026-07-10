@@ -1379,10 +1379,11 @@ app.post("/analise-solo", async function(req, res) {
 });
 
 // ── IDENTIFICA DANINHA ─── SONNET (definitivo — Haiku testado e reprovado: 3/3 erros, alucinação visual) | max_tokens:1600 ────────────
-// ATUALIZADO: todas as 12 plantas agora possuem descritores visuais completos
+// ATUALIZADO: 18 plantas no catalogo, todas com descritores visuais completos
 // (habito de crescimento, caule, folha, flor/fruto, traco distintivo) para
 // reduzir confusao entre especies parecidas — ex: caruru sendo confundido
-// com corda-de-viola por falta de descricao visual.
+// com corda-de-viola por falta de descricao visual. Cardo-santo/serralha-brava
+// (18) adicionada apos aparecer em teste real e nao bater com nenhuma das 17.
 app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
@@ -1423,38 +1424,96 @@ app.post("/identifica-daninha", async function(req, res) {
 "14. POAIA-BRANCA / ERVA-QUENTE (Richardia brasiliensis / Spermacoce): RASTEIRA a semi-ereta, folhas OPOSTAS lanceoladas ASPERAS (pilosas) sem bainha, flores BRANCAS pequenas em ESTRELA (4-6 petalas) agrupadas nas pontas dos ramos. CONTRASTE COM TRAPOERABA: aqui a flor e BRANCA e nao ha bainha nem suculencia; trapoeraba tem flor AZUL e bainha. Indica solo compactado/acido. 2,4-D, Glifosato pos-emergencia precoce.\n"+
 "15. BELDROEGA (Portulaca oleracea): RASTEIRA SUCULENTA, caule avermelhado grosso e carnudo, folhas pequenas em forma de COLHER (espatuladas) carnudas brilhantes, flores AMARELAS pequenas. Solo fertil e adubado. Glifosato, dificil por rebrota de fragmentos.\n"+
 "16. LEITEIRO / AMENDOIM-BRAVO (Euphorbia heterophylla): ERETA 20cm-2m, herbacea, TRACO DECISIVO: solta LATEX BRANCO LEITOSO abundante ao quebrar caule ou folha (teste mais confiavel). HETEROFILIA marcante: folhas de FORMATOS VARIADOS (lanceoladas, ovaladas, obovadas ou elipticas) na MESMA planta, as vezes ate no mesmo ramo — essa variacao de formato e caracteristica da especie. Inflorescencia pouco vistosa (pequenos capitulos verdes). Solo fertil. Glifosato, 2,4-D; resistencia comum a inibidores de ALS.\n"+
-"17. GRAMA-SEDA / GRAMA-BERMUDA (Cynodon dactylon): CAPIM perene ESTOLONIFERO rasteiro que forma tapete denso, folhas curtas cinza-esverdeadas, inflorescencia em 3-6 racemos digitados finos. Espalha por estolões e rizomas. Glifosato repetido.\n\n"+
+"17. GRAMA-SEDA / GRAMA-BERMUDA (Cynodon dactylon): CAPIM perene ESTOLONIFERO rasteiro que forma tapete denso, folhas curtas cinza-esverdeadas, inflorescencia em 3-6 racemos digitados finos. Espalha por estolões e rizomas. Glifosato repetido.\n"+
+"18. CARDO-SANTO / SERRALHA-BRAVA (Sonchus oleraceus / Sonchus asper / Carduus/Cirsium spp.): FOLHA LARGA. Roseta basal de folhas GRANDES, LOBADAS e com margem ESPINHOSA/dentada bem marcada, achatada contra o solo no inicio; caule ERETO UNICO emergindo do centro da roseta (as vezes ROXO-AVERMELHADO), folhas superiores ALTERNADAS subindo pelo caule, menores e mais verdes que as basais. Folhas mais velhas/basais podem ter tom ACINZENTADO-ESBRANQUICADO (indumento farinaceo/tricomas densos), formando um contraste visivel com as folhas novas do topo, mais verdes e lisas. TRACO DECISIVO para especie exata: a FLOR — Sonchus (serralha) tem capitulo AMARELO tipo dente-de-leao; Carduus/Cirsium (cardo) tem capitulo ROXO/lilas espinhoso. Se a flor nao estiver visivel na foto, use \"nome\":\"Cardo-santo / Serralha-brava (possivel Sonchus ou Carduus/Cirsium)\", confianca 'media', e peca foto da flor no campo 'acao' para confirmar; inclua produtos para as duas hipoteses (2,4-D ou Glifosato para Sonchus; picloram ou 2,4-D para Carduus/Cirsium). Solo compactado, perturbado ou com baixa cobertura vegetal — comum em bordas de construcao, estradas e areas de solo exposto.\n\n"+
 "IMPORTANTE no campo 'nome' de cada produto: use o nome generico (ingrediente ativo, ex: Saflufenacil, Carfentrazona-etilica, Glifosato) com a formulacao quando souber. Nomes comerciais citados nas notas acima sao apenas referencia interna — NAO os repita como se fossem o nome do produto, pois o produtor pode ter acesso a uma marca diferente com o mesmo generico.\n\n"+
 "REGRA FINAL: Só use confianca 'alta' se o TRACO DECISIVO daquela especie estiver VISIVEL e confirmado na foto (ex: tiririca => folhas da base em 3 fileiras OU caule triangular, margem lisa; buva => folha estreita alternada no caule, formando UMA PECA SO mesmo com dentes na borda + pappus/flores esbranquicadas; losna-branca => folha DIVIDIDA em segmentos que quase chegam a nervura central, tipo samambaia; trapoeraba => flor azul/bainha; poaia => flor branca). Se o traco decisivo NAO aparece, use no maximo 'media'. Se a planta nao corresponde CLARAMENTE a nenhuma especie da lista, use \"nome\":\"Nao identificado com certeza\", confianca 'baixa', e no campo 'acao' peca uma foto mais proxima e nitida da planta inteira (folha, caule e base) — NAO escolha a especie mais parecida so para preencher. Preencha 'grupo' com o grupo que voce viu (folha_larga|capim|junca|indefinido) e 'visto' com os tracos concretos observados.\n\n"+
 "RESPONDA SOMENTE JSON:\n"+
 "{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"grupo\":\"folha_larga|capim|junca|indefinido\",\"visto\":\"tracos visiveis que justificam a identificacao\",\"confianca\":\"alta|media|baixa\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome generico (ingrediente ativo) com formulacao, ex: Saflufenacil 700WG\",\"dose\":\"dose pratica\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\"}],\"indicador_geral\":\"o que indica sobre o solo\",\"manejo_integrado\":\"estrategia geral\"}";
 
-  try {
-    var r=await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1600,temperature:0,
-        system:[
-          { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } },
-          { type:"text", text: contexto||"Sem contexto regional adicional." }
-        ],
-        messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
-    });
-    var d=await r.json();
-    console.log("STATUS DANINHA:", r.status, "| RESPOSTA:", JSON.stringify(d).substring(0,500));
-    if(d.error) console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
-    var txt=d.content&&d.content[0]?d.content[0].text:"";
-    var resultado=extrairJSON(txt);
-    logUsoAnalise(userId, "daninha", "claude-sonnet-4-6", d.usage, regiao);
-    if(resultado){
-      if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
-      if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
-      res.json(resultado);
-    } else {
-      console.error("EXTRAIRJSON FALHOU. stop_reason:", d.stop_reason, "| Tamanho texto:", txt.length, "| Ultimos 300 chars:", txt.substring(Math.max(0,txt.length-300)));
-      res.json({plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""});
+  res.setHeader("Content-Type","text/event-stream");
+  res.setHeader("Cache-Control","no-cache");
+  res.setHeader("Connection","keep-alive");
+  res.setHeader("X-Accel-Buffering","no");
+  res.flushHeaders();
+
+  var ping = setInterval(function(){ try { res.write(": ping\n\n"); } catch(e){ clearInterval(ping); } }, 5000);
+  function encerrarDaninha() { clearInterval(ping); try { res.end(); } catch(e){} }
+
+  fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
+    body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1600,temperature:0,stream:true,
+      system:[
+        { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } },
+        { type:"text", text: contexto||"Sem contexto regional adicional." }
+      ],
+      messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
+  })
+  .then(function(r){
+    var Readable = require("stream").Readable;
+    var stream = Readable.fromWeb(r.body);
+    var buf="", texto="", nomeParcialEnviado=false;
+    var usageCapturado={input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0};
+
+    function detectarNomeParcial() {
+      if(nomeParcialEnviado) return;
+      var m=/"nome"\s*:\s*"([^"]+)"[\s\S]{0,200}?"confianca"\s*:\s*"([^"]+)"/.exec(texto);
+      if(m){
+        res.write("data: "+JSON.stringify({ tipo:"nome_parcial", nome:m[1], confianca:m[2] })+"\n\n");
+        nomeParcialEnviado=true;
+      }
     }
-  } catch(e) { console.error("ERRO DANINHA CATCH:", e.message, e.stack); res.status(500).json({ erro:e.message }); }
+
+    stream.on("data", function(chunk){
+      buf+=chunk.toString();
+      var linhas=buf.split("\n"); buf=linhas.pop();
+      linhas.forEach(function(linha){
+        if(!linha.startsWith("data: ")) return;
+        var d=linha.slice(6);
+        if(d==="[DONE]") return;
+        try {
+          var ev=JSON.parse(d);
+          if(ev.type==="message_start"&&ev.message&&ev.message.usage){
+            var u0=ev.message.usage;
+            usageCapturado.input_tokens=u0.input_tokens||0;
+            usageCapturado.cache_creation_input_tokens=u0.cache_creation_input_tokens||0;
+            usageCapturado.cache_read_input_tokens=u0.cache_read_input_tokens||0;
+          }
+          if(ev.type==="message_delta"&&ev.usage){
+            usageCapturado.output_tokens=ev.usage.output_tokens||usageCapturado.output_tokens;
+          }
+          if(ev.type==="content_block_delta"&&ev.delta&&ev.delta.text){
+            texto+=ev.delta.text;
+            detectarNomeParcial();
+          }
+        }catch(e){}
+      });
+    });
+
+    stream.on("end", function(){
+      var resultado=extrairJSON(texto);
+      if(resultado){
+        if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
+        if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
+      } else {
+        console.error("EXTRAIRJSON FALHOU DANINHA. Tamanho texto:", texto.length, "| Ultimos 300 chars:", texto.substring(Math.max(0,texto.length-300)));
+        resultado={plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""};
+      }
+      res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
+      logUsoAnalise(userId, "daninha", "claude-sonnet-4-6", usageCapturado, regiao);
+      encerrarDaninha();
+    });
+
+    stream.on("error", function(e){
+      res.write("data: "+JSON.stringify({ tipo:"erro", msg:e.message })+"\n\n");
+      encerrarDaninha();
+    });
+  })
+  .catch(function(e){
+    res.write("data: "+JSON.stringify({ tipo:"erro", msg:e.message })+"\n\n");
+    encerrarDaninha();
+  });
 });
 
 // ── EXTRATOR JSON ─────────────────────────────────────────────

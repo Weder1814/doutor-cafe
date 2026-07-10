@@ -1163,6 +1163,7 @@ app.post("/diagnostico", async function(req, res) {
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
+      resultado=garantirAvisoFerrugem(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", "claude-sonnet-4-6", usageCapturado, regiao);
       encerrar();
@@ -1213,6 +1214,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
+    resultado=garantirAvisoFerrugem(resultado);
     logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado);
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1333,6 +1335,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
+    resultado=garantirAvisoFerrugem(resultado);
     logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
@@ -1372,7 +1375,7 @@ app.post("/analise-solo", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
-// ── IDENTIFICA DANINHA ─── SONNET (temporario p/ medicao de custo real) | max_tokens:1600 ────────────
+// ── IDENTIFICA DANINHA ─── HAIKU (teste comparativo vs Sonnet, ver /custo-api) | max_tokens:1600 ────────────
 // ATUALIZADO: todas as 12 plantas agora possuem descritores visuais completos
 // (habito de crescimento, caule, folha, flor/fruto, traco distintivo) para
 // reduzir confusao entre especies parecidas — ex: caruru sendo confundido
@@ -1427,7 +1430,7 @@ app.post("/identifica-daninha", async function(req, res) {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1600,temperature:0,
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:1600,temperature:0,
         system:[
           { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } },
           { type:"text", text: contexto||"Sem contexto regional adicional." }
@@ -1439,7 +1442,7 @@ app.post("/identifica-daninha", async function(req, res) {
     if(d.error) console.error("ERRO ANTHROPIC /identifica-daninha:", JSON.stringify(d.error));
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
-    logUsoAnalise(userId, "daninha", "claude-sonnet-4-6", d.usage, regiao);
+    logUsoAnalise(userId, "daninha", "claude-haiku-4-5-20251001", d.usage, regiao);
     if(resultado){
       if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
       if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
@@ -1458,6 +1461,23 @@ function extrairJSON(txt) {
   try { var ini=txt.indexOf("{"),fim=txt.lastIndexOf("}"); if(ini>-1&&fim>ini) return JSON.parse(txt.substring(ini,fim+1)); } catch(e1){}
   try { var clean=txt.replace(/[\u0000-\u001F\u007F-\u009F]/g," "); var ini=clean.indexOf("{"),fim=clean.lastIndexOf("}"); if(ini>-1&&fim>ini) return JSON.parse(clean.substring(ini,fim+1)); } catch(e2){}
   return null;
+}
+
+// Trava determinística (nao depende da IA obedecer o prompt): garante que toda
+// ferrugem com confianca baixa peca foto da face de baixo no campo 'acao'.
+// Isso e reforco alem da instrucao no prompt — LLM pode ocasionalmente ignorar
+// uma instrucao de texto mesmo bem escrita, isso aqui garante 100% das vezes.
+var AVISO_FACE_BAIXO = "Fotografe a face de baixo (inferior) desta folha para confirmar. ";
+function garantirAvisoFerrugem(resultado) {
+  if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
+  resultado.diagnosticos.forEach(function(d){
+    if(d&&d.diagnostico==="ferrugem"&&d.confianca==="baixa"){
+      var acaoAtual=(d.acao||"");
+      var jaTemAviso=/face\s*(de\s*)?baixo|face\s*inferior/i.test(acaoAtual);
+      if(!jaTemAviso) d.acao=AVISO_FACE_BAIXO+acaoAtual;
+    }
+  });
+  return resultado;
 }
 
 // ── BUILD PROMPT ──────────────────────────────────────────────

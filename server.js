@@ -1525,6 +1525,78 @@ app.post("/identifica-daninha", async function(req, res) {
   });
 });
 
+// ── TRIAGEM DE DEFEITOS DO GRÃO SECO ─── Sonnet | max_tokens:1800 ──────
+// Catalogo baseado em fontes tecnicas oficiais: Instrucao Normativa MAPA
+// no 8/2003 (Classificacao Oficial Brasileira), Rehagro e EMATER-MG.
+// REGRA DE OURO: NUNCA classificar bebida (mole/dura/riada/rio — exige
+// torra + prova sensorial por classificador certificado), NUNCA estimar
+// umidade (exige medidor fisico), NUNCA dar tipo/classificacao oficial
+// COB (exige amostra padronizada de 300g, nao uma foto de punhado na mao).
+// So aponta defeitos VISIVEIS na foto + causa provavel + acao pratica.
+app.post("/identifica-defeito-grao", async function(req, res) {
+  var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  var userId=req.body.userId||"anonimo";
+  if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
+  if (userId !== "anonimo") {
+    var uLimG = await dbGetUser(userId);
+    if (uLimG && analisesRestantes(uLimG) <= 0) {
+      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+    }
+  }
+  var contextoG=regiao?" O produtor esta na regiao "+regiao+".":"";
+  var sistemaGraos=
+"Voce e o Doutor Cafe, especialista em pos-colheita e classificacao fisica de cafe, com base na Instrucao Normativa MAPA no 8/2003 (Classificacao Oficial Brasileira - COB) e nos manuais tecnicos EMATER-MG e Rehagro.\n\n"+
+"Analise esta foto de uma AMOSTRA DE CAFE JA SECO E BENEFICIADO (grao cru, sem casca) e identifique os DEFEITOS VISIVEIS.\n\n"+
+"CATALOGO DE DEFEITOS INTRINSECOS (do grao):\n"+
+"preto=coloracao PRETA OPACA uniforme no grao inteiro. Causa: fruto ficou tempo demais na planta, ou grao caiu e ficou em contato com o solo (apodrecimento). E o PIOR defeito (maior peso na classificacao).\n"+
+"ardido=coloracao MARROM em tons variados (nao preto opaco, nao verde). Causa: fermentacao por microrganismo — pode ocorrer na lavoura (fruto caido) ou na secagem (terreiro sem revolvimento, ou grao preso em fenda/buraco do terreiro).\n"+
+"preto_verde=grao PRETO mas BRILHANTE (a pelicula prateada ainda fica aderida e da esse brilho). Causa: grao verde que passou por secagem MUITO INTENSA/alta temperatura. Deve ser tratado como categoria ardido na gravidade.\n"+
+"verde=coloracao VERDE em tons diversos, pelicula prateada aderida, sulco ventral fechado. Causa: colheita prematura (fruto ainda imaturo).\n"+
+"chocho_mal_granado=grao ACHATADO/MURCHO, MUITO MAIS LEVE e menor que os outros da amostra, superficie enrugada, formacao incompleta. Causa provavel: deficiencia nutricional (ESPECIALMENTE POTASSIO), estresse hidrico (falta de agua na fase de granacao), ou fator genetico/cultivar nao adaptada ao clima local. IMPORTANTE: se aparecer MUITO grao chocho na amostra, mencione no campo 'acao' que vale investigar adubacao potassica e irrigacao na lavoura — conecta com o modulo de diagnostico de folha do app.\n"+
+"brocado=um ou mais ORIFICIOS (furos) pequenos e redondos no grao, causados pela broca-do-café ainda na lavoura. Subtipos por gravidade: brocado_limpo (ate 3 furos, sem parte preta ao redor), brocado_rendado (3+ furos, sem parte preta), brocado_sujo (furos COM parte preta/azulada ao redor — o mais grave dos tres). Causa: infestacao de broca-do-cafe (Hypothenemus hampei) na lavoura.\n"+
+"concha_miolo_concha=grao com FORMATO CONCAVO/CONCHA, fino, resultado da separacao de dois graos que cresceram colados (grao cabeca). Nao e causado por manejo ruim, e uma anomalia natural da fecundacao do fruto.\n"+
+"quebrado_esmagado=grao PARTIDO ou ACHATADO/AMASSADO (nao inteiro). Esmagado (achatado, deformado) geralmente ocorre com grao de ALTA UMIDADE passando por maquina; Quebrado (partido em pedacos) e mais comum com grao de BAIXA UMIDADE (abaixo de 10%, fica quebradico) no beneficiamento. Causa: regulagem inadequada de descascador/beneficiadora, ou umidade do grao fora do ideal na hora de beneficiar.\n"+
+"melado_peliculado=grao com formato PERFEITO mas com a peliculazinha (espermoderma) ainda aderida, coloracao marrom LIGEIRAMENTE AVERMELHADA (nao e defeito grave, e mais um efeito climatico na secagem).\n"+
+"palido=coloracao AMARELADA que destoa visivelmente do resto da amostra (grãos ao redor são mais esverdeados/acinzentados).\n\n"+
+"CATALOGO DE DEFEITOS EXTRINSECOS (impurezas, nao sao graos de cafe ou sao grao com parte da casca/pergaminho ainda grudada):\n"+
+"coco=grao que AINDA TEM A CASCA (exocarpo) NAO RETIRADA no beneficiamento — parece um fruto seco inteiro, nao um grao limpo.\n"+
+"marinheiro=grao com o PERGAMINHO (a pelicula interna, cor palha/bege clara) parcialmente ou totalmente NAO retirado, cobrindo parte do grao.\n"+
+"casca=fragmento solto da casca seca do fruto, de tamanhos variados, misturado na amostra (nao esta grudado em nenhum grao).\n"+
+"pau_pedra_torrao=impurezas fisicas estranhas ao cafe (graveto, pedra, torrao de terra) misturadas na amostra.\n\n"+
+"REGRAS OBRIGATORIAS:\n"+
+"1. NUNCA mencione ou tente classificar 'bebida' (mole, dura, riada, rio, etc.) — isso exige torrar e degustar uma amostra por um classificador certificado, e impossivel avaliar por foto. Se o usuario perguntar sobre isso na duvida, explique isso no campo 'acao' de forma educada.\n"+
+"2. NUNCA estime umidade (%) — exige medidor fisico (higrometro).\n"+
+"3. NUNCA de uma classificacao oficial de 'Tipo' (Tipo 2 a Tipo 8 da COB) — isso exige amostra padronizada de 300g contada grao a grao, uma foto de um punhado na mao NAO e amostra valida para isso. Pode mencionar a gravidade relativa (ex: 'preto e ardido sao os defeitos mais graves') sem cravar um Tipo numerico.\n"+
+"4. So use confianca 'alta' se o defeito estiver CLARAMENTE visivel e sem ambiguidade com outro defeito parecido (ex: preto vs ardido escuro pode ser ambiguo — nesse caso use 'media').\n"+
+"5. Se a amostra parecer limpa/sem defeitos visiveis, retorne 'defeitos':[] — nao invente defeito so para preencher.\n"+
+"6. Para CADA defeito encontrado, o campo 'acao' deve ser uma orientacao PRATICA de manejo (ex: revisar ponto de colheita, regular descascador, investigar broca na lavoura, considerar adubacao potassica) — NUNCA um conselho de venda/precificacao.\n\n"+
+"RESPONDA SOMENTE JSON sem texto extra:\n"+
+"{\"defeitos\":[{\"nome\":\"nome popular do defeito em portugues\",\"chave\":\"uma_das_chaves_do_catalogo_acima\",\"visto\":\"o que exatamente foi visto na foto que embasa essa identificacao\",\"confianca\":\"alta|media|baixa\",\"causa\":\"causa provavel especifica, baseada no catalogo\",\"acao\":\"orientacao pratica de manejo, nunca sobre venda/bebida/tipo\"}]}";
+  try {
+    var rGr=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1800,temperature:0,
+        system:[
+          { type:"text", text: sistemaGraos, cache_control:{ type:"ephemeral", ttl:"1h" } },
+          { type:"text", text: contextoG||"Sem contexto regional adicional." }
+        ],
+        messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
+    });
+    var dGr=await rGr.json();
+    if(dGr.error) console.error("ERRO ANTHROPIC /identifica-defeito-grao:", JSON.stringify(dGr.error));
+    var txtGr=dGr.content&&dGr.content[0]?dGr.content[0].text:"";
+    var resultadoGr=extrairJSON(txtGr);
+    logUsoAnalise(userId, "graos", "claude-sonnet-4-6", dGr.usage, regiao);
+    if(resultadoGr && resultadoGr.defeitos){
+      res.json(resultadoGr);
+    } else {
+      console.error("EXTRAIRJSON FALHOU GRAOS. Tamanho texto:", txtGr.length, "| Ultimos 300 chars:", txtGr.substring(Math.max(0,txtGr.length-300)));
+      res.json({defeitos:[]});
+    }
+  } catch(e) { console.error("ERRO GRAOS CATCH:", e.message); res.status(500).json({ erro:e.message }); }
+});
+
 // ── EXTRATOR JSON ─────────────────────────────────────────────
 function extrairJSON(txt) {
   if(!txt) return null;

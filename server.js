@@ -1272,6 +1272,13 @@ app.post("/plano-acao", async function(req, res) {
 "CATEGORIA DE CADA DIAGNOSTICO: cada item da lista vem com sua categoria entre colchetes (ex: [doenca fungica], [doenca BACTERIANA], [praga], [deficiencia nutricional]). USE ESSA CATEGORIA EXATA no resumo_geral e demais campos — NUNCA infira ou generalize a categoria pelo tipo de produto usado (ex: dois problemas tratados ambos com cuprico NAO significa que sao da mesma categoria biologica).\n\n"+
 "REGRA DO CAMPO NUTRICAO — EVITAR INVENCAO:\n"+
 "So recomende correcao de um nutriente especifico (nome do nutriente + dose) se: (a) esse nutriente aparece explicitamente na lista de diagnosticos recebida, OU (b) ha uma relacao causal direta e conhecida com uma doenca listada e voce EXPLICITA essa relacao (ex: 'Mg baixo favorece antracnose'). Se nenhum diagnostico de deficiencia foi recebido e nao ha relacao causal clara e citada, NAO mencione nenhum nutriente pelo nome (nem 'de forma especulativa', nem como 'sugestao geral') — apenas escreva 'Nenhuma deficiencia nutricional diagnosticada. Recomenda-se analise foliar/solo periodica.' ou deixe o campo vazio.\n\n"+
+"CORRELACOES NUTRICAO-DOENCA/PRAGA CONHECIDAS (fonte: SENAR, Colecao 189 — use APENAS estas relacoes verificadas quando o diagnostico bater com o padrao abaixo; NAO invente outras combinacoes):\n"+
+"- Excesso de nitrogenio favorece phoma/ascochyta (tecido novo mais tenro e suscetivel).\n"+
+"- Deficiencia de nitrogenio favorece cercosporiose e ferrugem.\n"+
+"- Deficiencia de enxofre favorece bicho-mineiro.\n"+
+"- Deficiencia de calcio e/ou boro favorece phoma/ascochyta, aureolada e antracnose (seca de ponteiros abre porta para esses fungos).\n"+
+"- Deficiencias/desequilibrios nutricionais em geral (multiplos nutrientes baixos ao mesmo tempo) aumentam suscetibilidade a acaros e mancha-anular/leprose.\n"+
+"Se o diagnostico recebido incluir ao mesmo tempo uma dessas deficiencias E a doenca/praga correspondente, mencione a relacao no campo nutricao ou resumo_geral (ex: 'A deficiencia de calcio observada favorece o avanco da phoma diagnosticada — corrigir o nutriente ajuda tambem no controle da doenca'). Fora desses pares especificos, NAO presuma relacao causal.\n\n"+
 "SEJA DIRETO E CONCISO: cada campo deve ter no maximo 3-4 frases curtas ou bullets objetivos. Evite explicacoes longas, repeticao de justificativas, ou sub-listas extensas. Priorize as informacoes mais acionaveis.\n\n"+
 "LINGUAGEM PARA PRODUTOR LEIGO — MUITO IMPORTANTE:\n"+
 "1. Use APENAS o nome generico com a formulacao exata (ex: 'Oxicloreto de Cobre 840WP', 'Tebuconazol 200SC') EXATAMENTE como aparece na lista de produtos individuais fornecida. NUNCA invente, cite ou 'lembre' nomes comerciais/marcas de memoria — associar a marca errada ao ingrediente errado (ex: chamar Hidroxido de Cobre de 'Recop', que na verdade e Oxicloreto de Cobre) pode levar o produtor a comprar o produto incorreto. NUNCA troque a formulacao (WP/SC/EC) do que foi fornecido.\n"+
@@ -1350,10 +1357,152 @@ app.post("/diagnostico-video", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
-// ── ANÁLISE DE SOLO ─── Sonnet | max_tokens:2000 ─────────────
+// ── CALCULADORA DE CALAGEM E GESSAGEM (5ª Aproximação CFSEMG/1999) ──────
+// Norma ainda vigente em MG (nao ha 6a Aproximacao publicada ate 2026).
+// Metodo padrao: Saturacao de Bases (mais usado na pratica, considera a
+// CTC do solo). Fallback: metodo Aluminio Trocavel + Ca+Mg, usado quando o
+// laudo nao traz T (CTC a pH 7,0). Calculo 100% determinístico — a IA so
+// extrai os numeros brutos do laudo (campo valores_calculo), nunca calcula.
+var PRNT_PADRAO = 80; // PRNT medio de calcario comercial — ajustavel
+
+function calcularCalagemGessagem(vc) {
+  if (!vc) return null;
+  var ca = parseFloat(vc.ca_cmolc), mg = parseFloat(vc.mg_cmolc), k = parseFloat(vc.k_cmolc);
+  var al = parseFloat(vc.al_cmolc), t = parseFloat(vc.t_cmolc), tEf = parseFloat(vc.ctc_efetiva_cmolc);
+  var argila = parseFloat(vc.argila_pct);
+  var metodo = null, nc = null;
+
+  if (!isNaN(t) && t > 0) {
+    // Metodo de Saturacao de Bases: NC = (Ve/100)*T - SB
+    var sb = (isNaN(ca)?0:ca) + (isNaN(mg)?0:mg) + (isNaN(k)?0:k);
+    var Ve = 60; // saturacao de bases pretendida para cafeeiro (5a Aproximacao)
+    nc = (Ve/100)*t - sb;
+    metodo = "saturacao_bases";
+  } else if (!isNaN(al) && (!isNaN(ca) || !isNaN(mg))) {
+    // Metodo Aluminio Trocavel + Ca+Mg: NC = Y*Al + [X-(Ca+Mg)]
+    var Y = 2; // textura media, default
+    if (!isNaN(argila)) {
+      if (argila < 15) Y = 1; else if (argila <= 35) Y = 2;
+      else if (argila <= 60) Y = 3; else Y = 4;
+    }
+    var X = 3; // cafeeiro (alta exigencia em Ca)
+    var caMg = (isNaN(ca)?0:ca) + (isNaN(mg)?0:mg);
+    var parteAl = Y * al, parteCaMg = X - caMg;
+    nc = (parteAl > 0 ? parteAl : 0) + (parteCaMg > 0 ? parteCaMg : 0);
+    metodo = "aluminio_ca_mg";
+  }
+
+  if (nc === null || isNaN(nc) || nc <= 0) return null;
+
+  var qc = nc * (100 / PRNT_PADRAO);
+  var resultado = {
+    metodo: metodo,
+    necessidade_calcario_t_ha: Math.round(nc * 100) / 100,
+    dose_recomendada_t_ha: Math.round(qc * 100) / 100,
+    prnt_considerado: PRNT_PADRAO,
+    observacao: "Calculo pela 5a Aproximacao (CFSEMG/1999), norma ainda vigente em MG. Dose ajustada para PRNT ~" + PRNT_PADRAO + "%; confira o PRNT real no saco do calcario e ajuste: dose_final = dose_calculada x (100/PRNT_real)."
+  };
+
+  // Gessagem: indicada se saturacao por Al no subsolo (m%) >= 30% ou Ca baixo
+  var mPct = null;
+  if (!isNaN(al) && !isNaN(tEf) && tEf > 0) mPct = (al / tEf) * 100;
+  var precisaGesso = (mPct !== null && mPct >= 30) || (!isNaN(ca) && ca <= 0.4);
+  if (precisaGesso) {
+    var ng = nc * 0.25; // 25% da NC, para correcao na camada de 20-40cm
+    if (ng > 0) {
+      resultado.gessagem = {
+        necessario: true,
+        dose_recomendada_t_ha: Math.round(ng * 100) / 100,
+        motivo: mPct !== null ? ("saturacao por aluminio no subsolo estimada em " + Math.round(mPct) + "%") : "calcio baixo",
+        observacao: "Gesso nao substitui o calcario — aplique os dois. O gesso age no subsolo (20-40cm) e o calcario na camada superficial."
+      };
+    }
+  }
+  return resultado;
+}
+
+// ── CALCULADORA DE ADUBAÇÃO NPK (5ª Aproximação CFSEMG/1999) ────────────
+// Tabelas 14 e 15 do "Manual do Café - Manejo de Cafezais em Produção"
+// (EMATER-MG/2016), que reproduzem a norma oficial. Depende da produtividade
+// ESPERADA (sc/ha) informada pelo produtor — dado que nao vem do laudo.
+// N: tabela por faixa de produtividade (coluna "sem analise foliar", pois o
+// app ainda nao coleta analise foliar). P2O5: tabela por produtividade x
+// classe de fertilidade de P (que depende do teor de argila). K2O: tabela
+// por produtividade x classe de fertilidade de K (direto em mg/dm3, sem
+// depender de argila).
+var TABELA_N = [
+  { max:20, dose:200 }, { max:30, dose:250 }, { max:40, dose:300 },
+  { max:50, dose:350 }, { max:60, dose:400 }, { max:Infinity, dose:450 }
+];
+var TABELA_P2O5 = [ // [muito_baixo, baixo, medio, bom, muito_bom]
+  { max:20,  doses:[30,20,10,0,0] }, { max:30,  doses:[40,30,20,0,0] },
+  { max:40,  doses:[50,40,25,0,0] }, { max:50,  doses:[60,50,30,15,0] },
+  { max:60,  doses:[70,55,35,18,0] }, { max:Infinity, doses:[80,60,40,20,0] }
+];
+var TABELA_K2O = [ // [baixo(<60), medio(60-120), bom(120-200), muito_bom(>200)]
+  { max:20,  doses:[200,150,100,0] }, { max:30,  doses:[250,190,125,0] },
+  { max:40,  doses:[300,225,150,0] }, { max:50,  doses:[350,260,175,50] },
+  { max:60,  doses:[400,300,200,75] }, { max:Infinity, doses:[450,340,225,100] }
+];
+// Faixas de argila (%) -> limites de P (mg/dm3) para cada classe [muito_baixo,baixo,medio,bom]
+// acima do limite "bom" já é muito_bom (índice 4)
+var FAIXAS_P_POR_ARGILA = [
+  { max:15,  limites:[7.5, 15.0, 22.5, 33.8] },
+  { max:35,  limites:[5.0, 9.0, 15.0, 22.5] },
+  { max:60,  limites:[3.0, 6.0, 9.0, 13.5] },
+  { max:101, limites:[1.9, 4.0, 6.0, 9.0] }
+];
+
+function classificarPorFaixa(valor, faixas) {
+  for (var i=0;i<faixas.length;i++) if (valor <= faixas[i]) return i;
+  return faixas.length; // acima da última faixa = muito_bom
+}
+function buscarDoseTabela(tabela, produtividadeSc, indiceClasse) {
+  for (var i=0;i<tabela.length;i++) {
+    if (produtividadeSc <= tabela[i].max) {
+      var linha = tabela[i];
+      return linha.doses ? linha.doses[indiceClasse] : linha.dose;
+    }
+  }
+  return null;
+}
+
+function calcularAdubacaoNPK(produtividadeSc, pMgDm3, kMgDm3, argilaPct) {
+  if (produtividadeSc === null || produtividadeSc === undefined || isNaN(produtividadeSc) || produtividadeSc <= 0) return null;
+
+  var doseN = buscarDoseTabela(TABELA_N, produtividadeSc, null);
+
+  var doseK2O = null;
+  if (!isNaN(kMgDm3)) {
+    var classeK = kMgDm3 < 60 ? 0 : (kMgDm3 <= 120 ? 1 : (kMgDm3 <= 200 ? 2 : 3));
+    doseK2O = buscarDoseTabela(TABELA_K2O, produtividadeSc, classeK);
+  }
+
+  var doseP2O5 = null;
+  if (!isNaN(pMgDm3)) {
+    var argila = isNaN(argilaPct) ? 30 : argilaPct; // default textura media se nao informado
+    var faixaArgila = FAIXAS_P_POR_ARGILA[0];
+    for (var j=0;j<FAIXAS_P_POR_ARGILA.length;j++) { if (argila <= FAIXAS_P_POR_ARGILA[j].max) { faixaArgila = FAIXAS_P_POR_ARGILA[j]; break; } }
+    var classeP = classificarPorFaixa(pMgDm3, faixaArgila.limites);
+    doseP2O5 = buscarDoseTabela(TABELA_P2O5, produtividadeSc, classeP);
+  }
+
+  if (doseN === null && doseP2O5 === null && doseK2O === null) return null;
+
+  return {
+    produtividade_esperada_sc_ha: produtividadeSc,
+    nitrogenio_kg_ha_ano: doseN,
+    fosforo_p2o5_kg_ha_ano: doseP2O5,
+    potassio_k2o_kg_ha_ano: doseK2O,
+    observacao: "Doses anuais totais (5a Aproximacao, CFSEMG/1999). Parcele em 3-4 aplicacoes de N e K2O ao longo do periodo chuvoso, sob a saia do cafeeiro. O fosforo (P2O5) pode ser aplicado de uma so vez, de forma localizada. Sem analise foliar, o N considera a tabela padrao — se tiver analise foliar recente, um agronomo pode ajustar a dose para cima ou para baixo."
+  };
+}
+
+
 app.post("/analise-solo", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
+  var produtividadeSc = req.body.produtividadeSc!==undefined && req.body.produtividadeSc!==null && req.body.produtividadeSc!=="" ? parseFloat(req.body.produtividadeSc) : null;
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
   if (userId !== "anonimo") {
     var uLim = await dbGetUser(userId);
@@ -1362,7 +1511,7 @@ app.post("/analise-solo", async function(req, res) {
     }
   }
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper e Embrapa.\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}}}";
+  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \\\"valores\\\" com a amostra mais representativa ou a media simples entre elas. O campo \\\"acao\\\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar. Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
@@ -1379,6 +1528,21 @@ app.post("/analise-solo", async function(req, res) {
     var txt=d.content&&d.content[0]?d.content[0].text:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
+    if(resultado && resultado.valores_calculo){
+      try {
+        var calagem = calcularCalagemGessagem(resultado.valores_calculo);
+        if(calagem) resultado.calagem_gessagem = calagem;
+      } catch(eCalc) { console.error("ERRO calcularCalagemGessagem:", eCalc.message); }
+    }
+    if(resultado && produtividadeSc){
+      try {
+        var pNum = resultado.valores && resultado.valores.P && resultado.valores.P.valor ? parseFloat(String(resultado.valores.P.valor).replace(",",".")) : NaN;
+        var kNum = resultado.valores && resultado.valores.K && resultado.valores.K.valor ? parseFloat(String(resultado.valores.K.valor).replace(",",".")) : NaN;
+        var argilaNum = resultado.valores_calculo ? parseFloat(resultado.valores_calculo.argila_pct) : NaN;
+        var npk = calcularAdubacaoNPK(produtividadeSc, pNum, kNum, argilaNum);
+        if(npk) resultado.adubacao_npk = npk;
+      } catch(eNpk) { console.error("ERRO calcularAdubacaoNPK:", eNpk.message); }
+    }
     logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado||{acao:"Nao foi possivel ler o laudo. Verifique a foto e tente novamente.",valores:{}});
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }

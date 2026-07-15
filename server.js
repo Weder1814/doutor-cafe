@@ -1085,8 +1085,16 @@ app.post("/diagnostico", async function(req, res) {
   var ping = setInterval(function(){ try { res.write(": ping\n\n"); } catch(e){ clearInterval(ping); } }, 5000);
   function encerrar() { clearInterval(ping); try { res.end(); } catch(e){} }
 
+  // Cancela a chamada pra Anthropic se o cliente desconectar (timeout do app,
+  // fila offline reenfileirando, app fechado) — sem isso, a analise continua
+  // rodando e sendo cobrada mesmo que ninguem mais esteja esperando o resultado,
+  // e o retry automatico do app dispara uma SEGUNDA chamada paga em paralelo.
+  var abortCtrl = new AbortController();
+  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+
   fetch("https://api.anthropic.com/v1/messages", {
     method:"POST",
+    signal: abortCtrl.signal,
     headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
     body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, temperature:0, stream:true,
       system:[
@@ -1200,9 +1208,12 @@ app.post("/diagnostico-json", async function(req, res) {
     }
   }
   var contextoRegional=buildContextoRegional(regiao,altitude,false);
+  var abortCtrl = new AbortController();
+  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
+      signal: abortCtrl.signal,
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
         system:[
@@ -1291,9 +1302,12 @@ app.post("/plano-acao", async function(req, res) {
 
   var promptUsuario = regiaoCtx+"\n\nDiagnostico encontrou:\n"+resumoDiags;
 
+  var abortCtrl = new AbortController();
+  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
+      signal: abortCtrl.signal,
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:2000,temperature:0,
         system:[ { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } } ],
@@ -1335,9 +1349,12 @@ app.post("/diagnostico-video", async function(req, res) {
   var contextoRegional=buildContextoRegional(regiao,altitude,true);
   var content=[];
   frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:frame}}); });
+  var abortCtrl = new AbortController();
+  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
   try {
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
+      signal: abortCtrl.signal,
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
         system:[
@@ -1514,8 +1531,11 @@ app.post("/analise-solo", async function(req, res) {
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
   var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \\\"valores\\\" com a amostra mais representativa ou a media simples entre elas. O campo \\\"acao\\\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar. Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
   try {
+    var abortCtrl = new AbortController();
+    req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
     var r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
+      signal: abortCtrl.signal,
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2000,temperature:0,
         system:[
@@ -1614,8 +1634,12 @@ app.post("/identifica-daninha", async function(req, res) {
   var ping = setInterval(function(){ try { res.write(": ping\n\n"); } catch(e){ clearInterval(ping); } }, 5000);
   function encerrarDaninha() { clearInterval(ping); try { res.end(); } catch(e){} }
 
+  var abortCtrl = new AbortController();
+  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+
   fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
+    signal: abortCtrl.signal,
     headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
     body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2200,temperature:0,stream:true,
       system:[
@@ -1746,8 +1770,11 @@ app.post("/identifica-defeito-grao", async function(req, res) {
 "RESPONDA SOMENTE JSON sem texto extra:\n"+
 "{\"defeitos\":[{\"nome\":\"nome popular do defeito em portugues\",\"chave\":\"uma_das_chaves_do_catalogo_acima\",\"visto\":\"o que exatamente foi visto na foto que embasa essa identificacao\",\"confianca\":\"alta|media|baixa\",\"causa\":\"causa provavel especifica, baseada no catalogo\",\"acao\":\"orientacao pratica de manejo, nunca sobre venda/bebida/tipo\"}],\"resumo_geral\":\"causa raiz comum conectando os defeitos, ou string vazia se nao houver 2+ defeitos ou nao houver conexao clara\",\"recomendacao_processamento\":\"passos praticos de separacao/reprocessamento do lote, ou string vazia\"}";
   try {
+    var abortCtrl = new AbortController();
+    req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
     var rGr=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
+      signal: abortCtrl.signal,
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1800,temperature:0,
         system:[

@@ -1187,10 +1187,7 @@ app.post("/diagnostico", async function(req, res) {
   });
 });
 
-// ── DIAGNÓSTICO JSON (fallback quando o streaming SSE falha no meio) ─── Sonnet | max_tokens:3000 ──
-// ATENCAO CUSTO: reprocessa a MESMA foto do zero (nao reaproveita nada do SSE que ja rodou).
-// So deve ser chamado quando a conexao cai antes do evento "fim" do /diagnostico. Logado
-// separadamente como tipo:"foto_fallback_sse" em /custo-api para medir a frequencia real.
+// ── DIAGNÓSTICO JSON (fallback iOS) ─── Sonnet | max_tokens:3000 ──
 app.post("/diagnostico-json", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg";
   var regiao=req.body.regiao||null, altitude=req.body.altitude||null;
@@ -1226,10 +1223,7 @@ app.post("/diagnostico-json", async function(req, res) {
     }
     resultado=garantirAvisoFerrugem(resultado);
     resultado=anexarReferenciaVisual(resultado);
-    // tipo distinto de "foto": esse endpoint SO roda quando o streaming SSE falha no meio
-    // e reprocessa a foto do ZERO (custo em dobro daquela analise). Separado no relatorio
-    // de custo para dar visibilidade de quantas vezes isso acontece de verdade.
-    logUsoAnalise(userId, "foto_fallback_sse", "claude-sonnet-4-6", d.usage, regiao);
+    logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado);
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
 });

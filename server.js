@@ -1090,7 +1090,7 @@ app.post("/diagnostico", async function(req, res) {
     headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
     body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, temperature:0, stream:true,
       system:[
-        { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
+        { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral", ttl:"1h" } },
         { type:"text", text: contextoRegional }
       ],
       messages:[{ role:"user", content:[
@@ -1187,7 +1187,10 @@ app.post("/diagnostico", async function(req, res) {
   });
 });
 
-// ── DIAGNÓSTICO JSON (fallback iOS) ─── Sonnet | max_tokens:3000 ──
+// ── DIAGNÓSTICO JSON (fallback quando o streaming SSE falha no meio) ─── Sonnet | max_tokens:3000 ──
+// ATENCAO CUSTO: reprocessa a MESMA foto do zero (nao reaproveita nada do SSE que ja rodou).
+// So deve ser chamado quando a conexao cai antes do evento "fim" do /diagnostico. Logado
+// separadamente como tipo:"foto_fallback_sse" em /custo-api para medir a frequencia real.
 app.post("/diagnostico-json", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg";
   var regiao=req.body.regiao||null, altitude=req.body.altitude||null;
@@ -1206,7 +1209,7 @@ app.post("/diagnostico-json", async function(req, res) {
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
         system:[
-          { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral" } },
+          { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral", ttl:"1h" } },
           { type:"text", text: contextoRegional }
         ],
         messages:[{role:"user",content:[
@@ -1223,7 +1226,10 @@ app.post("/diagnostico-json", async function(req, res) {
     }
     resultado=garantirAvisoFerrugem(resultado);
     resultado=anexarReferenciaVisual(resultado);
-    logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
+    // tipo distinto de "foto": esse endpoint SO roda quando o streaming SSE falha no meio
+    // e reprocessa a foto do ZERO (custo em dobro daquela analise). Separado no relatorio
+    // de custo para dar visibilidade de quantas vezes isso acontece de verdade.
+    logUsoAnalise(userId, "foto_fallback_sse", "claude-sonnet-4-6", d.usage, regiao);
     res.json(resultado);
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
 });
@@ -1296,7 +1302,7 @@ app.post("/plano-acao", async function(req, res) {
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:2000,temperature:0,
-        system:[ { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } } ],
+        system:[ { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } } ],
         messages:[{role:"user",content:[{type:"text",text:promptUsuario}]}]})
     });
     var d=await r.json();
@@ -1341,7 +1347,7 @@ app.post("/diagnostico-video", async function(req, res) {
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
         system:[
-          { type:"text", text: buildPromptStatic(true), cache_control:{ type:"ephemeral" } },
+          { type:"text", text: buildPromptStatic(true), cache_control:{ type:"ephemeral", ttl:"1h" } },
           { type:"text", text: contextoRegional }
         ],
         messages:[{role:"user",content}]})
@@ -1519,7 +1525,7 @@ app.post("/analise-solo", async function(req, res) {
       headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
       body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2000,temperature:0,
         system:[
-          { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral" } },
+          { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } },
           { type:"text", text: contexto||"Sem contexto regional adicional." }
         ],
         messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})

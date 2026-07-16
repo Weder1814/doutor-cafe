@@ -193,6 +193,12 @@ async function initDB() {
         atualizado_em TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+
+    // ── ÍNDICES EXTRAS (performance ao escalar) ────────────────
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_usuarios_pin    ON usuarios(pin)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_analises_criado ON analises(user_id, criado_em DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_user ON pagamentos(user_id)`);
+
     console.log("✅ Tabelas PostgreSQL inicializadas");
   } catch(e) {
     console.error("❌ Erro ao inicializar tabelas:", e.message);

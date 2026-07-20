@@ -1202,6 +1202,75 @@ app.post("/diagnostico", async function(req, res) {
 });
 
 // ── DIAGNÓSTICO JSON (fallback iOS) ─── Sonnet | max_tokens:3000 ──
+// ── TESTE COMPARATIVO: QWEN2.5-VL-72B via OpenRouter ──────────
+// Endpoint SEPARADO, só para comparar qualidade/custo com a Sonnet.
+// NÃO é chamado por nenhum fluxo do app — só para você testar manualmente
+// (ex: via Postman, curl, ou uma tela de teste) com as mesmas fotos que já
+// tem diagnóstico conhecido pela Sonnet. Nada aqui afeta usuários reais.
+var OPENROUTER_KEY = process.env.OPENROUTER_KEY;
+app.post("/teste-qwen-diagnostico", async function(req, res) {
+  if (!OPENROUTER_KEY) return res.status(500).json({ erro:"OPENROUTER_KEY não configurada no Railway." });
+  var imagem = req.body.imagem;
+  var tipo   = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional;
+  var inicio = Date.now();
+
+  try {
+    var r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + OPENROUTER_KEY
+      },
+      body: JSON.stringify({
+        model: "qwen/qwen2.5-vl-72b-instruct",
+        temperature: 0,
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptCompleto },
+              { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+            ]
+          }
+        ]
+      })
+    });
+    var data = await r.json();
+    var duracaoMs = Date.now() - inicio;
+
+    if (!r.ok) {
+      return res.status(500).json({ erro: "Erro na OpenRouter", detalhes: data });
+    }
+
+    var textoResposta = data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content : "";
+    var resultado = extrairJSON(textoResposta);
+    var usage = data.usage || {};
+
+    // Custo aproximado (Qwen2.5-VL-72B via OpenRouter: ~$0.25/M input, ~$0.75/M output)
+    var custoUsd = ((usage.prompt_tokens||0) * 0.25 + (usage.completion_tokens||0) * 0.75) / 1000000;
+
+    res.json({
+      modelo: "qwen2.5-vl-72b-instruct",
+      duracao_ms: duracaoMs,
+      resultado_bruto: textoResposta,
+      resultado_parseado: resultado,
+      usage: usage,
+      custo_usd_estimado: Math.round(custoUsd * 100000) / 100000,
+      custo_brl_estimado: Math.round(custoUsd * 5.30 * 100) / 100
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 app.post("/diagnostico-json", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg";
   var regiao=req.body.regiao||null, altitude=req.body.altitude||null;

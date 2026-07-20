@@ -1271,7 +1271,7 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
   }
 });
 
-// ── TESTE COMPARATIVO: GEMINI 2.5 FLASH via Google AI Studio ──
+// ── TESTE COMPARATIVO: GEMINI 3.5 FLASH via Google AI Studio ──
 // Mesma logica do teste da Qwen: endpoint SEPARADO e isolado, so para
 // comparar qualidade/custo com a Sonnet. Nao afeta nenhum fluxo real do app.
 var GEMINI_KEY = process.env.GEMINI_API_KEY;
@@ -1289,7 +1289,7 @@ app.post("/teste-gemini-diagnostico", async function(req, res) {
 
   try {
     var r = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_KEY,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=" + GEMINI_KEY,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1317,13 +1317,13 @@ app.post("/teste-gemini-diagnostico", async function(req, res) {
     var resultado = extrairJSON(textoResposta);
     var usage = data.usageMetadata || {};
 
-    // Custo aproximado (Gemini 2.5 Flash: ~$0.30/M input, ~$2.50/M output)
+    // Custo aproximado (Gemini 3.5 Flash: ~$1.50/M input, ~$9/M output)
     var inputTok = usage.promptTokenCount || 0;
     var outputTok = usage.candidatesTokenCount || 0;
-    var custoUsd = (inputTok * 0.30 + outputTok * 2.50) / 1000000;
+    var custoUsd = (inputTok * 1.50 + outputTok * 9.00) / 1000000;
 
     res.json({
-      modelo: "gemini-2.5-flash",
+      modelo: "gemini-3.5-flash",
       duracao_ms: duracaoMs,
       resultado_bruto: textoResposta,
       resultado_parseado: resultado,

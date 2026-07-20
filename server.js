@@ -1271,6 +1271,71 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
   }
 });
 
+// ── TESTE COMPARATIVO: GEMINI 2.5 FLASH via Google AI Studio ──
+// Mesma logica do teste da Qwen: endpoint SEPARADO e isolado, so para
+// comparar qualidade/custo com a Sonnet. Nao afeta nenhum fluxo real do app.
+var GEMINI_KEY = process.env.GEMINI_API_KEY;
+app.post("/teste-gemini-diagnostico", async function(req, res) {
+  if (!GEMINI_KEY) return res.status(500).json({ erro:"GEMINI_API_KEY não configurada no Railway." });
+  var imagem = req.body.imagem;
+  var tipo   = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional;
+  var inicio = Date.now();
+
+  try {
+    var r = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_KEY,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: promptCompleto },
+              { inline_data: { mime_type: tipo, data: imagem } }
+            ]
+          }],
+          generationConfig: { temperature: 0, maxOutputTokens: 3000 }
+        })
+      }
+    );
+    var data = await r.json();
+    var duracaoMs = Date.now() - inicio;
+
+    if (!r.ok || data.error) {
+      return res.status(500).json({ erro: "Erro no Gemini", detalhes: data.error || data });
+    }
+
+    var textoResposta = data.candidates && data.candidates[0] && data.candidates[0].content
+      ? data.candidates[0].content.parts.map(function(p){ return p.text||""; }).join("")
+      : "";
+    var resultado = extrairJSON(textoResposta);
+    var usage = data.usageMetadata || {};
+
+    // Custo aproximado (Gemini 2.5 Flash: ~$0.30/M input, ~$2.50/M output)
+    var inputTok = usage.promptTokenCount || 0;
+    var outputTok = usage.candidatesTokenCount || 0;
+    var custoUsd = (inputTok * 0.30 + outputTok * 2.50) / 1000000;
+
+    res.json({
+      modelo: "gemini-2.5-flash",
+      duracao_ms: duracaoMs,
+      resultado_bruto: textoResposta,
+      resultado_parseado: resultado,
+      usage: { prompt_tokens: inputTok, completion_tokens: outputTok, total_tokens: usage.totalTokenCount||0 },
+      custo_usd_estimado: Math.round(custoUsd * 100000) / 100000,
+      custo_brl_estimado: Math.round(custoUsd * 5.30 * 100) / 100
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 app.post("/diagnostico-json", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg";
   var regiao=req.body.regiao||null, altitude=req.body.altitude||null;

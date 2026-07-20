@@ -1361,7 +1361,6 @@ app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
       },
       body: JSON.stringify({
         model: "gpt-5-mini",
-        temperature: 0,
         max_completion_tokens: 3000,
         messages: [
           {

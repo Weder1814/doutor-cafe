@@ -1,5 +1,7 @@
 var express = require("express");
 var cors = require("cors");
+var fs = require("fs");
+var path = require("path");
 var app = express();
 
 app.use(cors());
@@ -1280,6 +1282,64 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
   }
 });
 
+// ── EXEMPLOS FEW-SHOT PARA TESTE DO MISTRAL (calibração de confiança) ──
+// Dois casos reais curados manualmente: um onde confianca 'alta' é
+// justificada (traco decisivo nitidamente visivel) e outro onde so
+// confianca 'media' e correta (traco decisivo ausente, forma atipica),
+// alem de demonstrar a regra de nao criar item separado pra achado
+// incidental de confianca baixa (vai para diagnostico_diferencial).
+// Isolado do buildPromptStatic — usado SOMENTE no teste do Mistral.
+var FEWSHOT_EXEMPLO_ALTA_B64, FEWSHOT_EXEMPLO_MEDIA_B64;
+try {
+  FEWSHOT_EXEMPLO_ALTA_B64 = fs.readFileSync(path.join(__dirname, "fewshot", "exemplo-alta-confianca.b64.txt"), "utf8").trim();
+  FEWSHOT_EXEMPLO_MEDIA_B64 = fs.readFileSync(path.join(__dirname, "fewshot", "exemplo-media-confianca.b64.txt"), "utf8").trim();
+} catch (e) {
+  console.log("⚠️ Exemplos few-shot não encontrados em /fewshot — endpoint do Mistral vai rodar sem few-shot:", e.message);
+}
+
+var FEWSHOT_RESPOSTA_ALTA = JSON.stringify({
+  diagnosticos: [
+    {
+      diagnostico: "cercosporiose",
+      estagio: 4,
+      confianca: "alta",
+      visto: "Multiplas lesoes circulares na folha, com centro claro/esbranquicado nitidamente visivel e halo alaranjado bem definido ao redor de cada mancha; em algumas lesoes mais avancadas o tecido necrosado do centro caiu, deixando pequenos furos na folha. O centro claro caracteristico esta presente e nitido em varias lesoes, o que sustenta confianca alta.",
+      diagnostico_diferencial: "",
+      acao: "Aplique fungicida protetor cuprico (Oxicloreto de Cobre 840WP) em cobertura total da planta, e reforce com sistemico (Tebuconazol 200SC) dado o estagio avancado. Repita a cada 21 dias. Remova e destrua as folhas mais afetadas para reduzir fonte de inoculo.",
+      fungicidas: [
+        { nome:"Oxicloreto de Cobre 840WP", nome_comercial:"", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:21, carencia_dias:7 },
+        { nome:"Tebuconazol 200SC", nome_comercial:"", tipo:"sistemico", dose_min:0.75, dose_max:1, unidade:"L", por:"hectare", proporcao_por_litro:0.75, unidade_proporcao:"mL", intervalo_reaplicacao:21, carencia_dias:7 }
+      ]
+    }
+  ]
+});
+
+var FEWSHOT_RESPOSTA_MEDIA = JSON.stringify({
+  diagnosticos: [
+    {
+      diagnostico: "cercosporiose",
+      estagio: 2,
+      confianca: "media",
+      visto: "Mancha circular com halo amarelo amplo bem visivel; o centro da lesao esta escuro/arroxeado, sem o centro branco-acinzentado nitido do padrao classico — compativel com forma atipica mais avancada. Como o traco decisivo classico nao esta claramente visivel, a confianca nao pode ser alta mesmo com o restante do padrao compativel.",
+      diagnostico_diferencial: "Observam-se tambem alguns pontinhos alaranjados dispersos pela folha, possivel indicio inicial de ferrugem — recomenda-se verificar a face inferior de outras folhas do talhao antes de tratar especificamente para isso. Corynespora foi considerada mas descartada por falta de aneis concentricos nitidos.",
+      acao: "Aplique fungicida protetor cuprico (Oxicloreto de Cobre 840WP) em cobertura total, atingindo bem a face inferior das folhas. Repita a cada 21 dias enquanto houver periodo chuvoso. Monitore se o centro branco-acinzentado classico aparece em licoes mais novas.",
+      fungicidas: [
+        { nome:"Oxicloreto de Cobre 840WP", nome_comercial:"", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:21, carencia_dias:7 }
+      ]
+    },
+    {
+      diagnostico: "magnesio",
+      estagio: 2,
+      confianca: "media",
+      visto: "Area internerval amarelada bem visivel na folha, com as nervuras mantendo coloracao mais verde — padrao compativel com clorose internerval de magnesio em folha velha.",
+      diagnostico_diferencial: "",
+      acao: "A correcao real desse nutriente e feita pelo solo, na calagem com calcario dolomitico — use a Calculadora de Calagem no modulo Analise de Solo do app pra saber a dose exata pro seu talhao.",
+      fungicidas: []
+    }
+  ]
+});
+
+
 // ── TESTE COMPARATIVO: Mistral Small 4 (sucessor ativo do Pixtral Large,
 // que foi descontinuado — "No endpoints found" no OpenRouter) ──
 // Mesma estrutura do teste Qwen, só troca o modelo. Endpoint isolado,
@@ -1297,6 +1357,44 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
+  // Monta as mensagens: se os exemplos few-shot carregaram, inclui 2 pares
+  // exemplo-foto/resposta-correta ANTES da foto real, pra calibrar o
+  // modelo por demonstracao (nao so por instrucao em texto).
+  var mensagens = [];
+  if (FEWSHOT_EXEMPLO_ALTA_B64 && FEWSHOT_EXEMPLO_MEDIA_B64) {
+    mensagens.push({
+      role: "user",
+      content: [
+        { type: "text", text: promptCompleto + "\n\nEXEMPLO DE REFERENCIA 1 — analise esta foto e retorne o JSON no formato pedido:" },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64," + FEWSHOT_EXEMPLO_ALTA_B64 } }
+      ]
+    });
+    mensagens.push({ role: "assistant", content: FEWSHOT_RESPOSTA_ALTA });
+    mensagens.push({
+      role: "user",
+      content: [
+        { type: "text", text: "EXEMPLO DE REFERENCIA 2 — mesma tarefa, outra foto:" },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64," + FEWSHOT_EXEMPLO_MEDIA_B64 } }
+      ]
+    });
+    mensagens.push({ role: "assistant", content: FEWSHOT_RESPOSTA_MEDIA });
+    mensagens.push({
+      role: "user",
+      content: [
+        { type: "text", text: "Agora analise esta nova foto seguindo o MESMO padrao de calibracao de confianca e de tratamento de achados incidentais demonstrado nos exemplos acima:" },
+        { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+      ]
+    });
+  } else {
+    mensagens.push({
+      role: "user",
+      content: [
+        { type: "text", text: promptCompleto },
+        { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+      ]
+    });
+  }
+
   try {
     var r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -1308,15 +1406,7 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
         model: "mistralai/mistral-small-2603",
         temperature: 0,
         max_tokens: 3000,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: promptCompleto },
-              { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
-            ]
-          }
-        ]
+        messages: mensagens
       })
     });
     var data = await r.json();
@@ -2195,6 +2285,7 @@ function buildContextoRegional(regiao, altitude, isVideo) {
 function buildPromptStatic(isVideo) {
   return "Voce e o Doutor Cafe, fitopatologista e fisiologista especialista em cafeicultura brasileira com 36 anos de experiencia.\n\n"+
 "REGRA MAIS IMPORTANTE: Liste os problemas que voce consegue identificar com razoavel seguranca a partir dos sinais VISIVEIS na imagem. E melhor ser CONSISTENTE e PRECISO do que detectar muitos problemas. Se um sintoma for ambiguo ou sutil, use confianca 'baixa' e explique a incerteza no campo 'visto' — NUNCA invente um diagnostico especifico para um sinal que poderia ser varias coisas.\n\n"+
+"REGRA DE ANCORAGEM NA IMAGEM (critico): a descricao no campo 'visto' deve refletir APENAS o que esta de fato visivel NESTA imagem especifica — nunca complete a descricao com caracteristicas tipicas de manual/literatura tecnica que nao estejam claramente presentes na foto. Se o traco decisivo classico de um diagnostico (ex: centro branco-acinzentado nitido da cercosporiose, aneis concentricos da corynespora) nao estiver claramente visivel, a confianca NAO pode ser 'alta' para esse diagnostico, mesmo que o restante do padrao seja compativel. Confianca 'alta' exige que o sinal decisivo esteja nitidamente presente na imagem, nao apenas 'seria esperado' pela doenca mais provavel.\n\n"+
 "CONSISTENCIA E CALIBRACAO DE CONFIANCA (critico): a mesma folha deve gerar o mesmo diagnostico. Para isso:\n"+
 "- confianca 'alta': sintoma CLASSICO e inequivoco, multiplos sinais concordantes. Ex: clorose internerval com nervuras verdes = magnesio.\n"+
 "- confianca 'media': sintoma compativel mas nao definitivo, poderia ter 1-2 causas alternativas.\n"+
@@ -2216,7 +2307,8 @@ function buildPromptStatic(isVideo) {
 "FRUTOS:\nfruto_verde=verde firme sem lesoes.\nfruto_maduro=VERMELHO ou AMARELO cereja brilhante; fruto ROXO-ESCURO/QUASE PRETO mas LISO e BRILHANTE tambem e CEREJA MADURA NORMAL (ponto de colheita), NAO e fruto_passado.\nfruto_passado=fruto ISOLADO escurecido e ALEM DISSO visivelmente ENRUGADO/MURCHO/FOSCO por ter passado do ponto de colheita (problema de MANEJO/COLHEITA, nao doenca) — cor escura sozinha, sem enrugamento visivel, NAO basta para este diagnostico.\nbroca=FURO CIRCULAR escuro 1-2mm.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras NUM fruto, OU um GRUPO/CACHO de frutos completamente PRETOS, SECOS e MUMIFICADOS presos ao ramo (aspecto de 'passas coladas no galho') — isso e DOENCA (antracnose), NAO fruto_passado, mesmo que a cor pareca parecida. DIFERENCA CHAVE: fruto_passado e um problema de COLHEITA (1-2 frutos isolados, textura de passa mas casca ainda reconhecivel); frutos MUMIFICADOS por antracnose aparecem em GRUPO/CACHO, completamente enegrecidos e ressecados, muitas vezes AGARRADOS uns aos outros ou ao ramo, e pedem fungicida + remocao manual (nao so colheita).\n\n"+
 "CONVENCAO DA LISTA PRODUTOS: produtos separados por ponto final simples sao para COMBINAR na mesma calda (ex: um sistemico + um protetor). Produtos separados pela palavra OU, ou com a instrucao explicita 'escolha UM', sao ALTERNATIVAS equivalentes — inclua apenas UM dos dois no array fungicidas, nunca os dois juntos.\n\n"+
 "PRODUTOS:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nascochyta: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nantracnose_fruto: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14 obs:remover_manualmente_frutos_mumificados_e_destruir_fora_da_lavoura_para_reduzir_fonte_de_inoculo. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nphoma: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14 OU (nao combinar as duas) Mancozebe 800WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14 — escolha UM dos dois protetores, sao alternativas equivalentes, nao um combo.\naureolada: ATENCAO doenca BACTERIANA nao fungica — fungicida sistemico triazol NAO tem efeito, usar SOMENTE cupricos com acao bactericida — escolha UM dos dois abaixo, NAO aplique os dois juntos (sao alternativas, nao combo): Oxicloreto Cobre 840WP protetor 4-4,5kg/ha proporcao_por_litro:4 unidade_proporcao:g intervalo:15 obs:acao_bactericida OU Hidroxido Cobre 770WG protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:15 obs:acao_bactericida.\nmancha_manteigosa: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\ncorynespora: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nkoleroga: Oxicloreto Cobre 840WP protetor 2,5-3kg/ha proporcao_por_litro:3 unidade_proporcao:g intervalo:14 obs:associar_desbaste_ramos_internos_e_poda_para_ventilacao.\nbicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\ncochonilha: Imidacloprido 700WG inseticida 0,3-0,5kg/ha proporcao_por_litro:0.4 unidade_proporcao:g intervalo:30.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+
-"REGRA OBRIGATORIA PARA FERRUGEM COM CONFIANCA BAIXA: se voce incluir 'ferrugem' com confianca 'baixa' por ter visto so a face SUPERIOR da folha (sem confirmar pustula/po na face inferior), o campo 'acao' desse item DEVE comecar EXATAMENTE com a frase 'Fotografe a face de baixo (inferior) desta folha para confirmar' antes de qualquer outra orientacao ou produto. Isso e obrigatorio, nao opcional — nao pule essa frase mesmo que o resto da resposta va bem.\n\n"+
+"REGRA SOBRE ACHADOS SECUNDARIOS DE CONFIANCA BAIXA NAO LIGADOS A LESAO PRINCIPAL: quando voce notar um sinal incidental, disperso ou pontual (ex: alguns pontinhos isolados em posicao diferente da lesao principal) que sozinho so sustentaria confianca 'baixa' E que NAO faz parte do diagnostico diferencial da lesao principal (ou seja, e um achado a parte, nao uma hipotese concorrente para a MESMA mancha), NAO crie uma entrada separada em 'diagnosticos' para ele. Um achado de confianca muito baixa como diagnostico proprio tende a confundir o produtor, que nao sabe se a planta realmente tem aquele problema ou nao. Prefira: (a) omitir o achado se for realmente inconclusivo, ou (b) se achar relevante mencionar, cite-o em UMA frase curta dentro do campo 'diagnostico_diferencial' do diagnostico principal (ex: 'Observam-se tambem pequenos pontos alaranjados dispersos na folha, possivel indicio inicial de ferrugem — recomenda-se verificar a face inferior de outras folhas do talhao'), sem gerar um item completo com fungicidas e acao proprios. A excecao e quando o sinal secundario e claramente compativel com um problema DIFERENTE e mais consolidado (confianca media ou alta, como uma deficiencia nutricional evidente do tipo clorose internerval ampla) — esse tipo de achado consolidado continua sendo listado normalmente como diagnostico separado.\n\n"+
+"REGRA OBRIGATORIA PARA FERRUGEM COM CONFIANCA BAIXA: se, mesmo assim, voce incluir 'ferrugem' como diagnostico proprio (por exemplo, quando ela e o unico achado da imagem, ainda que incerto) com confianca 'baixa' por ter visto so a face SUPERIOR da folha (sem confirmar pustula/po na face inferior), o campo 'acao' desse item DEVE comecar EXATAMENTE com a frase 'Fotografe a face de baixo (inferior) desta folha para confirmar' antes de qualquer outra orientacao ou produto. Isso e obrigatorio, nao opcional — nao pule essa frase mesmo que o resto da resposta va bem.\n\n"+
 "INSTRUCOES FINAIS: Relate os problemas com evidencia visual real, ordenados por GRAVIDADE (doenca/praga ativa primeiro, depois deficiencias) e dentro da mesma gravidade por ordem de CONFIANCA (alta antes de baixa). Deficiencias nutricionais, amarelinho, mancha_anular e causas abioticas (vento_frio, geada_frio, escaldadura, fitotoxicidade, estresse_hidrico, dano_mecanico): fungicidas:[] (nao ha controle quimico direto para essas categorias). Use confianca 'baixa' quando o sinal for ambiguo em vez de arriscar um diagnostico especifico errado. So retorne saudavel se a folha estiver realmente sem sintomas visiveis. NAO liste duas doencas fungicas diferentes (ex: cercosporiose e corynespora, ou phoma e antracnose) para descrever o MESMO padrao de lesao visto na foto — isso duplica o tratamento recomendado sem necessidade; nesses casos de duvida real entre duas doencas parecidas, retorne apenas UM diagnostico (o mais provavel) com confianca 'media' ou 'baixa' e preencha o campo 'diagnostico_diferencial' com a segunda hipotese e o motivo de nao ter sido a escolhida.\n"+
 "REGRA OBRIGATORIA PARA O CAMPO 'acao' DE DEFICIENCIAS NUTRICIONAIS — PROIBIDO INVENTAR DOSE FOLIAR: para calcio e magnesio, a correcao real e confiavel e pelo SOLO (calagem com calcario dolomitico, que fornece Ca e Mg juntos) — NAO existe uma dose foliar padrao e confiavel para cafe validada por fonte tecnica. No campo 'acao' desses dois, SEMPRE oriente: 'A correcao real desse nutriente e feita pelo solo, na calagem com calcario dolomitico — use a Calculadora de Calagem no modulo Analise de Solo do app pra saber a dose exata pro seu talhao.' NUNCA cite um numero de gramas ou kg por litro/100L de aplicacao foliar para Ca ou Mg — isso e uma dose que muda por produto comercial e por isso nao pode ser generalizada com seguranca. Para os DEMAIS nutrientes (N, K, Fe, B, Zn, S, Mn), tambem evite inventar dose foliar precisa em g/L; se quiser mencionar aplicacao foliar como reforco, diga apenas 'seguir a dose indicada na bula do produto comercial usado' em vez de um numero especifico.\n"+
 "No campo 'acao', use linguagem simples para produtor leigo: use APENAS o nome generico do produto com a formulacao exata da lista PRODUTOS (ex: 'Oxicloreto de Cobre 840WP'), NUNCA invente ou cite nome comercial/marca de memoria — associar a marca errada ao ingrediente errado pode levar o produtor a comprar o produto incorreto. Explique rapidamente (3-6 palavras) qualquer termo tecnico como K2O/P2O5, calda, fertirrigacao, carencia, pos-emergencia.\n"+

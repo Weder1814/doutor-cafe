@@ -1280,9 +1280,11 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
   }
 });
 
-// ── TESTE COMPARATIVO: Pixtral Large 2411 (Mistral) via OpenRouter ──
+// ── TESTE COMPARATIVO: Mistral Small 4 (sucessor ativo do Pixtral Large,
+// que foi descontinuado — "No endpoints found" no OpenRouter) ──
 // Mesma estrutura do teste Qwen, só troca o modelo. Endpoint isolado,
-// não afeta nenhum fluxo do app.
+// não afeta nenhum fluxo do app. Rota mantida como /teste-pixtral-diagnostico
+// por simplicidade (era o nome original do teste).
 app.post("/teste-pixtral-diagnostico", async function(req, res) {
   if (!OPENROUTER_KEY) return res.status(500).json({ erro:"OPENROUTER_KEY não configurada no Railway." });
   var imagem = req.body.imagem;
@@ -1303,7 +1305,7 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
         "Authorization": "Bearer " + OPENROUTER_KEY
       },
       body: JSON.stringify({
-        model: "mistralai/pixtral-large-2411",
+        model: "mistralai/mistral-small-2603",
         temperature: 0,
         max_tokens: 3000,
         messages: [
@@ -1329,11 +1331,11 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
     var resultado = extrairJSON(textoResposta);
     var usage = data.usage || {};
 
-    // Custo aproximado (Pixtral Large 2411 via OpenRouter: $2/M input, $6/M output — preço Mistral)
-    var custoUsd = ((usage.prompt_tokens||0) * 2 + (usage.completion_tokens||0) * 6) / 1000000;
+    // Custo aproximado (Mistral Small 4 via OpenRouter: $0.15/M input, $0.60/M output)
+    var custoUsd = ((usage.prompt_tokens||0) * 0.15 + (usage.completion_tokens||0) * 0.60) / 1000000;
 
     res.json({
-      modelo: "pixtral-large-2411",
+      modelo: "mistral-small-4-2603",
       duracao_ms: duracaoMs,
       resultado_bruto: textoResposta,
       resultado_parseado: resultado,

@@ -1208,6 +1208,15 @@ app.post("/diagnostico", async function(req, res) {
 // (ex: via Postman, curl, ou uma tela de teste) com as mesmas fotos que já
 // tem diagnóstico conhecido pela Sonnet. Nada aqui afeta usuários reais.
 var OPENROUTER_KEY = process.env.OPENROUTER_KEY;
+
+// ── INSTRUÇÃO EXTRA DE TESTE (v2 — inventário + revisão final) ──
+// Isolada em variável própria, usada SOMENTE nos 3 endpoints de teste
+// abaixo (Qwen, Gemini, GPT-5 Mini). Não afeta o prompt de produção
+// da Sonnet (buildPromptStatic). Fácil de reverter: comente a linha
+// que concatena INSTRUCAO_TESTE_EXTRA em cada endpoint, ou troque o
+// conteúdo desta variável para testar outra versão da instrução.
+var INSTRUCAO_TESTE_EXTRA = "\n\n### ETAPA OBRIGATÓRIA 1 — INVENTÁRIO DOS ACHADOS VISUAIS\n\nAntes de formular qualquer diagnóstico, faça uma inspeção completa e sistemática da imagem.\n\nListe mentalmente TODOS os achados visuais observados, incluindo:\n\n- manchas\n- halos\n- necroses\n- cloroses\n- deformações\n- perfurações\n- insetos\n- ovos\n- micélio\n- pústulas\n- alterações nas nervuras\n- alterações nas bordas\n- distribuição dos sintomas\n- intensidade\n- estágio aparente\n\nNão interrompa a inspeção ao encontrar o primeiro problema.\n\nSomente depois que TODOS os achados forem identificados, relacione esses achados aos diagnósticos possíveis.\n\n### ETAPA OBRIGATÓRIA 2 — REVISÃO FINAL\n\nAntes de responder:\n\nRevise toda a imagem uma segunda vez.\n\nPergunte:\n\n\"Existe algum sinal visível que ainda não foi explicado pelo diagnóstico principal?\"\n\nSe existir, registre-o como diagnóstico diferencial de baixa ou média confiança.";
+
 app.post("/teste-qwen-diagnostico", async function(req, res) {
   if (!OPENROUTER_KEY) return res.status(500).json({ erro:"OPENROUTER_KEY não configurada no Railway." });
   var imagem = req.body.imagem;
@@ -1217,7 +1226,7 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false);
-  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + "\n\nAntes de emitir qualquer diagnóstico, faça uma inspeção sistemática de toda a folha. Não interrompa a análise ao encontrar o primeiro problema. Avalie deliberadamente a possibilidade de múltiplos problemas coexistentes e somente depois selecione o diagnóstico principal e os diagnósticos diferenciais.";
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
   try {
@@ -1284,7 +1293,7 @@ app.post("/teste-gemini-diagnostico", async function(req, res) {
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false);
-  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + "\n\nAntes de emitir qualquer diagnóstico, faça uma inspeção sistemática de toda a folha. Não interrompa a análise ao encontrar o primeiro problema. Avalie deliberadamente a possibilidade de múltiplos problemas coexistentes e somente depois selecione o diagnóstico principal e os diagnósticos diferenciais.";
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
   try {
@@ -1349,7 +1358,7 @@ app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false);
-  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + "\n\nAntes de emitir qualquer diagnóstico, faça uma inspeção sistemática de toda a folha. Não interrompa a análise ao encontrar o primeiro problema. Avalie deliberadamente a possibilidade de múltiplos problemas coexistentes e somente depois selecione o diagnóstico principal e os diagnósticos diferenciais.";
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
   try {
@@ -1361,7 +1370,7 @@ app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
       },
       body: JSON.stringify({
         model: "gpt-5-mini",
-        max_completion_tokens: 3000,
+        max_completion_tokens: 5000,
         messages: [
           {
             role: "user",

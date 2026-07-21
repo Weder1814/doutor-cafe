@@ -1283,19 +1283,35 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
 });
 
 // ── EXEMPLOS FEW-SHOT PARA TESTE DO MISTRAL (calibração de confiança) ──
-// Dois casos reais curados manualmente: um onde confianca 'alta' é
-// justificada (traco decisivo nitidamente visivel) e outro onde so
-// confianca 'media' e correta (traco decisivo ausente, forma atipica),
-// alem de demonstrar a regra de nao criar item separado pra achado
-// incidental de confianca baixa (vai para diagnostico_diferencial).
+// Tres casos reais curados manualmente: um onde confianca 'alta' e
+// justificada (traco decisivo nitidamente visivel), outro onde so
+// confianca 'media' e correta (traco decisivo ausente, forma atipica,
+// dois problemas coexistindo), e um de folha SAUDAVEL (nenhum achado) —
+// adicionado apos observarmos que o modelo alucinava doenca em folha
+// saudavel, ecoando o padrao de linguagem do exemplo de confianca alta.
 // Isolado do buildPromptStatic — usado SOMENTE no teste do Mistral.
-var FEWSHOT_EXEMPLO_ALTA_B64, FEWSHOT_EXEMPLO_MEDIA_B64;
+var FEWSHOT_EXEMPLO_ALTA_B64, FEWSHOT_EXEMPLO_MEDIA_B64, FEWSHOT_EXEMPLO_SAUDAVEL_B64;
 try {
   FEWSHOT_EXEMPLO_ALTA_B64 = fs.readFileSync(path.join(__dirname, "fewshot", "exemplo-alta-confianca.b64.txt"), "utf8").trim();
   FEWSHOT_EXEMPLO_MEDIA_B64 = fs.readFileSync(path.join(__dirname, "fewshot", "exemplo-media-confianca.b64.txt"), "utf8").trim();
+  FEWSHOT_EXEMPLO_SAUDAVEL_B64 = fs.readFileSync(path.join(__dirname, "fewshot", "exemplo-saudavel.b64.txt"), "utf8").trim();
 } catch (e) {
   console.log("⚠️ Exemplos few-shot não encontrados em /fewshot — endpoint do Mistral vai rodar sem few-shot:", e.message);
 }
+
+var FEWSHOT_RESPOSTA_SAUDAVEL = JSON.stringify({
+  diagnosticos: [
+    {
+      diagnostico: "saudavel",
+      estagio: 0,
+      confianca: "alta",
+      visto: "Folhas com coloracao verde-escura uniforme e brilhante, limbo integro, sem manchas, halos, cloroses, necroses, deformacoes, perfuracoes, insetos, ovos, micelio, pustulas ou alteracoes nas nervuras ou bordas. Nenhum sinal visivel de doenca, praga ou deficiencia nutricional.",
+      diagnostico_diferencial: "",
+      acao: "Planta aparentemente saudavel. Continue o monitoramento periodico.",
+      fungicidas: []
+    }
+  ]
+});
 
 var FEWSHOT_RESPOSTA_ALTA = JSON.stringify({
   diagnosticos: [
@@ -1357,17 +1373,19 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
-  // Monta as mensagens: se os exemplos few-shot carregaram, inclui 2 pares
+  // Monta as mensagens: se os exemplos few-shot carregaram, inclui 3 pares
   // exemplo-foto/resposta-correta ANTES da foto real, pra calibrar o
   // modelo por demonstracao (nao so por instrucao em texto).
-  // ORDEM INVERTIDA (v2): o exemplo com 2 diagnosticos vem por ULTIMO
-  // (efeito de recencia) apos observarmos que o modelo estava "copiando"
-  // a estrutura do exemplo mais parecido com a foto real (ex: se a lesao
-  // principal lembrava o exemplo de diagnostico unico, ele simplificava
-  // e ignorava achados secundarios reais, mesmo com o outro exemplo
-  // demonstrando multiplos diagnosticos disponivel na conversa).
+  // ORDEM (v3): media -> alta -> saudavel (saudavel por ULTIMO agora).
+  // Na v2 o exemplo de confianca alta (doenca clara) ficava por ultimo;
+  // percebemos que o modelo passou a alucinar doenca em foto de folha
+  // SAUDAVEL, ecoando a linguagem do exemplo mais recente na conversa
+  // (efeito de recencia). Colocar o exemplo saudavel por ultimo e uma
+  // correcao direcionada a essa falha especifica — mas e uma correcao
+  // posicional, nao estrutural; o reforco de texto abaixo (nao inventar
+  // achado ausente) e a parte mais robusta desta mudanca.
   var mensagens = [];
-  if (FEWSHOT_EXEMPLO_ALTA_B64 && FEWSHOT_EXEMPLO_MEDIA_B64) {
+  if (FEWSHOT_EXEMPLO_ALTA_B64 && FEWSHOT_EXEMPLO_MEDIA_B64 && FEWSHOT_EXEMPLO_SAUDAVEL_B64) {
     mensagens.push({
       role: "user",
       content: [
@@ -1387,7 +1405,15 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
     mensagens.push({
       role: "user",
       content: [
-        { type: "text", text: "Agora analise esta nova foto. IMPORTANTE: o numero de diagnosticos e o nivel de confianca de cada exemplo acima foram determinados pelo que estava visivel EM CADA foto especifica — nao copie a estrutura (quantidade de diagnosticos, nivel de confianca) de nenhum dos dois exemplos. Julgue esta foto nova de forma independente: se houver sinais de mais de um problema coexistindo (ex: uma doenca fungica E uma deficiencia nutricional ao mesmo tempo, cada uma com seu proprio sinal visual claro), reporte todos eles, cada um com a confianca que o sinal especifico dele sustenta:" },
+        { type: "text", text: "EXEMPLO DE REFERENCIA 3 — mesma tarefa, outra foto:" },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64," + FEWSHOT_EXEMPLO_SAUDAVEL_B64 } }
+      ]
+    });
+    mensagens.push({ role: "assistant", content: FEWSHOT_RESPOSTA_SAUDAVEL });
+    mensagens.push({
+      role: "user",
+      content: [
+        { type: "text", text: "Agora analise esta nova foto. IMPORTANTE: o numero de diagnosticos, o nivel de confianca e a presenca ou ausencia de problemas em cada exemplo acima foram determinados SOMENTE pelo que estava visivel EM CADA foto especifica — nao copie a estrutura de nenhum dos tres exemplos, e NAO assuma que esta foto nova tem algum problema so porque os exemplos anteriores tinham. Descreva PRIMEIRO, mentalmente, o que voce realmente ve nesta foto nova (cor, manchas, textura, uniformidade) antes de decidir o diagnostico. Se a folha nesta foto nova estiver com aparencia normal, saudavel, sem sinais visiveis de doenca/praga/deficiencia, retorne 'saudavel' mesmo que os exemplos anteriores tenham mostrado problemas. Se houver sinais de mais de um problema coexistindo, reporte todos eles, cada um com a confianca que o sinal especifico dele sustenta:" },
         { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
       ]
     });

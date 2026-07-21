@@ -1217,7 +1217,7 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false);
-  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional;
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + "\n\nAntes de emitir qualquer diagnóstico, faça uma inspeção sistemática de toda a folha. Não interrompa a análise ao encontrar o primeiro problema. Avalie deliberadamente a possibilidade de múltiplos problemas coexistentes e somente depois selecione o diagnóstico principal e os diagnósticos diferenciais.";
   var inicio = Date.now();
 
   try {
@@ -1284,7 +1284,7 @@ app.post("/teste-gemini-diagnostico", async function(req, res) {
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false);
-  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional;
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + "\n\nAntes de emitir qualquer diagnóstico, faça uma inspeção sistemática de toda a folha. Não interrompa a análise ao encontrar o primeiro problema. Avalie deliberadamente a possibilidade de múltiplos problemas coexistentes e somente depois selecione o diagnóstico principal e os diagnósticos diferenciais.";
   var inicio = Date.now();
 
   try {
@@ -1349,7 +1349,7 @@ app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false);
-  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional;
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + "\n\nAntes de emitir qualquer diagnóstico, faça uma inspeção sistemática de toda a folha. Não interrompa a análise ao encontrar o primeiro problema. Avalie deliberadamente a possibilidade de múltiplos problemas coexistentes e somente depois selecione o diagnóstico principal e os diagnósticos diferenciais.";
   var inicio = Date.now();
 
   try {

@@ -1360,20 +1360,18 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
   // Monta as mensagens: se os exemplos few-shot carregaram, inclui 2 pares
   // exemplo-foto/resposta-correta ANTES da foto real, pra calibrar o
   // modelo por demonstracao (nao so por instrucao em texto).
+  // ORDEM INVERTIDA (v2): o exemplo com 2 diagnosticos vem por ULTIMO
+  // (efeito de recencia) apos observarmos que o modelo estava "copiando"
+  // a estrutura do exemplo mais parecido com a foto real (ex: se a lesao
+  // principal lembrava o exemplo de diagnostico unico, ele simplificava
+  // e ignorava achados secundarios reais, mesmo com o outro exemplo
+  // demonstrando multiplos diagnosticos disponivel na conversa).
   var mensagens = [];
   if (FEWSHOT_EXEMPLO_ALTA_B64 && FEWSHOT_EXEMPLO_MEDIA_B64) {
     mensagens.push({
       role: "user",
       content: [
         { type: "text", text: promptCompleto + "\n\nEXEMPLO DE REFERENCIA 1 — analise esta foto e retorne o JSON no formato pedido:" },
-        { type: "image_url", image_url: { url: "data:image/jpeg;base64," + FEWSHOT_EXEMPLO_ALTA_B64 } }
-      ]
-    });
-    mensagens.push({ role: "assistant", content: FEWSHOT_RESPOSTA_ALTA });
-    mensagens.push({
-      role: "user",
-      content: [
-        { type: "text", text: "EXEMPLO DE REFERENCIA 2 — mesma tarefa, outra foto:" },
         { type: "image_url", image_url: { url: "data:image/jpeg;base64," + FEWSHOT_EXEMPLO_MEDIA_B64 } }
       ]
     });
@@ -1381,7 +1379,15 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
     mensagens.push({
       role: "user",
       content: [
-        { type: "text", text: "Agora analise esta nova foto seguindo o MESMO padrao de calibracao de confianca e de tratamento de achados incidentais demonstrado nos exemplos acima:" },
+        { type: "text", text: "EXEMPLO DE REFERENCIA 2 — mesma tarefa, outra foto:" },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64," + FEWSHOT_EXEMPLO_ALTA_B64 } }
+      ]
+    });
+    mensagens.push({ role: "assistant", content: FEWSHOT_RESPOSTA_ALTA });
+    mensagens.push({
+      role: "user",
+      content: [
+        { type: "text", text: "Agora analise esta nova foto. IMPORTANTE: o numero de diagnosticos e o nivel de confianca de cada exemplo acima foram determinados pelo que estava visivel EM CADA foto especifica — nao copie a estrutura (quantidade de diagnosticos, nivel de confianca) de nenhum dos dois exemplos. Julgue esta foto nova de forma independente: se houver sinais de mais de um problema coexistindo (ex: uma doenca fungica E uma deficiencia nutricional ao mesmo tempo, cada uma com seu proprio sinal visual claro), reporte todos eles, cada um com a confianca que o sinal especifico dele sustenta:" },
         { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
       ]
     });

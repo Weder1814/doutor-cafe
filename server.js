@@ -125,6 +125,7 @@ async function initDB() {
         pin           TEXT,
         email         TEXT,
         regiao        TEXT,
+        foto_perfil   TEXT,
         plano         TEXT DEFAULT 'gratuito',
         plano_id      TEXT,
         analises_usadas INTEGER DEFAULT 0,
@@ -133,6 +134,7 @@ async function initDB() {
         criado_em     TIMESTAMPTZ DEFAULT NOW(),
         atualizado_em TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS foto_perfil TEXT;
       CREATE INDEX IF NOT EXISTS idx_usuarios_celular ON usuarios(celular);
       CREATE INDEX IF NOT EXISTS idx_usuarios_cpf ON usuarios(cpf);
 
@@ -265,16 +267,17 @@ async function dbSaveUser(u) {
   if (pool) {
     try {
       await pool.query(`
-        INSERT INTO usuarios (user_id,cpf,celular,nome,pin,email,regiao,plano,analises_usadas,mes_reset)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        INSERT INTO usuarios (user_id,cpf,celular,nome,pin,email,regiao,foto_perfil,plano,analises_usadas,mes_reset)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         ON CONFLICT (user_id) DO UPDATE SET
           cpf=EXCLUDED.cpf, celular=EXCLUDED.celular, nome=EXCLUDED.nome,
           pin=EXCLUDED.pin, email=EXCLUDED.email, regiao=EXCLUDED.regiao,
+          foto_perfil=EXCLUDED.foto_perfil,
           plano=EXCLUDED.plano, analises_usadas=EXCLUDED.analises_usadas,
           mes_reset=EXCLUDED.mes_reset, atualizado_em=NOW()
       `, [u.userId||u.user_id, u.cpf||"", u.celular||"", u.nome||"",
-          u.pin||"", u.email||"", u.regiao||"", u.plano||"gratuito",
-          u.analisesUsadas||0, u.mesReset||""]);
+          u.pin||"", u.email||"", u.regiao||"", u.fotoPerfil||u.foto_perfil||"",
+          u.plano||"gratuito", u.analisesUsadas||0, u.mesReset||""]);
       return true;
     } catch(e) { console.error("dbSaveUser:", e.message); }
   }
@@ -620,6 +623,7 @@ app.post("/cadastrar-usuario", async function(req, res) {
   var regiao  = req.body.regiao||"";
   var email   = req.body.email||"";
   var pin     = (req.body.pin||"").replace(/[^0-9]/g,"").substr(0,4);
+  var fotoPerfil = req.body.fotoPerfil||""; // base64 (data URL sem o prefixo "data:image/...;base64,")
 
   if (!userId || !nome) return res.status(400).json({ erro:"Nome obrigatorio." });
 
@@ -640,6 +644,7 @@ app.post("/cadastrar-usuario", async function(req, res) {
         pin: pin || jaTemEsseId.pin || "",
         email: email || jaTemEsseId.email || "",
         regiao: regiao || jaTemEsseId.regiao || "",
+        fotoPerfil: fotoPerfil || jaTemEsseId.foto_perfil || "",
         plano: jaTemEsseId.plano || "gratuito",
         analisesUsadas: jaTemEsseId.analises_usadas || jaTemEsseId.analisesUsadas || 0,
         mesReset: jaTemEsseId.mes_reset || jaTemEsseId.mesReset || ""
@@ -648,7 +653,9 @@ app.post("/cadastrar-usuario", async function(req, res) {
         ok:true, userId:userId, jaExistia:true,
         plano: jaTemEsseId.plano||"gratuito",
         analisesUsadas: jaTemEsseId.analises_usadas||jaTemEsseId.analisesUsadas||0,
-        analisesRestantes: analisesRestantes(jaTemEsseId)
+        analisesRestantes: analisesRestantes(jaTemEsseId),
+        nome: nome,
+        fotoPerfil: fotoPerfil || jaTemEsseId.foto_perfil || ""
       });
     }
 
@@ -664,13 +671,47 @@ app.post("/cadastrar-usuario", async function(req, res) {
         jaExistia:true,
         plano: existente.plano||"gratuito",
         analisesUsadas: existente.analises_usadas||existente.analisesUsadas||0,
-        analisesRestantes: analisesRestantes(existente)
+        analisesRestantes: analisesRestantes(existente),
+        nome: existente.nome||nome,
+        fotoPerfil: existente.foto_perfil||""
       });
     }
 
     // 3. Usuario genuinamente novo — so aqui comeca com 0 analises usadas.
-    await dbSaveUser({ userId, cpf, celular, nome, pin, email, regiao, plano:"gratuito", analisesUsadas:0, mesReset:"" });
-    res.json({ ok:true, userId, analisesRestantes: LIMITES.gratuito });
+    await dbSaveUser({ userId, cpf, celular, nome, pin, email, regiao, fotoPerfil, plano:"gratuito", analisesUsadas:0, mesReset:"" });
+    res.json({ ok:true, userId, nome, fotoPerfil, analisesRestantes: LIMITES.gratuito });
+  } catch(e) {
+    res.status(500).json({ erro:e.message });
+  }
+});
+
+// ── PERFIL: buscar nome/foto (pra tela inicial) e atualizar so a foto ──
+app.get("/perfil-usuario", async function(req, res) {
+  var userId = req.query.userId;
+  if (!userId) return res.status(400).json({ erro:"userId obrigatorio." });
+  try {
+    var u = await dbGetUser(userId);
+    if (!u) return res.status(404).json({ erro:"Usuario nao encontrado." });
+    res.json({ ok:true, nome: u.nome||"", fotoPerfil: u.foto_perfil||"" });
+  } catch(e) {
+    res.status(500).json({ erro:e.message });
+  }
+});
+
+app.post("/atualizar-foto-perfil", async function(req, res) {
+  var userId = req.body.userId;
+  var fotoPerfil = req.body.fotoPerfil||""; // base64 (data URL sem o prefixo)
+  if (!userId) return res.status(400).json({ erro:"userId obrigatorio." });
+  try {
+    var u = await dbGetUser(userId);
+    if (!u) return res.status(404).json({ erro:"Usuario nao encontrado." });
+    await dbSaveUser({
+      userId: userId, cpf: u.cpf||"", celular: u.celular||"", nome: u.nome||"",
+      pin: u.pin||"", email: u.email||"", regiao: u.regiao||"",
+      fotoPerfil: fotoPerfil, plano: u.plano||"gratuito",
+      analisesUsadas: u.analises_usadas||0, mesReset: u.mes_reset||""
+    });
+    res.json({ ok:true, fotoPerfil: fotoPerfil });
   } catch(e) {
     res.status(500).json({ erro:e.message });
   }
@@ -698,6 +739,7 @@ app.post("/entrar", async function(req, res) {
       celular: u.celular,
       email: u.email,
       regiao: u.regiao,
+      fotoPerfil: u.foto_perfil||"",
       plano: u.plano||"gratuito",
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes
@@ -2394,7 +2436,7 @@ function buildPromptStatic(isVideo) {
 "PRAGAS:\nbicho=TRILHAS SERPENTINAS castanhas dentro da folha.\nacaro=folha BRONZEADA/acinzentada opaca, pode evoluir para AMARELECIDA com queda precoce.\ncochonilha=massas BRANCAS algodonosas em ramos.\nbroca=FURO CIRCULAR 1-2mm no FRUTO.\n\n"+
 "DEFICIENCIAS:\nnitrogenio=folha TODA AMARELA UNIFORME (inclusive nervuras) folhas velhas.\nfosforo=folhas VELHAS com tonalidade AVERMELHADA/AROXEADA (bronzeado-vinho), especialmente no pecíolo e nervuras, pode ter manchas necroticas escuras; folha mantem-se pequena e planta com crescimento lento. Comum em solo acido (baixo P disponivel).\nmagnesio=nervuras VERDES tecido AMARELO internerval (a folha fica com um padrao de rede: veias verdes contra fundo amarelo), folhas velhas — o tecido fica AMARELO mas GERALMENTE NAO morre/nao fica marrom seco.\npotassio=QUEIMA/necrose SECA E MARROM concentrada na BORDA e PONTA da folha (tecido realmente morto, nao so amarelo), folhas velhas.\nATENCAO CRITICA POTASSIO vs MAGNESIO — ERRO COMUM: quando a folha tiver doenca fungica ativa (ex: cercosporiose) E tambem uma area marrom seca perto da ponta/borda, NAO cravar deficiencia automaticamente so por ver essa area marrom — primeiro pergunte: essa necrose esta GRUDADA/conectada a uma lesao de doenca (extensao do dano do fungo) ou e uma queima SEPARADA e mais AMPLA/UNIFORME ao longo de toda a borda da folha, independente de onde estao as lesoes? So classifique como potassio se a queima for um padrao proprio de queima marginal (nao apenas o fungo avancando). Se restar duvida real entre marcar so a doenca ou tambem incluir deficiencia, prefira confianca 'baixa' na deficiencia em vez de alternar aleatoriamente entre potassio e magnesio.\nREGRA PARA MULTIPLAS FOLHAS/RAMOS NA MESMA FOTO: quando a foto mostrar mais de uma folha (ou parte da planta) com aparencia claramente diferente entre si — por exemplo, uma folha verde com manchas ao lado de OUTRA folha inteiramente seca, marrom, enrolada/torcida e presa ao ramo — avalie cada folha separadamente antes de decidir os diagnosticos. NAO funda os sinais de partes diferentes da planta numa unica descricao 'visto', e NAO force um unico diagnostico pra explicar as duas ao mesmo tempo. Uma folha JA TOTALMENTE seca/morta e enrolada (sem area verde remanescente) e um achado a parte — normalmente compativel com phoma avancada, seca de ramo/ponteiro (aureolada, roseliniose) ou senescencia natural da folha, e NAO deve ser usada como evidencia de deficiencia nutricional (deficiencia se caracteriza por um padrao gradual em folha AINDA majoritariamente verde, nao numa folha ja completamente morta). Se nao for possivel identificar com confianca o que causou a morte total dessa folha especifica, prefira reporta-la como um diagnostico separado de confianca baixa/media em vez de atribuir esse sinal a deficiencia de potassio ou magnesio.\nREGRA DE PRIORIZACAO — SINAL DOMINANTE vs MARCA PONTUAL ISOLADA: antes de decidir o diagnostico PRINCIPAL, compare a EXTENSAO dos sinais visiveis na folha. Se houver um padrao que ocupa uma AREA GRANDE e CONTINUA do limbo (ex: clorose internerval espalhada por boa parte da folha, manchas multiplas e dispersas por varias regioes) E, ao mesmo tempo, houver apenas UM ponto ou mancha PEQUENA e ISOLADA (ex: um unico ponto escuro perto do peciolo/base, uma unica lesao pontual), o diagnostico PRINCIPAL deve ser baseado no sinal DOMINANTE (maior area, mais espalhado), NAO na marca pontual isolada — mesmo que a marca pontual pareca visualmente \"mais decisiva\" ou mais facil de nomear. Uma unica lesao pequena e isolada pode virar um diagnostico SECUNDARIO de confianca baixa/media (reportado separadamente ou mencionado no diagnostico_diferencial), mas nunca deve por si so definir ou ofuscar o diagnostico principal quando existe um padrao muito mais extenso competindo por atencao na mesma foto.\nferro=folhas NOVAS ESBRANQUICADAS nervuras verdes.\nATENCAO CRITICA MAGNESIO vs FERRO — ERRO COMUM: as duas deficiencias causam o MESMO padrao visual de clorose internerval (nervuras verdes, tecido entre elas amarelo, efeito 'rede verde sobre fundo amarelo') — a diferenca DECISIVA nao esta na cor, esta na POSICAO/IDADE da folha afetada. Antes de decidir entre as duas, verifique: a folha com clorose e uma folha MADURA/VELHA (mais para tras no ramo, maior, textura mais grossa) ou uma folha NOVA (mais proxima da ponta do ramo, menor, mais clara/tenra mesmo nas partes verdes)? Clorose internerval em folha VELHA = magnesio. Clorose internerval em folha NOVA (geralmente tambem mais esbranquicada que amarelada) = ferro. Se a foto nao deixar claro se a folha e velha ou nova (ex: foto muito fechada, sem ver a posicao no ramo), use um criterio secundario de apoio: observe a INTENSIDADE da palidez. Ferro tende a deixar a folha bem mais PALIDA/ESBRANQUICADA, quase perdendo a cor de fundo, com as nervuras finas se destacando em alto contraste contra um fundo bem claro (reticulado fino e nitido). Magnesio tende a ser mais MODERADO — o fundo internerval fica amarelo mas ainda com bastante presenca de verde-amarelado, nao tao lavado/esbranquicado quanto o ferro. Mesmo com esse criterio de apoio, se a duvida persistir, prefira confianca 'media' e mencione a outra hipotese no diagnostico_diferencial em vez de escolher uma das duas por padrao.\ncalcio=folhas NOVAS com AMARELECIMENTO ao longo das BORDAS/bordos, podendo avancar entre as nervuras em direcao ao centro (as nervuras e seu entorno permanecem verdes); em casos extremos, morte da gema terminal.\nboro=morte da GEMA APICAL do ramo/ponteiro, seguida de brotacao de varias gemas logo abaixo dando aspecto de LEQUE; folhas novas PEQUENAS, RETORCIDAS, com BORDOS IRREGULARES e limbo estreitado (nao necessariamente asperas ao tato); pode haver aborto de flores.\nzinco=folhas NOVAS ESTREITAS, RETORCIDAS, CORIACEAS, QUEBRADICAS e ASPERAS ao tato, nervuras salientes formando pequenas saliencias no limbo, fundo amarelo-palido entre nervuras; folhas pequenas agrupadas em ROSETA/tufo nos ponteiros, podendo ocorrer morte dos ponteiros. DIFERENCA do boro: zinco tem a textura quebradica/aspera como traco central; boro tem o padrao de leque (morte da gema seguida de brotacao multipla) como traco central.\n\n"+
 "CAUSAS ABIOTICAS (NAO sao doenca/praga - sao danos de clima, vento ou manejo que IMITAM sintomas de doenca; considere estas opcoes quando os sinais NAO batem bem com nenhuma entrada biotica acima):\nvento_frio=seca de PONTEIROS e RAMOS LATERAIS, folhas novas com bordas queimadas/necrosadas em plantas expostas a vento, SEM relacao com lesao fungica/bacteriana especifica.\ngeada_frio=necrose na 'canela' (base do caule) de plantas jovens; amarelecimento, murcha e morte podem aparecer só 5 a 9 MESES depois de um frio intenso (efeito retardado).\nescaldadura=queima/necrose do tecido foliar ou do fruto na area de MAIOR EXPOSICAO DIRETA AO SOL forte, sem relacao com fungo.\nfitotoxicidade=amarelecimento, queima, deformacao ou necrose SURGIDOS LOGO APOS aplicacao de defensivo/adubo foliar (verificar se houve aplicacao recente); tambem pode ocorrer por concentracao de adubo no colo.\nestresse_hidrico=murcha, amarelecimento e seca GENERALIZADA das folhas em periodo de estiagem/deficit hidrico prolongado, sem lesao localizada especifica.\ndano_mecanico=lesao ou ferimento IRREGULAR associado a maquina, ferramenta, raiz torta de plantio malfeito ou afogamento do colo (plantio fundo/amontoa excessiva).\nSe os sintomas parecerem mais com uma causa abiotica do que com qualquer doenca/praga/deficiencia listada acima, use um desses 6 nomes no campo \"diagnostico\", confianca conforme a certeza observada, fungicidas:[], e no campo 'acao' explique a causa abiotica suspeita e a medida corretiva pratica (ex: instalar quebra-vento, ajustar sombreamento, corrigir irrigacao, rever aplicacao de defensivo).\n\n"+
-"FRUTOS:\nfruto_verde=verde firme sem lesoes.\nfruto_maduro=VERMELHO ou AMARELO cereja brilhante; fruto ROXO-ESCURO/QUASE PRETO mas LISO e BRILHANTE tambem e CEREJA MADURA NORMAL (ponto de colheita), NAO e fruto_passado.\nfruto_passado=fruto ISOLADO escurecido e ALEM DISSO visivelmente ENRUGADO/MURCHO/FOSCO por ter passado do ponto de colheita (problema de MANEJO/COLHEITA, nao doenca) — cor escura sozinha, sem enrugamento visivel, NAO basta para este diagnostico.\nbroca=FURO CIRCULAR escuro 1-2mm.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras NUM fruto, OU um GRUPO/CACHO de frutos completamente PRETOS, SECOS e MUMIFICADOS presos ao ramo (aspecto de 'passas coladas no galho') — isso e DOENCA (antracnose), NAO fruto_passado, mesmo que a cor pareca parecida. DIFERENCA CHAVE: fruto_passado e um problema de COLHEITA (1-2 frutos isolados, textura de passa mas casca ainda reconhecivel); frutos MUMIFICADOS por antracnose aparecem em GRUPO/CACHO, completamente enegrecidos e ressecados, muitas vezes AGARRADOS uns aos outros ou ao ramo, e pedem fungicida + remocao manual (nao so colheita).\n\n"+
+"FRUTOS:\nfruto_verde=verde firme sem lesoes.\nfruto_maduro=VERMELHO ou AMARELO cereja brilhante; fruto ROXO-ESCURO/QUASE PRETO mas LISO e BRILHANTE tambem e CEREJA MADURA NORMAL (ponto de colheita), NAO e fruto_passado.\nfruto_passado=fruto ISOLADO escurecido e ALEM DISSO visivelmente ENRUGADO/MURCHO/FOSCO por ter passado do ponto de colheita (problema de MANEJO/COLHEITA, nao doenca) — cor escura sozinha, sem enrugamento visivel, NAO basta para este diagnostico.\nbroca=FURO CIRCULAR escuro 1-2mm.\nantracnose_fruto=lesoes AFUNDADAS CIRCULARES marrom-escuras NUM fruto, OU um GRUPO/CACHO de frutos completamente PRETOS, SECOS e MUMIFICADOS presos ao ramo (aspecto de 'passas coladas no galho') — isso e DOENCA (antracnose). DIFERENCA DE TEXTURA: fruto_passado tem textura de passa mas a casca ainda e reconhecivel como fruto de cafe; frutos MUMIFICADOS por antracnose ficam completamente enegrecidos, ressecados e muitas vezes AGARRADOS uns aos outros ou ao ramo.\nATENCAO CRITICA — FRUTO_PASSADO E ANTRACNOSE_FRUTO PODEM COEXISTIR NA MESMA FOTO/PLANTA, NAO SAO MUTUAMENTE EXCLUSIVOS: um cafeeiro com colheita atrasada pode ter, ao mesmo tempo, frutos isolados que so secaram por ficar tempo demais no pe (fruto_passado, sem doenca) E, em outros pontos do mesmo ramo ou planta, cachos de frutos mumificados por antracnose de verdade (doenca ativa). NAO forcem escolher um dos dois so pelo tamanho do grupo — avalie os SINAIS: se os frutos escurecidos parecem ter secado de forma uniforme, sem lesao previa visivel nos frutos vizinhos ainda verdes/vermelhos, e a planta/talhao tem indicio de colheita atrasada (muitos frutos em estagios de maturacao MUITO diferentes na mesma foto, do verde ao passado), fruto_passado e provavel. Se houver lesoes afundadas circulares visiveis em frutos ainda nao totalmente secos, ou concentracao de mumificacao muito localizada e severa que destoa do resto da planta, antracnose_fruto e provavel. Quando a foto mostrar sinais compativeis com AMBOS ao mesmo tempo (o que e comum), reporte os DOIS diagnosticos separadamente em vez de escolher so um.\n\n"+
 "CONVENCAO DA LISTA PRODUTOS: produtos separados por ponto final simples sao para COMBINAR na mesma calda (ex: um sistemico + um protetor). Produtos separados pela palavra OU, ou com a instrucao explicita 'escolha UM', sao ALTERNATIVAS equivalentes — inclua apenas UM dos dois no array fungicidas, nunca os dois juntos.\n\n"+
 "PRODUTOS:\nferrugem: Tebuconazol 200SC sistemico 0,75-1L/ha proporcao_por_litro:0.75 unidade_proporcao:mL intervalo:21. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:21.\ncercosporiose: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha. Tebuconazol 200SC sistemico 0,75-1L/ha.\nascochyta: Tebuconazol 200SC sistemico 0,75-1L/ha intervalo:14. Tiofanato Metilico 700WP protetor 1-1,5kg/ha proporcao_por_litro:1.25 unidade_proporcao:g intervalo:14.\nantracnose: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14.\nantracnose_fruto: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14 obs:remover_manualmente_frutos_mumificados_e_destruir_fora_da_lavoura_para_reduzir_fonte_de_inoculo. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nphoma: Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14 OU (nao combinar as duas) Mancozebe 800WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14 — escolha UM dos dois protetores, sao alternativas equivalentes, nao um combo.\naureolada: ATENCAO doenca BACTERIANA nao fungica — fungicida sistemico triazol NAO tem efeito, usar SOMENTE cupricos com acao bactericida — escolha UM dos dois abaixo, NAO aplique os dois juntos (sao alternativas, nao combo): Oxicloreto Cobre 840WP protetor 4-4,5kg/ha proporcao_por_litro:4 unidade_proporcao:g intervalo:15 obs:acao_bactericida OU Hidroxido Cobre 770WG protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:15 obs:acao_bactericida.\nmancha_manteigosa: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\ncorynespora: Azoxistrobina+Difenoconazol 325SC sistemico 0,3-0,4L/ha proporcao_por_litro:0.3 unidade_proporcao:mL intervalo:14. Oxicloreto Cobre 840WP protetor 2-2,5kg/ha proporcao_por_litro:2.5 unidade_proporcao:g intervalo:14.\nkoleroga: Oxicloreto Cobre 840WP protetor 2,5-3kg/ha proporcao_por_litro:3 unidade_proporcao:g intervalo:14 obs:associar_desbaste_ramos_internos_e_poda_para_ventilacao.\nbicho: Thiamethoxam 250WG inseticida 0,1-0,2kg/ha proporcao_por_litro:0.1 unidade_proporcao:g intervalo:30.\nacaro: Abamectina 18EC acaricida 0,5-0,75L/ha proporcao_por_litro:0.5 unidade_proporcao:mL intervalo:21.\ncochonilha: Imidacloprido 700WG inseticida 0,3-0,5kg/ha proporcao_por_litro:0.4 unidade_proporcao:g intervalo:30.\nbroca: Clorpirifos 480EC inseticida 1,5-2L/ha proporcao_por_litro:1.75 unidade_proporcao:mL intervalo:30.\n\n"+
 "REGRA SOBRE ACHADOS SECUNDARIOS DE CONFIANCA BAIXA NAO LIGADOS A LESAO PRINCIPAL: quando voce notar um sinal incidental, disperso ou pontual (ex: alguns pontinhos isolados em posicao diferente da lesao principal) que sozinho so sustentaria confianca 'baixa' E que NAO faz parte do diagnostico diferencial da lesao principal (ou seja, e um achado a parte, nao uma hipotese concorrente para a MESMA mancha), NAO crie uma entrada separada em 'diagnosticos' para ele. Um achado de confianca muito baixa como diagnostico proprio tende a confundir o produtor, que nao sabe se a planta realmente tem aquele problema ou nao. Prefira: (a) omitir o achado se for realmente inconclusivo, ou (b) se achar relevante mencionar, cite-o em UMA frase curta dentro do campo 'diagnostico_diferencial' do diagnostico principal (ex: 'Observam-se tambem pequenos pontos alaranjados dispersos na folha, possivel indicio inicial de ferrugem — recomenda-se verificar a face inferior de outras folhas do talhao'), sem gerar um item completo com fungicidas e acao proprios. A excecao e quando o sinal secundario e claramente compativel com um problema DIFERENTE e mais consolidado (confianca media ou alta, como uma deficiencia nutricional evidente do tipo clorose internerval ampla) — esse tipo de achado consolidado continua sendo listado normalmente como diagnostico separado.\n\n"+

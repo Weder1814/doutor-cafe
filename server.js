@@ -430,6 +430,20 @@ var URL_MODELO_PRODUCAO = "https://openrouter.ai/api/v1/chat/completions";
 function headersModeloProducao() {
   return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.OPENROUTER_KEY };
 }
+// FIXAR PROVEDOR (resolve inconsistencia entre celulares): o OpenRouter roteia
+// a MESMA chamada de "Qwen" entre varios provedores de hospedagem diferentes
+// (DeepInfra, Together, Fireworks, etc.), e cada um pode ter leve diferenca de
+// quantizacao/configuracao — o que explica o mesmo prompt dar respostas
+// diferentes em celulares diferentes no mesmo dia. Configure a env var
+// OPENROUTER_PROVIDER no Railway com o nome EXATO de um provedor da lista em
+// https://openrouter.ai/qwen/qwen2.5-vl-72b-instruct (aba "Providers") para
+// forcar todas as chamadas a usarem sempre o mesmo provedor. Sem essa env var
+// configurada, o comportamento antigo (roteamento automático) continua.
+function corpoModeloProducao(campos) {
+  var provedor = process.env.OPENROUTER_PROVIDER;
+  if (provedor) campos.provider = { order:[provedor], allow_fallbacks:false };
+  return campos;
+}
 
 function calcularCustoUSD(modelo, usage) {
   if (!usage) return null;
@@ -1175,14 +1189,14 @@ app.post("/diagnostico", async function(req, res) {
     method:"POST",
     signal: abortCtrl.signal,
     headers: headersModeloProducao(),
-    body:JSON.stringify({ model:MODELO_PRODUCAO, max_tokens:3000, temperature:0, stream:true,
+    body:JSON.stringify(corpoModeloProducao({ model:MODELO_PRODUCAO, max_tokens:3000, temperature:0, stream:true,
       stream_options:{ include_usage:true },
       messages:[
         {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional},
         {role:"user",content:[
         {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
       ]}]
-    })
+    }))
   })
   .then(function(r) {
     var Readable = require("stream").Readable;
@@ -1685,12 +1699,12 @@ app.post("/diagnostico-json", async function(req, res) {
       method:"POST",
       signal: abortCtrl.signal,
       headers: headersModeloProducao(),
-      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
+      body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
         messages:[
           {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional},
           {role:"user",content:[
             {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
-        ]}]})
+        ]}]}))
     });
     var d=await r.json();
     if(d.error) console.error("ERRO MODELO /diagnostico-json:", JSON.stringify(d.error));
@@ -1835,11 +1849,11 @@ app.post("/plano-acao", async function(req, res) {
       method:"POST",
       signal: abortCtrl.signal,
       headers: headersModeloProducao(),
-      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:2000,temperature:0,
+      body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:2000,temperature:0,
         messages:[
           {role:"system",content:sistemaStatic},
           {role:"user",content:promptUsuario}
-        ]})
+        ]}))
     });
     var d=await r.json();
     if(d.error){
@@ -1884,11 +1898,11 @@ app.post("/diagnostico-video", async function(req, res) {
       method:"POST",
       signal: abortCtrl.signal,
       headers: headersModeloProducao(),
-      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
+      body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
         messages:[
           {role:"system",content: buildPromptStatic(true) + "\n\n" + contextoRegional},
           {role:"user",content:content}
-        ]})
+        ]}))
     });
     var d=await r.json();
     if(d.error) console.error("ERRO MODELO /diagnostico-video:", JSON.stringify(d.error));
@@ -2064,11 +2078,11 @@ app.post("/analise-solo", async function(req, res) {
       method:"POST",
       signal: abortCtrl.signal,
       headers: headersModeloProducao(),
-      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:2000,temperature:0,
+      body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:2000,temperature:0,
         messages:[
           {role:"system",content: sistemaStatic + "\n\n" + (contexto||"Sem contexto regional adicional.")},
           {role:"user",content:[{type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}]}
-        ]})
+        ]}))
     });
     var d=await r.json();
     if(d.error) console.error("ERRO MODELO /analise-solo:", JSON.stringify(d.error));
@@ -2167,12 +2181,12 @@ app.post("/identifica-daninha", async function(req, res) {
     method:"POST",
     signal: abortCtrl.signal,
     headers: headersModeloProducao(),
-    body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:2200,temperature:0,stream:true,
+    body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:2200,temperature:0,stream:true,
       stream_options:{ include_usage:true },
       messages:[
         {role:"system",content: sistemaStatic + "\n\n" + (contexto||"Sem contexto regional adicional.")},
         {role:"user",content:[{type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}]}
-      ]})
+      ]}))
   })
   .then(function(r){
     var Readable = require("stream").Readable;
@@ -2297,11 +2311,11 @@ app.post("/identifica-defeito-grao", async function(req, res) {
       method:"POST",
       signal: abortCtrl.signal,
       headers: headersModeloProducao(),
-      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:1800,temperature:0,
+      body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:1800,temperature:0,
         messages:[
           {role:"system",content: sistemaGraos + "\n\n" + (contextoG||"Sem contexto regional adicional.")},
           {role:"user",content:[{type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}]}
-        ]})
+        ]}))
     });
     var dGr=await rGr.json();
     if(dGr.error) console.error("ERRO MODELO /identifica-defeito-grao:", JSON.stringify(dGr.error));

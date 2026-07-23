@@ -399,8 +399,37 @@ async function dbSalvarAnalise(userId, talhaoId, diagnosticos, fotoThumb, regiao
 // Precos por milhao de tokens (USD), Junho/2026. Atualize se a Anthropic mudar a tabela.
 var PRECOS_USD_POR_MTOK = {
   "claude-sonnet-4-6":          { input: 3.00,  output: 15.00 },
-  "claude-haiku-4-5-20251001":  { input: 0.80,  output: 4.00  }
+  "claude-haiku-4-5-20251001":  { input: 0.80,  output: 4.00  },
+  "qwen2.5-vl-72b-instruct":    { input: 0.25,  output: 0.75  }
 };
+
+// Normaliza o "usage" no formato OpenAI/OpenRouter (prompt_tokens/completion_tokens)
+// para o formato Anthropic (input_tokens/output_tokens) usado por logUsoAnalise
+// e calcularCustoUSD em todo o resto do arquivo — assim nao precisa duplicar
+// essas duas funcoes so por causa do provedor diferente.
+function normalizarUsageOpenRouter(usage) {
+  if (!usage) return { input_tokens:0, output_tokens:0 };
+  return {
+    input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
+    output_tokens: usage.completion_tokens || usage.output_tokens || 0
+  };
+}
+
+// ── TROCA TEMPORARIA DE MODELO PARA TESTE (Sonnet -> Qwen) ──────
+// Ativado a pedido do Dinho para rodar 5 fotos de teste no app real
+// com Qwen no lugar de Sonnet/Haiku em TODOS os endpoints de producao.
+// PARA REVERTER: troque MODELO_PRODUCAO de volta para "claude-sonnet-4-6"
+// (ou crie uma logica separada por endpoint se quiser granularidade).
+// Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
+// /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
+// NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino,
+// que usa a Sonnet como "professora" para o dataset de fine-tuning.
+var MODELO_PRODUCAO = "qwen/qwen2.5-vl-72b-instruct"; // nome usado nas chamadas à API
+var MODELO_PRODUCAO_LOG = "qwen2.5-vl-72b-instruct";  // nome usado no log de custo (sem o "qwen/" do OpenRouter)
+var URL_MODELO_PRODUCAO = "https://openrouter.ai/api/v1/chat/completions";
+function headersModeloProducao() {
+  return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.OPENROUTER_KEY };
+}
 
 function calcularCustoUSD(modelo, usage) {
   if (!usage) return null;
@@ -1142,17 +1171,16 @@ app.post("/diagnostico", async function(req, res) {
   var abortCtrl = new AbortController();
   req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
 
-  fetch("https://api.anthropic.com/v1/messages", {
+  fetch(URL_MODELO_PRODUCAO, {
     method:"POST",
     signal: abortCtrl.signal,
-    headers:{ "Content-Type":"application/json", "x-api-key":KEY, "anthropic-version":"2023-06-01" },
-    body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:3000, temperature:0, stream:true,
-      system:[
-        { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral", ttl:"1h" } },
-        { type:"text", text: contextoRegional }
-      ],
-      messages:[{ role:"user", content:[
-        { type:"image", source:{ type:"base64", media_type:tipo, data:imagem }}
+    headers: headersModeloProducao(),
+    body:JSON.stringify({ model:MODELO_PRODUCAO, max_tokens:3000, temperature:0, stream:true,
+      stream_options:{ include_usage:true },
+      messages:[
+        {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional},
+        {role:"user",content:[
+        {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
       ]}]
     })
   })
@@ -1203,17 +1231,12 @@ app.post("/diagnostico", async function(req, res) {
         if(d==="[DONE]") return;
         try {
           var ev=JSON.parse(d);
-          if(ev.type==="message_start"&&ev.message&&ev.message.usage){
-            var u0=ev.message.usage;
-            usageCapturado.input_tokens=u0.input_tokens||0;
-            usageCapturado.cache_creation_input_tokens=u0.cache_creation_input_tokens||0;
-            usageCapturado.cache_read_input_tokens=u0.cache_read_input_tokens||0;
+          if(ev.usage){
+            usageCapturado.input_tokens=ev.usage.prompt_tokens||usageCapturado.input_tokens;
+            usageCapturado.output_tokens=ev.usage.completion_tokens||usageCapturado.output_tokens;
           }
-          if(ev.type==="message_delta"&&ev.usage){
-            usageCapturado.output_tokens=ev.usage.output_tokens||usageCapturado.output_tokens;
-          }
-          if(ev.type==="content_block_delta"&&ev.delta&&ev.delta.text){
-            texto+=ev.delta.text;
+          if(ev.choices&&ev.choices[0]&&ev.choices[0].delta&&ev.choices[0].delta.content){
+            texto+=ev.choices[0].delta.content;
             detectarParciais();
             extrairCompletos();
           }
@@ -1230,7 +1253,7 @@ app.post("/diagnostico", async function(req, res) {
       resultado=garantirAvisoFerrugem(resultado);
       resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
-      logUsoAnalise(userId, "foto", "claude-sonnet-4-6", usageCapturado, regiao);
+      logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
       encerrar();
     });
 
@@ -1658,22 +1681,20 @@ app.post("/diagnostico-json", async function(req, res) {
   var abortCtrl = new AbortController();
   req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
   try {
-    var r=await fetch("https://api.anthropic.com/v1/messages",{
+    var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
       signal: abortCtrl.signal,
-      headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
-        system:[
-          { type:"text", text: buildPromptStatic(false), cache_control:{ type:"ephemeral", ttl:"1h" } },
-          { type:"text", text: contextoRegional }
-        ],
-        messages:[{role:"user",content:[
-        {type:"image",source:{type:"base64",media_type:tipo,data:imagem}}
-      ]}]})
+      headers: headersModeloProducao(),
+      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
+        messages:[
+          {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional},
+          {role:"user",content:[
+            {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
+        ]}]})
     });
     var d=await r.json();
-    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-json:", JSON.stringify(d.error));
-    var txt=d.content&&d.content[0]?d.content[0].text:"";
+    if(d.error) console.error("ERRO MODELO /diagnostico-json:", JSON.stringify(d.error));
+    var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-json — texto recebido:", txt);
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
@@ -1681,7 +1702,7 @@ app.post("/diagnostico-json", async function(req, res) {
     }
     resultado=garantirAvisoFerrugem(resultado);
     resultado=anexarReferenciaVisual(resultado);
-    logUsoAnalise(userId, "foto", "claude-sonnet-4-6", d.usage, regiao);
+    logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
 });
@@ -1810,25 +1831,27 @@ app.post("/plano-acao", async function(req, res) {
   var abortCtrl = new AbortController();
   req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
   try {
-    var r=await fetch("https://api.anthropic.com/v1/messages",{
+    var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
       signal: abortCtrl.signal,
-      headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:2000,temperature:0,
-        system:[ { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } } ],
-        messages:[{role:"user",content:[{type:"text",text:promptUsuario}]}]})
+      headers: headersModeloProducao(),
+      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:2000,temperature:0,
+        messages:[
+          {role:"system",content:sistemaStatic},
+          {role:"user",content:promptUsuario}
+        ]})
     });
     var d=await r.json();
     if(d.error){
-      console.error("ERRO ANTHROPIC /plano-acao:", JSON.stringify(d.error));
+      console.error("ERRO MODELO /plano-acao:", JSON.stringify(d.error));
       return res.status(502).json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"", erro:"Servico de IA indisponivel no momento. Tente novamente em instantes." });
     }
-    var txt=d.content&&d.content[0]?d.content[0].text:"";
+    var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado){
       console.error("ERRO PARSE /plano-acao — texto recebido:", txt);
     }
-    logUsoAnalise(userId, "plano-acao", "claude-haiku-4-5-20251001", d.usage, regiao);
+    logUsoAnalise(userId, "plano-acao", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"", erro:"Nao foi possivel gerar o plano. Tente novamente." });
   } catch(e) {
     console.error("ERRO EXCECAO /plano-acao:", e.message);
@@ -1853,29 +1876,28 @@ app.post("/diagnostico-video", async function(req, res) {
   }
   var contextoRegional=buildContextoRegional(regiao,altitude,true);
   var content=[];
-  frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:frame}}); });
+  frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+frame}}); });
   var abortCtrl = new AbortController();
   req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
   try {
-    var r=await fetch("https://api.anthropic.com/v1/messages",{
+    var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
       signal: abortCtrl.signal,
-      headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,
-        system:[
-          { type:"text", text: buildPromptStatic(true), cache_control:{ type:"ephemeral", ttl:"1h" } },
-          { type:"text", text: contextoRegional }
-        ],
-        messages:[{role:"user",content}]})
+      headers: headersModeloProducao(),
+      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
+        messages:[
+          {role:"system",content: buildPromptStatic(true) + "\n\n" + contextoRegional},
+          {role:"user",content:content}
+        ]})
     });
     var d=await r.json();
-    if(d.error) console.error("ERRO ANTHROPIC /diagnostico-video:", JSON.stringify(d.error));
-    var txt=d.content&&d.content[0]?d.content[0].text:"";
+    if(d.error) console.error("ERRO MODELO /diagnostico-video:", JSON.stringify(d.error));
+    var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
     resultado=garantirAvisoFerrugem(resultado);
     resultado=anexarReferenciaVisual(resultado);
-    logUsoAnalise(userId, "video", "claude-sonnet-4-6", d.usage, regiao);
+    logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
 });
@@ -2038,20 +2060,19 @@ app.post("/analise-solo", async function(req, res) {
   try {
     var abortCtrl = new AbortController();
     req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
-    var r=await fetch("https://api.anthropic.com/v1/messages",{
+    var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
       signal: abortCtrl.signal,
-      headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2000,temperature:0,
-        system:[
-          { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } },
-          { type:"text", text: contexto||"Sem contexto regional adicional." }
-        ],
-        messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
+      headers: headersModeloProducao(),
+      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:2000,temperature:0,
+        messages:[
+          {role:"system",content: sistemaStatic + "\n\n" + (contexto||"Sem contexto regional adicional.")},
+          {role:"user",content:[{type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}]}
+        ]})
     });
     var d=await r.json();
-    if(d.error) console.error("ERRO ANTHROPIC /analise-solo:", JSON.stringify(d.error));
-    var txt=d.content&&d.content[0]?d.content[0].text:"";
+    if(d.error) console.error("ERRO MODELO /analise-solo:", JSON.stringify(d.error));
+    var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
     if(resultado && resultado.valores_calculo){
@@ -2069,7 +2090,7 @@ app.post("/analise-solo", async function(req, res) {
         if(npk) resultado.adubacao_npk = npk;
       } catch(eNpk) { console.error("ERRO calcularAdubacaoNPK:", eNpk.message); }
     }
-    logUsoAnalise(userId, "solo", "claude-sonnet-4-6", d.usage, regiao);
+    logUsoAnalise(userId, "solo", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{acao:"Nao foi possivel ler o laudo. Verifique a foto e tente novamente.",valores:{}});
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
@@ -2142,16 +2163,16 @@ app.post("/identifica-daninha", async function(req, res) {
   var abortCtrl = new AbortController();
   req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
 
-  fetch("https://api.anthropic.com/v1/messages",{
+  fetch(URL_MODELO_PRODUCAO,{
     method:"POST",
     signal: abortCtrl.signal,
-    headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-    body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2200,temperature:0,stream:true,
-      system:[
-        { type:"text", text: sistemaStatic, cache_control:{ type:"ephemeral", ttl:"1h" } },
-        { type:"text", text: contexto||"Sem contexto regional adicional." }
-      ],
-      messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
+    headers: headersModeloProducao(),
+    body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:2200,temperature:0,stream:true,
+      stream_options:{ include_usage:true },
+      messages:[
+        {role:"system",content: sistemaStatic + "\n\n" + (contexto||"Sem contexto regional adicional.")},
+        {role:"user",content:[{type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}]}
+      ]})
   })
   .then(function(r){
     var Readable = require("stream").Readable;
@@ -2177,17 +2198,12 @@ app.post("/identifica-daninha", async function(req, res) {
         if(d==="[DONE]") return;
         try {
           var ev=JSON.parse(d);
-          if(ev.type==="message_start"&&ev.message&&ev.message.usage){
-            var u0=ev.message.usage;
-            usageCapturado.input_tokens=u0.input_tokens||0;
-            usageCapturado.cache_creation_input_tokens=u0.cache_creation_input_tokens||0;
-            usageCapturado.cache_read_input_tokens=u0.cache_read_input_tokens||0;
+          if(ev.usage){
+            usageCapturado.input_tokens=ev.usage.prompt_tokens||usageCapturado.input_tokens;
+            usageCapturado.output_tokens=ev.usage.completion_tokens||usageCapturado.output_tokens;
           }
-          if(ev.type==="message_delta"&&ev.usage){
-            usageCapturado.output_tokens=ev.usage.output_tokens||usageCapturado.output_tokens;
-          }
-          if(ev.type==="content_block_delta"&&ev.delta&&ev.delta.text){
-            texto+=ev.delta.text;
+          if(ev.choices&&ev.choices[0]&&ev.choices[0].delta&&ev.choices[0].delta.content){
+            texto+=ev.choices[0].delta.content;
             detectarNomeParcial();
           }
         }catch(e){}
@@ -2204,7 +2220,7 @@ app.post("/identifica-daninha", async function(req, res) {
         resultado={plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""};
       }
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
-      logUsoAnalise(userId, "daninha", "claude-sonnet-4-6", usageCapturado, regiao);
+      logUsoAnalise(userId, "daninha", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
       encerrarDaninha();
     });
 
@@ -2277,22 +2293,21 @@ app.post("/identifica-defeito-grao", async function(req, res) {
   try {
     var abortCtrl = new AbortController();
     req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
-    var rGr=await fetch("https://api.anthropic.com/v1/messages",{
+    var rGr=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
       signal: abortCtrl.signal,
-      headers:{"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1800,temperature:0,
-        system:[
-          { type:"text", text: sistemaGraos, cache_control:{ type:"ephemeral", ttl:"1h" } },
-          { type:"text", text: contextoG||"Sem contexto regional adicional." }
-        ],
-        messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:tipo,data:imagem}}]}]})
+      headers: headersModeloProducao(),
+      body:JSON.stringify({model:MODELO_PRODUCAO,max_tokens:1800,temperature:0,
+        messages:[
+          {role:"system",content: sistemaGraos + "\n\n" + (contextoG||"Sem contexto regional adicional.")},
+          {role:"user",content:[{type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}]}
+        ]})
     });
     var dGr=await rGr.json();
-    if(dGr.error) console.error("ERRO ANTHROPIC /identifica-defeito-grao:", JSON.stringify(dGr.error));
-    var txtGr=dGr.content&&dGr.content[0]?dGr.content[0].text:"";
+    if(dGr.error) console.error("ERRO MODELO /identifica-defeito-grao:", JSON.stringify(dGr.error));
+    var txtGr=dGr.choices&&dGr.choices[0]&&dGr.choices[0].message?dGr.choices[0].message.content:"";
     var resultadoGr=extrairJSON(txtGr);
-    logUsoAnalise(userId, "graos", "claude-sonnet-4-6", dGr.usage, regiao);
+    logUsoAnalise(userId, "graos", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(dGr.usage), regiao);
     if(resultadoGr && resultadoGr.defeitos){
       res.json(resultadoGr);
     } else {

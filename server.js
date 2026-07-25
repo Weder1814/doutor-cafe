@@ -440,9 +440,18 @@ function normalizarUsageOpenRouter(usage) {
 // Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
 // /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
 // NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino.
-var MODELO_PRODUCAO = "qwen2.5-vl-72b-instruct"; // sem prefixo "qwen/" — chamada direta, nao via OpenRouter
-var MODELO_PRODUCAO_LOG = "qwen2.5-vl-72b-instruct";
-var URL_MODELO_PRODUCAO = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions";
+var MODELO_PRODUCAO = "qwen-vl-max"; // modelo proprietario/flagship da Alibaba — trocado do qwen2.5-vl-72b-instruct
+// (open-source) porque esse ultimo nao aparecia disponivel no catalogo da conta
+// e retornava "modelo nao encontrado" — qwen-vl-max e nativo da API deles,
+// sem essa restricao de disponibilidade por regiao/conta.
+// ATENCAO: todo o ajuste fino de prompt que fizemos (regras de diferencial,
+// poda de achados incidentais, etc.) foi testado e calibrado usando o
+// qwen2.5-vl-72b-instruct via OpenRouter — o qwen-vl-max e um modelo
+// DIFERENTE (proprietario, nao open-source) e pode se comportar de forma
+// distinta com esse mesmo prompt. Vale re-rodar os testes de comparacao
+// depois que esse estiver no ar, pra confirmar se a calibracao ainda vale.
+var MODELO_PRODUCAO_LOG = "qwen-vl-max";
+var URL_MODELO_PRODUCAO = "https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"; // endpoint dedicado do workspace (Singapore) — mais estavel que o generico
 function headersModeloProducao() {
   return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.DASHSCOPE_API_KEY };
 }

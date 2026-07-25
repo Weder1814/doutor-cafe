@@ -424,24 +424,33 @@ function normalizarUsageOpenRouter(usage) {
 // /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
 // NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino,
 // que usa a Sonnet como "professora" para o dataset de fine-tuning.
-var MODELO_PRODUCAO = "qwen/qwen2.5-vl-72b-instruct"; // nome usado nas chamadas à API
-var MODELO_PRODUCAO_LOG = "qwen2.5-vl-72b-instruct";  // nome usado no log de custo (sem o "qwen/" do OpenRouter)
-var URL_MODELO_PRODUCAO = "https://openrouter.ai/api/v1/chat/completions";
+// ── TROCA TEMPORARIA DE MODELO PARA TESTE (Sonnet -> Qwen, agora DIRETO
+// na Alibaba Cloud, sem passar pelo OpenRouter) ──────────────────────
+// Ativado a pedido do Dinho para rodar testes no app real com Qwen no
+// lugar de Sonnet/Haiku. Migrado do OpenRouter pra Alibaba Cloud Model
+// Studio (DashScope) direto porque o OpenRouter reparte a mesma chamada
+// entre varios provedores terceiros (Nebius, Parasail, etc.) com leves
+// diferencas de configuracao/quantizacao entre eles — isso causava a
+// MESMA foto dar diagnosticos diferentes em celulares diferentes no
+// mesmo dia. Chamando direto na Alibaba (dona do modelo), essa fonte de
+// instabilidade desaparece, igual a Sonnet ja e chamada direto na
+// Anthropic sem intermediario.
+// PARA REVERTER PARA SONNET: troque MODELO_PRODUCAO de volta e restaure
+// as chamadas para api.anthropic.com (ver historico do arquivo).
+// Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
+// /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
+// NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino.
+var MODELO_PRODUCAO = "qwen2.5-vl-72b-instruct"; // sem prefixo "qwen/" — chamada direta, nao via OpenRouter
+var MODELO_PRODUCAO_LOG = "qwen2.5-vl-72b-instruct";
+var URL_MODELO_PRODUCAO = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions";
 function headersModeloProducao() {
-  return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.OPENROUTER_KEY };
+  return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.DASHSCOPE_API_KEY };
 }
-// FIXAR PROVEDOR (resolve inconsistencia entre celulares): o OpenRouter roteia
-// a MESMA chamada de "Qwen" entre varios provedores de hospedagem diferentes
-// (DeepInfra, Together, Fireworks, etc.), e cada um pode ter leve diferenca de
-// quantizacao/configuracao — o que explica o mesmo prompt dar respostas
-// diferentes em celulares diferentes no mesmo dia. Configure a env var
-// OPENROUTER_PROVIDER no Railway com o nome EXATO de um provedor da lista em
-// https://openrouter.ai/qwen/qwen2.5-vl-72b-instruct (aba "Providers") para
-// forcar todas as chamadas a usarem sempre o mesmo provedor. Sem essa env var
-// configurada, o comportamento antigo (roteamento automático) continua.
+// Fixar provedor era so relevante no OpenRouter (varios provedores por
+// tras do mesmo nome). Chamando direto na Alibaba nao existe esse
+// conceito — corpoModeloProducao agora so devolve o corpo como veio,
+// sem adicionar nada.
 function corpoModeloProducao(campos) {
-  var provedor = process.env.OPENROUTER_PROVIDER;
-  if (provedor) campos.provider = { order:[provedor], allow_fallbacks:false };
   return campos;
 }
 

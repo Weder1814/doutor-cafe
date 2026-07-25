@@ -1636,6 +1636,72 @@ app.post("/teste-gemini-diagnostico", async function(req, res) {
 // Mesma logica dos testes anteriores: endpoint SEPARADO e isolado, so
 // para comparar qualidade/custo com a Sonnet. Nao afeta fluxo real do app.
 var OPENAI_KEY = process.env.OPENAI_API_KEY;
+// ── TESTE COMPARATIVO: Qwen-VL-Max (Alibaba direto, mesma infra da producao) ──
+// Endpoint isolado, so para comparar no teste-comparacao.html. Preco NAO
+// confirmado ainda (nao achei tabela oficial especifica pra esse modelo) —
+// mostra os tokens reais e deixa custo_usd_estimado como null; confira o
+// valor de verdade na aba de faturamento do console da Alibaba apos rodar.
+app.post("/teste-qwen-vl-max-diagnostico", async function(req, res) {
+  if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY não configurada no Railway." });
+  var imagem = req.body.imagem;
+  var tipo   = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
+  var inicio = Date.now();
+
+  try {
+    var r = await fetch("https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.DASHSCOPE_API_KEY
+      },
+      body: JSON.stringify({
+        model: "qwen-vl-max",
+        temperature: 0,
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptCompleto },
+              { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+            ]
+          }
+        ]
+      })
+    });
+    var data = await r.json();
+    var duracaoMs = Date.now() - inicio;
+
+    if (!r.ok) {
+      return res.status(500).json({ erro: "Erro na Alibaba Cloud", detalhes: data });
+    }
+
+    var textoResposta = data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content : "";
+    var resultado = extrairJSON(textoResposta);
+    var usage = data.usage || {};
+
+    res.json({
+      modelo: "qwen-vl-max",
+      duracao_ms: duracaoMs,
+      resultado_bruto: textoResposta,
+      resultado_parseado: resultado,
+      usage: usage,
+      custo_usd_estimado: null,
+      custo_brl_estimado: null,
+      custo_nota: "Preco ainda nao confirmado — confira o valor real na aba de faturamento do console da Alibaba Cloud."
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
   if (!OPENAI_KEY) return res.status(500).json({ erro:"OPENAI_API_KEY não configurada no Railway." });
   var imagem = req.body.imagem;

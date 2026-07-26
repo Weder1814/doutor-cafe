@@ -400,7 +400,9 @@ async function dbSalvarAnalise(userId, talhaoId, diagnosticos, fotoThumb, regiao
 var PRECOS_USD_POR_MTOK = {
   "claude-sonnet-4-6":          { input: 3.00,  output: 15.00 },
   "claude-haiku-4-5-20251001":  { input: 0.80,  output: 4.00  },
-  "qwen2.5-vl-72b-instruct":    { input: 0.25,  output: 0.75  }
+  "qwen2.5-vl-72b-instruct":    { input: 0.25,  output: 0.75  },
+  "qwen-vl-max":                { input: 0.80,  output: 3.20  }, // confirmado na pagina de precos do Model Studio
+  "qwen3.7-plus":               { input: 0.40,  output: 1.60  }  // confirmado na pagina de precos do Model Studio (preco padrao, sem o desconto temporario de 20%)
 };
 
 // Normaliza o "usage" no formato OpenAI/OpenRouter (prompt_tokens/completion_tokens)
@@ -1687,15 +1689,82 @@ app.post("/teste-qwen-vl-max-diagnostico", async function(req, res) {
     var resultado = extrairJSON(textoResposta);
     var usage = data.usage || {};
 
+    // Preco confirmado na pagina de precos do Model Studio: US$0,80/M entrada, US$3,20/M saida
+    var custoUsd = ((usage.prompt_tokens||0) * 0.80 + (usage.completion_tokens||0) * 3.20) / 1000000;
+
     res.json({
       modelo: "qwen-vl-max",
       duracao_ms: duracaoMs,
       resultado_bruto: textoResposta,
       resultado_parseado: resultado,
       usage: usage,
-      custo_usd_estimado: null,
-      custo_brl_estimado: null,
-      custo_nota: "Preco ainda nao confirmado — confira o valor real na aba de faturamento do console da Alibaba Cloud."
+      custo_usd_estimado: Math.round(custoUsd * 100000) / 100000,
+      custo_brl_estimado: Math.round(custoUsd * 5.30 * 100) / 100
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// ── TESTE COMPARATIVO: Qwen3.7-Plus (sucessor oficial do qwen-vl-max — ──
+// este ultimo sera descontinuado em 10/10/2026, ver notice.aliyun.com/118344).
+// Mesma infra direta da Alibaba, endpoint dedicado do workspace.
+app.post("/teste-qwen37plus-diagnostico", async function(req, res) {
+  if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY não configurada no Railway." });
+  var imagem = req.body.imagem;
+  var tipo   = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
+  var inicio = Date.now();
+
+  try {
+    var r = await fetch("https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.DASHSCOPE_API_KEY
+      },
+      body: JSON.stringify({
+        model: "qwen3.7-plus",
+        temperature: 0,
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptCompleto },
+              { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+            ]
+          }
+        ]
+      })
+    });
+    var data = await r.json();
+    var duracaoMs = Date.now() - inicio;
+
+    if (!r.ok) {
+      return res.status(500).json({ erro: "Erro na Alibaba Cloud", detalhes: data });
+    }
+
+    var textoResposta = data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content : "";
+    var resultado = extrairJSON(textoResposta);
+    var usage = data.usage || {};
+
+    var custoUsd = ((usage.prompt_tokens||0) * 0.40 + (usage.completion_tokens||0) * 1.60) / 1000000;
+
+    res.json({
+      modelo: "qwen3.7-plus",
+      duracao_ms: duracaoMs,
+      resultado_bruto: textoResposta,
+      resultado_parseado: resultado,
+      usage: usage,
+      custo_usd_estimado: Math.round(custoUsd * 100000) / 100000,
+      custo_brl_estimado: Math.round(custoUsd * 5.30 * 100) / 100
     });
   } catch (e) {
     res.status(500).json({ erro: e.message });

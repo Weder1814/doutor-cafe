@@ -1839,6 +1839,76 @@ app.post("/teste-qwen3vlflash-diagnostico", async function(req, res) {
   }
 });
 
+// ── TESTE COMPARATIVO: GLM-4.6V-Flash (Zhipu AI / Z.ai) ──────────
+// Candidato chinês alternativo ao Qwen, sugerido apos avaliar o
+// InternVL3-78B (descartado: contexto de so 16k tokens e hospedagem
+// "deploy on demand" incompativel com nosso volume). GLM-4.6V-Flash
+// tem 128K de contexto e e gratuito na API oficial da Z.ai (verificar
+// se o custo $0 e permanente ou promocional antes de ir pra producao —
+// modelos free tier costumam ter rate limit mais apertado).
+// Endpoint isolado, mesma estrutura dos testes Qwen. Preco $0 confirmado
+// na doc oficial em 27/07/2026 — reconfirme no dashboard antes de decidir.
+app.post("/teste-glm46vflash-diagnostico", async function(req, res) {
+  if (!process.env.ZAI_API_KEY) return res.status(500).json({ erro:"ZAI_API_KEY não configurada no Railway." });
+  var imagem = req.body.imagem;
+  var tipo   = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
+  var inicio = Date.now();
+
+  try {
+    var r = await fetch("https://api.z.ai/api/paas/v4/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.ZAI_API_KEY
+      },
+      body: JSON.stringify({
+        model: "glm-4.6v-flash",
+        temperature: 0,
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptCompleto },
+              { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+            ]
+          }
+        ]
+      })
+    });
+    var data = await r.json();
+    var duracaoMs = Date.now() - inicio;
+
+    if (!r.ok) {
+      return res.status(500).json({ erro: "Erro na Z.ai", detalhes: data });
+    }
+
+    var textoResposta = data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content : "";
+    var resultado = extrairJSON(textoResposta);
+    var usage = data.usage || {};
+
+    res.json({
+      modelo: "glm-4.6v-flash",
+      duracao_ms: duracaoMs,
+      resultado_bruto: textoResposta,
+      resultado_parseado: resultado,
+      usage: usage,
+      custo_usd_estimado: 0,
+      custo_brl_estimado: 0,
+      custo_nota: "Modelo Flash gratuito na API oficial Z.ai (confirmado 27/07/2026) — reconfirme no dashboard, pode ter rate limit."
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
   if (!OPENAI_KEY) return res.status(500).json({ erro:"OPENAI_API_KEY não configurada no Railway." });
   var imagem = req.body.imagem;

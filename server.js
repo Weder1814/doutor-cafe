@@ -1771,6 +1771,74 @@ app.post("/teste-qwen37plus-diagnostico", async function(req, res) {
   }
 });
 
+// ── TESTE COMPARATIVO: Qwen3-VL-Flash (opcao mais rapida/barata da linha ──
+// Qwen3-VL — candidato alternativo ao Qwen3.7-Plus, que demonstrou lentidao
+// por gastar muitos tokens de "raciocinio interno" antes de responder.
+app.post("/teste-qwen3vlflash-diagnostico", async function(req, res) {
+  if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY não configurada no Railway." });
+  var imagem = req.body.imagem;
+  var tipo   = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
+  var inicio = Date.now();
+
+  try {
+    var r = await fetch("https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.DASHSCOPE_API_KEY
+      },
+      body: JSON.stringify({
+        model: "qwen3-vl-flash",
+        temperature: 0,
+        max_tokens: 3000,
+        // qwen3-vl-flash e hibrido (pode "pensar" antes de responder); o
+        // padrao dele e enable_thinking:false — mantemos explicito aqui
+        // pra evitar o mesmo problema de lentidao/custo visto no qwen3.7-plus.
+        enable_thinking: false,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptCompleto },
+              { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+            ]
+          }
+        ]
+      })
+    });
+    var data = await r.json();
+    var duracaoMs = Date.now() - inicio;
+
+    if (!r.ok) {
+      return res.status(500).json({ erro: "Erro na Alibaba Cloud", detalhes: data });
+    }
+
+    var textoResposta = data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content : "";
+    var resultado = extrairJSON(textoResposta);
+    var usage = data.usage || {};
+
+    res.json({
+      modelo: "qwen3-vl-flash",
+      duracao_ms: duracaoMs,
+      resultado_bruto: textoResposta,
+      resultado_parseado: resultado,
+      usage: usage,
+      custo_usd_estimado: null,
+      custo_brl_estimado: null,
+      custo_nota: "Preco ainda nao confirmado na pagina oficial — confira no console da Alibaba Cloud."
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
   if (!OPENAI_KEY) return res.status(500).json({ erro:"OPENAI_API_KEY não configurada no Railway." });
   var imagem = req.body.imagem;

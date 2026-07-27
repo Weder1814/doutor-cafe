@@ -1316,7 +1316,7 @@ var OPENROUTER_KEY = process.env.OPENROUTER_KEY;
 // da Sonnet (buildPromptStatic). Fácil de reverter: comente a linha
 // que concatena INSTRUCAO_TESTE_EXTRA em cada endpoint, ou troque o
 // conteúdo desta variável para testar outra versão da instrução.
-var INSTRUCAO_TESTE_EXTRA = "\n\n### ETAPA OBRIGATÓRIA 1 — INVENTÁRIO DOS ACHADOS VISUAIS\n\nAntes de formular qualquer diagnóstico, faça uma inspeção completa e sistemática da imagem.\n\nListe mentalmente TODOS os achados visuais observados, incluindo:\n\n- manchas\n- halos\n- necroses\n- cloroses\n- deformações\n- perfurações\n- insetos\n- ovos\n- micélio\n- pústulas\n- alterações nas nervuras\n- alterações nas bordas\n- distribuição dos sintomas\n- intensidade\n- estágio aparente\n\nNão interrompa a inspeção ao encontrar o primeiro problema.\n\nSomente depois que TODOS os achados forem identificados, relacione esses achados aos diagnósticos possíveis.\n\n### ETAPA OBRIGATÓRIA 2 — REVISÃO FINAL\n\nAntes de responder:\n\nRevise toda a imagem uma segunda vez.\n\nPergunte:\n\n\"Existe algum sinal visível que ainda não foi explicado pelo diagnóstico principal?\"\n\nSe existir, registre-o como diagnóstico diferencial de baixa ou média confiança.";
+var INSTRUCAO_TESTE_EXTRA = "\n\n### ETAPA OBRIGATÓRIA 1 — INVENTÁRIO DOS ACHADOS VISUAIS\n\nAntes de formular qualquer diagnóstico, faça uma inspeção completa e sistemática da imagem.\n\nPRIMEIRO, identifique QUAIS ELEMENTOS estão visíveis na foto: folhas? frutos/cerejas? ramos? Se a foto mostra MAIS DE UM tipo de elemento (por exemplo, frutos E folhas ao mesmo tempo), você DEVE inspecionar cada elemento SEPARADAMENTE — não pare a inspeção depois de encontrar um achado forte num elemento (ex: frutos mumificados) sem também verificar os outros elementos visíveis (ex: manchas na folha ao lado). Um achado óbvio numa parte da imagem NÃO dispensa a inspeção das outras partes.\n\nListe mentalmente TODOS os achados visuais observados, incluindo:\n\n- manchas\n- halos\n- necroses\n- cloroses\n- deformações\n- perfurações\n- insetos\n- ovos\n- micélio\n- pústulas\n- alterações nas nervuras\n- alterações nas bordas\n- distribuição dos sintomas\n- intensidade\n- estágio aparente\n\nNão interrompa a inspeção ao encontrar o primeiro problema.\n\nSomente depois que TODOS os achados, em TODOS os elementos visíveis da foto, forem identificados, relacione esses achados aos diagnósticos possíveis.\n\n### ETAPA OBRIGATÓRIA 2 — REVISÃO FINAL\n\nAntes de responder:\n\nRevise toda a imagem uma segunda vez.\n\nPergunte:\n\n\"Existe algum sinal visível que ainda não foi explicado pelo diagnóstico principal?\" e \"Se a foto tem frutos E folhas, eu relatei achados relevantes das duas partes, ou só de uma?\"\n\nSe existir algo não explicado, registre-o como diagnóstico diferencial de baixa ou média confiança.";
 
 app.post("/teste-qwen-diagnostico", async function(req, res) {
   if (!OPENROUTER_KEY) return res.status(500).json({ erro:"OPENROUTER_KEY não configurada no Railway." });
@@ -1875,7 +1875,12 @@ app.post("/teste-glm46vflash-diagnostico", async function(req, res) {
       body: JSON.stringify({
         model: "glm-4.6v-flash",
         temperature: 0,
-        max_tokens: 3000,
+        // Aumentado de 3000 para 5000 em 27/07/2026: no teste anterior a
+        // resposta bateu exatamente 3000/3000 tokens de saida, sinal de
+        // truncamento no meio do JSON — o que pode ter distorcido o
+        // diagnostico (deficiencia de magnesio, destoante dos outros 3
+        // modelos que bateram em cercosporiose na mesma foto).
+        max_tokens: 5000,
         messages: [
           {
             role: "user",

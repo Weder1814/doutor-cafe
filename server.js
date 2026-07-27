@@ -442,26 +442,53 @@ function normalizarUsageOpenRouter(usage) {
 // Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
 // /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
 // NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino.
-var MODELO_PRODUCAO = "qwen-vl-max"; // modelo proprietario/flagship da Alibaba — trocado do qwen2.5-vl-72b-instruct
-// (open-source) porque esse ultimo nao aparecia disponivel no catalogo da conta
-// e retornava "modelo nao encontrado" — qwen-vl-max e nativo da API deles,
-// sem essa restricao de disponibilidade por regiao/conta.
-// ATENCAO: todo o ajuste fino de prompt que fizemos (regras de diferencial,
-// poda de achados incidentais, etc.) foi testado e calibrado usando o
-// qwen2.5-vl-72b-instruct via OpenRouter — o qwen-vl-max e um modelo
-// DIFERENTE (proprietario, nao open-source) e pode se comportar de forma
-// distinta com esse mesmo prompt. Vale re-rodar os testes de comparacao
-// depois que esse estiver no ar, pra confirmar se a calibracao ainda vale.
-var MODELO_PRODUCAO_LOG = "qwen-vl-max";
+// ── MODELO DE PRODUCAO: Sonnet -> Qwen3.7-Plus (27/07/2026) ─────────
+// Troca decidida apos rodada extensa de testes comparativos no mesmo dia
+// (9 fotos reais, ver teste-comparacao.html): Qwen3.7-Plus bateu com a
+// Sonnet no diagnostico principal em 8 de 9 fotos, e no unico caso de
+// discordancia real foi a SONNET quem errou (confirmado pelo Dinho em
+// campo). Motivo da troca: ~5-8x mais barato e 2-3x mais rapido que
+// Sonnet, mantendo qualidade equivalente nos testes rodados.
+// Ativado durante a ultima semana de testes fechados no Google Play —
+// bom momento pra validar com os testadores reais alem dos testes manuais.
+// RISCOS CONHECIDOS A MONITORAR (nao totalmente resolvidos nos testes):
+//   1. Achados SECUNDARIOS (multiplas condicoes coexistindo na mesma foto)
+//      tendem a ser menos completos que a Sonnet — Qwen aplicou a correcao
+//      de varredura por regiao (frutos vs folhas) mas ainda errou um caso
+//      de subgrupos DENTRO do mesmo aglomerado de frutos (fruto_passado
+//      coexistindo com antracnose_fruto). Ajuste feito em INSTRUCAO_TESTE_EXTRA
+//      em 27/07/2026, MAS NAO RE-TESTADO ainda apos esse ajuste especifico.
+//   2. Estagio de severidade (ex: ferrugem estagio 3 vs 4) pode divergir
+//      mesmo quando o diagnostico principal bate.
+//   3. analise-solo, identifica-daninha, plano-acao e identifica-defeito-grao
+//      NAO foram testados com fotos reais nesta rodada — so /diagnostico-json
+//      foi validado. Monitore esses endpoints com atencao extra.
+// PARA REVERTER PARA SONNET: troque MODELO_PRODUCAO para "claude-sonnet-4-6",
+// URL_MODELO_PRODUCAO para "https://api.anthropic.com/v1/messages", e
+// restaure o formato de chamada Anthropic (system+x-api-key), ver historico
+// do arquivo ou o endpoint /gerar-exemplo-treino (mantido em Sonnet) como
+// referencia de como montar essa chamada.
+// Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
+// /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
+// NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino,
+// que usa a Sonnet como "professora" para o dataset de fine-tuning.
+var MODELO_PRODUCAO = "qwen3.7-plus";
+var MODELO_PRODUCAO_LOG = "qwen3.7-plus";
 var URL_MODELO_PRODUCAO = "https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"; // endpoint dedicado do workspace (Singapore) — mais estavel que o generico
 function headersModeloProducao() {
   return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.DASHSCOPE_API_KEY };
 }
 // Fixar provedor era so relevante no OpenRouter (varios provedores por
 // tras do mesmo nome). Chamando direto na Alibaba nao existe esse
-// conceito — corpoModeloProducao agora so devolve o corpo como veio,
-// sem adicionar nada.
+// conceito — corpoModeloProducao devolve o corpo como veio, exceto que
+// forca enable_thinking:false para modelos Qwen3.x (calibrado em
+// 27/07/2026: sem isso o Qwen3.7-Plus roda em modo thinking por padrao,
+// levando 50-100s e milhares de tokens de raciocinio interno por analise —
+// inviavel para producao tanto em latencia quanto em custo).
 function corpoModeloProducao(campos) {
+  if (campos.model && campos.model.indexOf("qwen3") === 0 && campos.enable_thinking === undefined) {
+    campos.enable_thinking = false;
+  }
   return campos;
 }
 
@@ -1212,7 +1239,7 @@ app.post("/diagnostico", async function(req, res) {
     body:JSON.stringify(corpoModeloProducao({ model:MODELO_PRODUCAO, max_tokens:3000, temperature:0, stream:true,
       stream_options:{ include_usage:true },
       messages:[
-        {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional},
+        {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA},
         {role:"user",content:[
         {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
       ]}]
@@ -1316,7 +1343,7 @@ var OPENROUTER_KEY = process.env.OPENROUTER_KEY;
 // da Sonnet (buildPromptStatic). Fácil de reverter: comente a linha
 // que concatena INSTRUCAO_TESTE_EXTRA em cada endpoint, ou troque o
 // conteúdo desta variável para testar outra versão da instrução.
-var INSTRUCAO_TESTE_EXTRA = "\n\n### ETAPA OBRIGATÓRIA 1 — INVENTÁRIO DOS ACHADOS VISUAIS\n\nAntes de formular qualquer diagnóstico, faça uma inspeção completa e sistemática da imagem.\n\nPRIMEIRO, identifique QUAIS ELEMENTOS estão visíveis na foto: folhas? frutos/cerejas? ramos? Se a foto mostra MAIS DE UM tipo de elemento (por exemplo, frutos E folhas ao mesmo tempo), você DEVE inspecionar cada elemento SEPARADAMENTE — não pare a inspeção depois de encontrar um achado forte num elemento (ex: frutos mumificados) sem também verificar os outros elementos visíveis (ex: manchas na folha ao lado). Um achado óbvio numa parte da imagem NÃO dispensa a inspeção das outras partes.\n\nListe mentalmente TODOS os achados visuais observados, incluindo:\n\n- manchas\n- halos\n- necroses\n- cloroses\n- deformações\n- perfurações\n- insetos\n- ovos\n- micélio\n- pústulas\n- alterações nas nervuras\n- alterações nas bordas\n- distribuição dos sintomas\n- intensidade\n- estágio aparente\n\nNão interrompa a inspeção ao encontrar o primeiro problema.\n\nSomente depois que TODOS os achados, em TODOS os elementos visíveis da foto, forem identificados, relacione esses achados aos diagnósticos possíveis.\n\n### ETAPA OBRIGATÓRIA 2 — REVISÃO FINAL\n\nAntes de responder:\n\nRevise toda a imagem uma segunda vez.\n\nPergunte:\n\n\"Existe algum sinal visível que ainda não foi explicado pelo diagnóstico principal?\" e \"Se a foto tem frutos E folhas, eu relatei achados relevantes das duas partes, ou só de uma?\"\n\nSe existir algo não explicado, registre-o como diagnóstico diferencial de baixa ou média confiança.";
+var INSTRUCAO_TESTE_EXTRA = "\n\n### ETAPA OBRIGATÓRIA 1 — INVENTÁRIO DOS ACHADOS VISUAIS\n\nAntes de formular qualquer diagnóstico, faça uma inspeção completa e sistemática da imagem.\n\nPRIMEIRO, identifique QUAIS ELEMENTOS estão visíveis na foto: folhas? frutos/cerejas? ramos? Se a foto mostra MAIS DE UM tipo de elemento (por exemplo, frutos E folhas ao mesmo tempo), você DEVE inspecionar cada elemento SEPARADAMENTE — não pare a inspeção depois de encontrar um achado forte num elemento (ex: frutos mumificados) sem também verificar os outros elementos visíveis (ex: manchas na folha ao lado). Um achado óbvio numa parte da imagem NÃO dispensa a inspeção das outras partes.\n\nATENÇÃO ESPECÍFICA A FRUTOS: se a foto mostra um GRUPO/CACHO de frutos escuros, NÃO assuma que todos os frutos escuros da foto pertencem à mesma categoria só porque estão perto uns dos outros. Depois de identificar frutos mumificados (antracnose_fruto), verifique se existem TAMBÉM, na mesma foto, frutos escuros DIFERENTES desses — mais isolados, enrugados/foscos mas sem mumificação em grupo — que podem ser fruto_passado (problema de colheita atrasada, não doença) coexistindo com a antracnose. Compare a textura e o padrão de agrupamento de CADA fruto escuro individualmente antes de decidir se são todos a mesma coisa.\n\nListe mentalmente TODOS os achados visuais observados, incluindo:\n\n- manchas\n- halos\n- necroses\n- cloroses\n- deformações\n- perfurações\n- insetos\n- ovos\n- micélio\n- pústulas\n- alterações nas nervuras\n- alterações nas bordas\n- distribuição dos sintomas\n- intensidade\n- estágio aparente\n\nNão interrompa a inspeção ao encontrar o primeiro problema.\n\nSomente depois que TODOS os achados, em TODOS os elementos visíveis da foto, forem identificados, relacione esses achados aos diagnósticos possíveis.\n\n### ETAPA OBRIGATÓRIA 2 — REVISÃO FINAL\n\nAntes de responder:\n\nRevise toda a imagem uma segunda vez.\n\nPergunte:\n\n\"Existe algum sinal visível que ainda não foi explicado pelo diagnóstico principal?\", \"Se a foto tem frutos E folhas, eu relatei achados relevantes das duas partes, ou só de uma?\" e \"Dentro dos frutos escuros da foto, existem SUBGRUPOS com textura/padrão diferentes entre si que eu tratei como um só?\"\n\nSe existir algo não explicado, registre-o como diagnóstico diferencial de baixa ou média confiança.";
 
 app.post("/teste-qwen-diagnostico", async function(req, res) {
   if (!OPENROUTER_KEY) return res.status(500).json({ erro:"OPENROUTER_KEY não configurada no Railway." });
@@ -2002,7 +2029,7 @@ app.post("/diagnostico-json", async function(req, res) {
       headers: headersModeloProducao(),
       body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
         messages:[
-          {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional},
+          {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA},
           {role:"user",content:[
             {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
         ]}]}))
@@ -2201,7 +2228,7 @@ app.post("/diagnostico-video", async function(req, res) {
       headers: headersModeloProducao(),
       body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
         messages:[
-          {role:"system",content: buildPromptStatic(true) + "\n\n" + contextoRegional},
+          {role:"system",content: buildPromptStatic(true) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA},
           {role:"user",content:content}
         ]}))
     });

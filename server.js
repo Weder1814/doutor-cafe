@@ -1732,6 +1732,11 @@ app.post("/teste-qwen37plus-diagnostico", async function(req, res) {
         model: "qwen3.7-plus",
         temperature: 0,
         max_tokens: 3000,
+        // Corrigido em 27/07/2026: esse endpoint estava sem enable_thinking,
+        // por isso o Qwen3.7-Plus rodava com thinking ligado por padrao
+        // (103.5s e 4366 tokens de raciocinio no teste). O outro endpoint
+        // (qwen3vlflash) ja tinha essa flag; faltava replicar aqui.
+        enable_thinking: false,
         messages: [
           {
             role: "user",

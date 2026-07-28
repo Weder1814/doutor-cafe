@@ -1311,7 +1311,7 @@ app.post("/diagnostico", async function(req, res) {
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
-      resultado=garantirAvisoFerrugem(resultado);
+      resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);
       resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
@@ -2042,7 +2042,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=garantirAvisoFerrugem(resultado);
+    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2085,7 +2085,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = garantirAvisoFerrugem(resultado);
+    resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -2237,7 +2237,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=garantirAvisoFerrugem(resultado);
+    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -2680,6 +2680,40 @@ function garantirAvisoFerrugem(resultado) {
       var acaoAtual=(d.acao||"");
       var jaTemAviso=/face\s*(de\s*)?baixo|face\s*inferior/i.test(acaoAtual);
       if(!jaTemAviso) d.acao=AVISO_FACE_BAIXO+acaoAtual;
+    }
+  });
+  return resultado;
+}
+
+// Trava determinística #2 (mesma logica da acima, para o caso mais grave):
+// o LLM tem mostrado tendencia a diagnosticar ferrugem so pela cor alaranjada
+// do ponto central, mesmo com o prompt proibindo isso explicitamente (testado
+// em 28/07/2026, regra de prompt nao foi suficiente em 2 tentativas). Essa
+// funcao intercepta e corrige programaticamente: se o diagnostico for
+// "ferrugem" e o texto descritivo indicar que a face inferior nao foi
+// confirmada (ou seja, nao ha confirmacao real de po/esporulacao), troca
+// automaticamente para "mancha_manteigosa", movendo a suspeita de ferrugem
+// para o campo diagnostico_diferencial. Nao depende do modelo obedecer nada.
+var PRODUTOS_MANCHA_MANTEIGOSA = [
+  { nome:"Azoxistrobina+Difenoconazol 325SC", nome_comercial:"", tipo:"sistemico", dose_min:0.3, dose_max:0.4, unidade:"L", por:"hectare", proporcao_por_litro:0.3, unidade_proporcao:"mL", intervalo_reaplicacao:14, carencia_dias:7 },
+  { nome:"Oxicloreto Cobre 840WP", nome_comercial:"", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:14, carencia_dias:7 }
+];
+function corrigirFerrugemSemConfirmacao(resultado) {
+  if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
+  resultado.diagnosticos.forEach(function(d){
+    if(!d||d.diagnostico!=="ferrugem") return;
+    var texto=((d.visto||"")+" "+(d.diagnostico_diferencial||"")+" "+(d.acao||"")).toLowerCase();
+    // Sinais de que a face inferior/po NAO foi confirmado (so suposto/sugerido)
+    var semConfirmacao = /face inferior (n[aã]o|nao)|n[aã]o (est[aá]|foi) vis[ií]vel.*inferior|sem confirma|n[aã]o (e|é) confirmad|confirma[cç][aã]o definitiva|sugere esporula[cç][aã]o|n[aã]o confirmada visualmente/i.test(texto);
+    // Sinal de que o po/esporulacao FOI de fato confirmado (nesse caso, nao corrige)
+    var comConfirmacao = /p[oó] (alaranjado )?(confirmado|vis[ií]vel na face inferior|que suja)|esporula[cç][aã]o confirmada|pustulas? vis[ií]ve(l|is) na face inferior/i.test(texto);
+    if(semConfirmacao && !comConfirmacao){
+      var suspeitaFerrugem = "Suspeita de ferrugem tambem considerada (ponto central com coloracao alaranjada), mas sem confirmacao de po/esporulacao na face inferior — fotografe a face de baixo desta folha para descartar ou confirmar ferrugem antes de decidir o tratamento. "+(d.diagnostico_diferencial||"");
+      d.diagnostico="mancha_manteigosa";
+      if(d.confianca==="alta") d.confianca="media";
+      d.diagnostico_diferencial=suspeitaFerrugem.trim();
+      d.acao="Fotografe a face de baixo (inferior) desta folha para descartar ferrugem antes de tratar. "+AVISO_FACE_BAIXO+"Se nao houver po alaranjado que suja o dedo, trate como mancha manteigosa: "+(d.acao||"aplicar fungicida sistemico + protetor.");
+      d.fungicidas=PRODUTOS_MANCHA_MANTEIGOSA;
     }
   });
   return resultado;

@@ -2386,6 +2386,58 @@ function calcularAdubacaoNPK(produtividadeSc, pMgDm3, kMgDm3, argilaPct) {
 }
 
 
+// ── TESTE COMPARATIVO: Analise de Solo na Sonnet ─────────────────
+// Criado em 28/07/2026 apos descobrirmos que /analise-solo ja estava
+// rodando em Qwen (efeito colateral da troca global de MODELO_PRODUCAO,
+// nao uma decisao deliberada testada). Como solo envolve LEITURA DE
+// NUMEROS de um laudo (nao reconhecimento de padrao visual solto), um
+// erro aqui tem consequencia pratica diferente — dose errada de calcario/
+// adubo — por isso testamos contra a Sonnet como gabarito antes de
+// confiar no Qwen pra esse endpoint especifico. Mesmo prompt exato do
+// /analise-solo de producao, so muda o modelo/endpoint de destino.
+app.post("/teste-solo-sonnet", async function(req, res) {
+  var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  if(!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+  var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
+  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar. Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
+  var inicio = Date.now();
+  try {
+    var r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {"Content-Type":"application/json","x-api-key":KEY,"anthropic-version":"2023-06-01"},
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6", max_tokens: 2000, temperature: 0,
+        system: [{ type:"text", text: sistemaStatic + "\n\n" + (contexto||"Sem contexto regional adicional.") }],
+        messages: [{ role:"user", content:[
+          { type:"image", source:{ type:"base64", media_type: tipo, data: imagem } }
+        ]}]
+      })
+    });
+    var d = await r.json();
+    var duracaoMs = Date.now() - inicio;
+    if (d.error) return res.status(500).json({ erro:"Erro na Anthropic", detalhes: d.error });
+    var txt = d.content && d.content[0] ? d.content[0].text : "";
+    var resultado = extrairJSON(txt);
+    if(resultado && resultado.valores_calculo){
+      try {
+        var calagem = calcularCalagemGessagem(resultado.valores_calculo);
+        if(calagem) resultado.calagem_gessagem = calagem;
+      } catch(eCalc) {}
+    }
+    var usage = d.usage||{};
+    var custoUsd = usage.input_tokens ? ((usage.input_tokens/1000000)*3.00 + (usage.output_tokens/1000000)*15.00) : null;
+    res.json({
+      modelo: "claude-sonnet-4-6",
+      duracao_ms: duracaoMs,
+      resultado_bruto: txt,
+      resultado_parseado: resultado,
+      usage: usage,
+      custo_usd_estimado: custoUsd,
+      custo_brl_estimado: custoUsd ? custoUsd*5.20 : null
+    });
+  } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
 app.post("/analise-solo", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";

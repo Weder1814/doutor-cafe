@@ -362,6 +362,202 @@ async function dbIncrementarVideo(userId) {
   return true;
 }
 
+// ══════════════════════════════════════════════════════════════════
+// GOOGLE PLAY BILLING — verificacao de compra e RTDN (28/07/2026)
+// ══════════════════════════════════════════════════════════════════
+// Substitui o Mercado Pago no fluxo de assinatura DENTRO do app Android,
+// exigido pela politica do Google Play (fluxos de pagamento dentro do
+// app precisam usar o sistema de cobranca do Google Play no Brasil ate
+// a flexibilizacao chegar por aqui, prevista so pra 2027).
+//
+// SETUP NECESSARIO NO GOOGLE CLOUD / PLAY CONSOLE (fazer uma vez, fora
+// do codigo):
+//   1. No Google Cloud Console, habilitar a "Android Publisher API" no
+//      mesmo projeto vinculado ao Play Console.
+//   2. Criar uma Service Account nesse projeto GCP, gerar uma chave JSON.
+//   3. No Play Console → Configuracoes → Acesso a API, vincular essa
+//      service account e dar a ela permissao "Ver dados financeiros" e
+//      "Gerenciar pedidos e assinaturas" (Financial data + Orders).
+//   4. Colar o CONTEUDO INTEIRO do arquivo JSON da chave como uma unica
+//      variavel de ambiente no Railway: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+//   5. No Play Console → Monetizacao → Notificacoes em tempo real,
+//      configurar um topico do Google Cloud Pub/Sub e apontar a
+//      assinatura push desse topico para:
+//      https://doutor-cafe-production.up.railway.app/webhook-play-rtdn
+//
+// Pacote Android: app.doutorcafe.diagnostico (confirmar se nao mudou)
+var PACKAGE_NAME_ANDROID = "app.doutorcafe.diagnostico";
+
+function base64urlSemPadding(buf) {
+  return buf.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+// Troca a chave da service account por um access token OAuth2 valido
+// por 1h. Implementado so com o modulo nativo 'crypto' do Node, sem
+// depender de instalar a lib 'googleapis' (evita risco de dependencia
+// faltando no deploy).
+var _googlePlayTokenCache = { token:null, expira:0 };
+async function getGooglePlayAccessToken() {
+  if (_googlePlayTokenCache.token && Date.now() < _googlePlayTokenCache.expira) {
+    return _googlePlayTokenCache.token;
+  }
+  var credJson = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON;
+  if (!credJson) throw new Error("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON nao configurada no Railway.");
+  var cred = JSON.parse(credJson);
+  var crypto = require('crypto');
+  var agora = Math.floor(Date.now()/1000);
+  var header = { alg:"RS256", typ:"JWT" };
+  var claim = {
+    iss: cred.client_email,
+    scope: "https://www.googleapis.com/auth/androidpublisher",
+    aud: "https://oauth2.googleapis.com/token",
+    exp: agora + 3600,
+    iat: agora
+  };
+  var naoAssinado = base64urlSemPadding(Buffer.from(JSON.stringify(header))) + "." + base64urlSemPadding(Buffer.from(JSON.stringify(claim)));
+  var assinador = crypto.createSign("RSA-SHA256");
+  assinador.update(naoAssinado);
+  assinador.end();
+  var assinatura = base64urlSemPadding(assinador.sign(cred.private_key));
+  var jwt = naoAssinado + "." + assinatura;
+
+  var r = await fetch("https://oauth2.googleapis.com/token", {
+    method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"},
+    body:"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=" + encodeURIComponent(jwt)
+  });
+  var data = await r.json();
+  if (!data.access_token) throw new Error("Falha ao obter token OAuth2 do Google: " + JSON.stringify(data));
+  _googlePlayTokenCache = { token: data.access_token, expira: Date.now() + (data.expires_in||3500)*1000 };
+  return data.access_token;
+}
+
+// Consulta o estado real de uma assinatura na Google Play Developer API
+// (subscriptionsv2, a versao atual recomendada — a antiga 'subscriptions'
+// esta em descontinuacao).
+async function consultarAssinaturaPlay(purchaseToken) {
+  var accessToken = await getGooglePlayAccessToken();
+  var url = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/"
+    + PACKAGE_NAME_ANDROID + "/purchases/subscriptionsv2/tokens/" + encodeURIComponent(purchaseToken);
+  var r = await fetch(url, { headers:{ "Authorization":"Bearer "+accessToken } });
+  var data = await r.json();
+  if (data.error) throw new Error("Erro na Play Developer API: " + JSON.stringify(data.error));
+  return data;
+}
+
+// Confirma (acknowledge) a compra — OBRIGATORIO fazer isso em ate 3 dias
+// depois da compra, senao o Google reembolsa automaticamente o usuario.
+// Usa o endpoint da API v3 'subscriptions' (nao subscriptionsv2) que e
+// onde o acknowledge realmente vive por enquanto.
+async function confirmarCompraPlay(productId, purchaseToken) {
+  var accessToken = await getGooglePlayAccessToken();
+  var url = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/"
+    + PACKAGE_NAME_ANDROID + "/purchases/subscriptions/" + encodeURIComponent(productId)
+    + "/tokens/" + encodeURIComponent(purchaseToken) + ":acknowledge";
+  var r = await fetch(url, { method:"POST", headers:{ "Authorization":"Bearer "+accessToken, "Content-Type":"application/json" }, body:"{}" });
+  if (!r.ok) { var t=await r.text(); console.error("Falha ao confirmar compra Play (pode ja estar confirmada):", t); }
+}
+
+// Ativa o plano no banco a partir do estado retornado pela Play API.
+// basePlanId precisa bater com uma chave de PLANOS (ex: "basico_mensal").
+async function ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, valor) {
+  var tipo = basePlanId.indexOf("premium")>-1?"premium":basePlanId.indexOf("pro")>-1?"pro":"basico";
+  await dbAtualizarPlano(userId, tipo, basePlanId);
+  if (pool) {
+    await pool.query(
+      "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
+      [purchaseToken.substring(0,120), userId, basePlanId, "approved", valor||0]
+    );
+  }
+  console.log("✅ [Play Billing] Plano", tipo, "ativado para", userId);
+  return tipo;
+}
+
+// Chamado pelo app logo apos o usuario completar a compra via
+// PaymentRequest/Digital Goods API. Verifica o token direto na Play API
+// antes de liberar o plano — nunca confia soh no que o cliente informa.
+app.post("/verificar-compra-play", async function(req, res) {
+  var userId = req.body.userId;
+  var productId = req.body.productId;       // SKU cadastrado no Play Console, ex: "plano_basico"
+  var basePlanId = req.body.basePlanId;      // ex: "basico_mensal" — precisa bater com chave de PLANOS
+  var purchaseToken = req.body.purchaseToken;
+  if (!userId || !productId || !basePlanId || !purchaseToken) {
+    return res.status(400).json({ erro:"Campos obrigatorios: userId, productId, basePlanId, purchaseToken" });
+  }
+  var plano = PLANOS[basePlanId];
+  if (!plano) return res.status(400).json({ erro:"basePlanId invalido: "+basePlanId });
+  try {
+    var dadosCompra = await consultarAssinaturaPlay(purchaseToken);
+    var estado = dadosCompra.subscriptionState;
+    if (estado !== "SUBSCRIPTION_STATE_ACTIVE") {
+      return res.status(402).json({ erro:"Assinatura nao esta ativa segundo a Google Play.", estado: estado });
+    }
+    var tipo = await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, plano.valor);
+    try { await confirmarCompraPlay(productId, purchaseToken); } catch(eAck) { console.error("Erro ao confirmar compra:", eAck.message); }
+    res.json({ ok:true, tipo:tipo, plano:basePlanId });
+  } catch(e) {
+    console.error("Erro ao verificar compra Play:", e.message);
+    res.status(500).json({ erro:e.message });
+  }
+});
+
+// Webhook das Real-time Developer Notifications (RTDN), via Pub/Sub push.
+// O Google chama esse endpoint automaticamente quando uma assinatura
+// renova, e cancelada, entra em atraso, etc — sem o usuario estar com
+// o app aberto. Mapa de notificationType conforme documentacao oficial:
+//   1=RECOVERED 2=RENEWED 3=CANCELED 4=PURCHASED 5=ON_HOLD
+//   6=IN_GRACE_PERIOD 7=RESTARTED 8=PRICE_CHANGE_CONFIRMED 9=DEFERRED
+//   10=PAUSED 11=PAUSE_SCHEDULE_CHANGED 12=REVOKED 13=EXPIRED
+//   14=PENDING_PURCHASE_CANCELED
+app.post("/webhook-play-rtdn", async function(req, res) {
+  try {
+    var msg = req.body && req.body.message;
+    if (!msg || !msg.data) return res.status(200).json({ ok:true });
+    var payload = JSON.parse(Buffer.from(msg.data, "base64").toString("utf8"));
+    console.log("RTDN Play recebido:", JSON.stringify(payload).substr(0,300));
+    var notif = payload.subscriptionNotification;
+    if (!notif || !notif.purchaseToken) return res.status(200).json({ ok:true });
+
+    var tipoNotif = notif.notificationType;
+    var purchaseToken = notif.purchaseToken;
+
+    // Acha qual usuario esse purchaseToken pertence (foi salvo como "id"
+    // na tabela pagamentos na hora da compra inicial).
+    var userId = null, basePlanId = null;
+    if (pool) {
+      var r = await pool.query("SELECT user_id, plano_id FROM pagamentos WHERE id = $1 ORDER BY criado_em DESC LIMIT 1", [purchaseToken.substring(0,120)]);
+      if (r.rows[0]) { userId = r.rows[0].user_id; basePlanId = r.rows[0].plano_id; }
+    }
+    if (!userId) {
+      console.error("RTDN Play: purchaseToken nao encontrado na tabela pagamentos, ignorando:", purchaseToken.substring(0,40));
+      return res.status(200).json({ ok:true });
+    }
+
+    if (tipoNotif===2 || tipoNotif===1 || tipoNotif===7) {
+      // Renovado, recuperado ou reiniciado -> reconfirma que esta ativo
+      var dados = await consultarAssinaturaPlay(purchaseToken);
+      if (dados.subscriptionState==="SUBSCRIPTION_STATE_ACTIVE" && basePlanId) {
+        await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, (PLANOS[basePlanId]||{}).valor);
+      }
+    } else if (tipoNotif===3 || tipoNotif===12 || tipoNotif===13) {
+      // Cancelado, revogado ou expirado -> rebaixa pro plano gratuito
+      await dbAtualizarPlano(userId, "gratuito", null);
+      console.log("⬇️ [Play Billing] Plano rebaixado pra gratuito:", userId, "(notificationType", tipoNotif+")");
+    }
+    // Os demais tipos (5 on_hold, 6 grace period, 9 deferred, 10 paused,
+    // 11 pause_schedule, 14 pending_cancel) sao informativos — por ora
+    // so logamos, sem mudar o plano do usuario automaticamente. Revisar
+    // se isso precisa de tratamento proprio conforme o volume de uso.
+
+    res.status(200).json({ ok:true });
+  } catch(e) {
+    console.error("Erro no webhook RTDN Play:", e.message);
+    // Sempre responde 200 pro Google Pub/Sub nao ficar re-entregando a
+    // mesma mensagem em loop indefinidamente por causa de um erro nosso.
+    res.status(200).json({ ok:true });
+  }
+});
+
 async function dbAtualizarPlano(userId, plano, planoId) {
   var mes = mesAtual();
   if (pool) {
@@ -2399,7 +2595,7 @@ app.post("/teste-solo-sonnet", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   if(!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar. Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
+  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nREGRA OBRIGATORIA DE FORMATO NUMERICO: todo campo em \"valores\" e em \"valores_calculo\" DEVE conter UM UNICO NUMERO (ou string curta tipo \"6,1\"), NUNCA uma lista de valores separados por barra (ex: \"4,1 / 4,4 / 5,5\" esta ERRADO) e NUNCA um intervalo (ex: \"4,1-5,5\" esta ERRADO). Se houver multiplas amostras, voce mesmo faz a consolidacao ANTES de preencher o JSON — escolhe a media ou a amostra mais critica e coloca APENAS esse numero final. Isso e obrigatorio porque esses valores alimentam uma calculadora automatica que espera numeros unicos, nao listas.\n\nREGRA OBRIGATORIA PARA VALOR NAO ANALISADO: se um nutriente (como B ou Zn) NAO aparece no laudo, preencha \"valor\":\"nao analisado\" e \"status\":\"baixo\" SEMPRE — nunca use status \"alto\" ou \"ok\" quando o valor e nulo/nao analisado, porque isso afirmaria uma informacao que voce nao tem. Ausencia de dado no laudo nunca pode virar alegacao de excesso (\"alto\"); a postura correta e conservadora, sinalizando que precisa ser testado.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar (mas sempre consolidados em UM UNICO numero por campo, conforme regra acima). Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
   var inicio = Date.now();
   try {
     var r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -2450,7 +2646,7 @@ app.post("/analise-solo", async function(req, res) {
     }
   }
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \\\"valores\\\" com a amostra mais representativa ou a media simples entre elas. O campo \\\"acao\\\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar. Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
+  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nREGRA OBRIGATORIA DE FORMATO NUMERICO: todo campo em \"valores\" e em \"valores_calculo\" DEVE conter UM UNICO NUMERO (ou string curta tipo \"6,1\"), NUNCA uma lista de valores separados por barra (ex: \"4,1 / 4,4 / 5,5\" esta ERRADO) e NUNCA um intervalo (ex: \"4,1-5,5\" esta ERRADO). Se houver multiplas amostras, voce mesmo faz a consolidacao ANTES de preencher o JSON — escolhe a media ou a amostra mais critica e coloca APENAS esse numero final. Isso e obrigatorio porque esses valores alimentam uma calculadora automatica que espera numeros unicos, nao listas.\n\nREGRA OBRIGATORIA PARA VALOR NAO ANALISADO: se um nutriente (como B ou Zn) NAO aparece no laudo, preencha \"valor\":\"nao analisado\" e \"status\":\"baixo\" SEMPRE — nunca use status \"alto\" ou \"ok\" quando o valor e nulo/nao analisado, porque isso afirmaria uma informacao que voce nao tem. Ausencia de dado no laudo nunca pode virar alegacao de excesso (\"alto\"); a postura correta e conservadora, sinalizando que precisa ser testado.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar (mas sempre consolidados em UM UNICO numero por campo, conforme regra acima). Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
   try {
     var abortCtrl = new AbortController();
     req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });

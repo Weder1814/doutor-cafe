@@ -1311,7 +1311,7 @@ app.post("/diagnostico", async function(req, res) {
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
-      resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);
+      resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
       resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
@@ -2042,7 +2042,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);
+    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2085,7 +2085,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);
+    resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -2237,7 +2237,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);
+    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -2724,6 +2724,24 @@ function corrigirFerrugemSemConfirmacao(resultado) {
     }
     delete d.po_esporulacao_confirmado; // campo interno, nao deve vazar pro app
   });
+  return resultado;
+}
+
+// Trava determinística #3: corta achados secundarios de confianca 'baixa'
+// quando ja existe outro diagnostico de confianca media/alta no mesmo
+// resultado — reduz ruido (ex: pontinhos ambiguos na folha classificados
+// como mancha_manteigosa so por estarem la, ao lado de um diagnostico
+// principal solido). Mantem um achado de baixa confianca se ele for o
+// UNICO da foto, porque nesse caso um alerta incerto ainda tem valor
+// (melhor avisar "fique de olho" do que nao dizer nada).
+function focarNoPrincipal(resultado) {
+  if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length<=1) return resultado;
+  var temConfiavel = resultado.diagnosticos.some(function(d){ return d && d.confianca!=="baixa"; });
+  if(!temConfiavel) return resultado; // todos incertos — mantem todos, e a unica info que temos
+  resultado.diagnosticos = resultado.diagnosticos.filter(function(d){ return d && d.confianca!=="baixa"; });
+  if(resultado.diagnosticos.length===0){
+    resultado.diagnosticos=[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel identificar um problema com confianca. Tente uma foto mais proxima e com boa luz.",fungicidas:[]}];
+  }
   return resultado;
 }
 

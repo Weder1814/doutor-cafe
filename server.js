@@ -303,6 +303,24 @@ app.get("/admin/checar-pin/:pin", async function(req, res) {
 // apaga a conta em si, nem historico, nem plano — so o campo pin, pra
 // ela parar de ser encontrada por esse PIN especifico. O dono dela ainda
 // pode logar por celular/CPF se precisar recuperar essa conta depois.
+// Versao GET do endpoint acima, so pra ser acionavel colando um link
+// direto no navegador do celular (sem precisar de DevTools/Console).
+// Mesma logica, mesma protecao por senha.
+app.get("/admin/resolver-colisao-pin", async function(req, res) {
+  if (!adminAutorizado(req)) return res.status(403).json({ erro:"Nao autorizado." });
+  var pin = (req.query.pin||"").replace(/[^0-9]/g,"");
+  var manterUserId = req.query.manterUserId;
+  if (!pin || !manterUserId) return res.status(400).json({ erro:"Informe pin e manterUserId na URL (?pin=...&manterUserId=...)." });
+  if (!pool) return res.json({ erro:"Sem banco Postgres configurado." });
+  try {
+    var afetados = await pool.query(
+      "UPDATE usuarios SET pin='' WHERE pin=$1 AND user_id <> $2 RETURNING user_id, nome, celular",
+      [pin, manterUserId]
+    );
+    res.json({ ok:true, pin_mantido_em: manterUserId, contas_com_pin_removido: afetados.rows });
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
 app.post("/admin/resolver-colisao-pin", async function(req, res) {
   if (!adminAutorizado(req)) return res.status(403).json({ erro:"Nao autorizado." });
   var pin = (req.body.pin||"").replace(/[^0-9]/g,"");

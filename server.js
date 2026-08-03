@@ -190,6 +190,21 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mes_reset TEXT DEFAULT ''`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS videos_usados INTEGER DEFAULT 0`);
+    // Trava contra colisao de PIN (30/07/2026) — impede duas contas com o
+    // mesmo PIN, que causava login sempre cair na conta errada (LIMIT 1 sem
+    // ORDER BY pegava qualquer uma das duplicadas). Indice PARCIAL (so pin
+    // nao-vazio) porque muitas contas antigas tem pin='' e isso e permitido
+    // continuar existindo em varias linhas — so pin PREENCHIDO precisa ser
+    // unico. Em try/catch proprio: se ainda houver duplicata de pin != ''
+    // no banco quando isso rodar, a criacao falha silenciosamente (so loga)
+    // sem derrubar o resto da inicializacao — resolve a duplicata primeiro
+    // via /admin/resolver-colisao-pin, depois reinicia o servico pra essa
+    // trava pegar de vez.
+    try {
+      await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_pin_unico ON usuarios (pin) WHERE pin <> ''`);
+    } catch(ePin) {
+      console.warn("⚠️ Nao foi possivel criar indice unico de PIN (provavelmente ainda ha duplicatas): " + ePin.message);
+    }
     await pool.query(`
       CREATE TABLE IF NOT EXISTS cache_preco_cafe (
         id          INTEGER PRIMARY KEY DEFAULT 1,
@@ -280,6 +295,26 @@ app.get("/admin/checar-pin/:pin", async function(req, res) {
       [pin]
     );
     res.json({ pin: pin, total_contas_com_esse_pin: r.rows.length, contas: r.rows });
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Resolve colisao de PIN: mantem o PIN so na conta indicada (manterUserId),
+// apaga o PIN (deixa em branco) das outras que tinham o mesmo PIN. Nao
+// apaga a conta em si, nem historico, nem plano — so o campo pin, pra
+// ela parar de ser encontrada por esse PIN especifico. O dono dela ainda
+// pode logar por celular/CPF se precisar recuperar essa conta depois.
+app.post("/admin/resolver-colisao-pin", async function(req, res) {
+  if (!adminAutorizado(req)) return res.status(403).json({ erro:"Nao autorizado." });
+  var pin = (req.body.pin||"").replace(/[^0-9]/g,"");
+  var manterUserId = req.body.manterUserId;
+  if (!pin || !manterUserId) return res.status(400).json({ erro:"Informe pin e manterUserId." });
+  if (!pool) return res.json({ erro:"Sem banco Postgres configurado." });
+  try {
+    var afetados = await pool.query(
+      "UPDATE usuarios SET pin='' WHERE pin=$1 AND user_id <> $2 RETURNING user_id, nome, celular",
+      [pin, manterUserId]
+    );
+    res.json({ ok:true, pin_mantido_em: manterUserId, contas_com_pin_removido: afetados.rows });
   } catch(e) { res.status(500).json({ erro: e.message }); }
 });
 

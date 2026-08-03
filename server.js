@@ -263,6 +263,26 @@ async function dbGetUserByPin(pin) {
   return Object.values(usuariosMemoria).find(function(u){ return u.pin === pin; }) || null;
 }
 
+// ── DIAGNOSTICO: colisao de PIN (30/07/2026, temporario) ─────────
+// Investigando bug de login: PIN sempre retorna a mesma conta errada,
+// mesmo depois de sair e entrar de novo. Suspeita: dbGetUserByPin usa
+// "LIMIT 1" sem ORDER BY — se duas contas tiverem o mesmo PIN, a busca
+// sempre pega a mesma linha (nao necessariamente a certa), de forma
+// consistente. Esse endpoint so LE dados, nao muda nada, e nao expõe
+// nada alem do necessario pra confirmar a colisao.
+app.get("/admin/checar-pin/:pin", async function(req, res) {
+  if (!adminAutorizado(req)) return res.status(403).json({ erro:"Nao autorizado." });
+  var pin = (req.params.pin||"").replace(/[^0-9]/g,"");
+  if (!pool) return res.json({ erro:"Sem banco Postgres configurado (rodando em memoria)." });
+  try {
+    var r = await pool.query(
+      "SELECT user_id, nome, celular, plano, analises_usadas, criado_em FROM usuarios WHERE pin=$1 ORDER BY criado_em ASC",
+      [pin]
+    );
+    res.json({ pin: pin, total_contas_com_esse_pin: r.rows.length, contas: r.rows });
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
 async function dbSaveUser(u) {
   if (pool) {
     try {

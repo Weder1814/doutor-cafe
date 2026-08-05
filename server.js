@@ -1508,7 +1508,7 @@ app.post("/diagnostico", async function(req, res) {
     body:JSON.stringify(corpoModeloProducao({ model:MODELO_PRODUCAO, max_tokens:3000, temperature:0, stream:true,
       stream_options:{ include_usage:true },
       messages:[
-        {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA},
+        buildSystemMessageComCache(false, contextoRegional, INSTRUCAO_TESTE_EXTRA),
         {role:"user",content:[
         {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
       ]}]
@@ -2298,7 +2298,7 @@ app.post("/diagnostico-json", async function(req, res) {
       headers: headersModeloProducao(),
       body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
         messages:[
-          {role:"system",content: buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA},
+          buildSystemMessageComCache(false, contextoRegional, INSTRUCAO_TESTE_EXTRA),
           {role:"user",content:[
             {type:"image_url",image_url:{url:"data:"+tipo+";base64,"+imagem}}
         ]}]}))
@@ -2497,7 +2497,7 @@ app.post("/diagnostico-video", async function(req, res) {
       headers: headersModeloProducao(),
       body:JSON.stringify(corpoModeloProducao({model:MODELO_PRODUCAO,max_tokens:3000,temperature:0,
         messages:[
-          {role:"system",content: buildPromptStatic(true) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA},
+          buildSystemMessageComCache(true, contextoRegional, INSTRUCAO_TESTE_EXTRA),
           {role:"user",content:content}
         ]}))
     });
@@ -3161,6 +3161,27 @@ function buildContextoRegional(regiao, altitude, isVideo) {
 var PROMPT_DIAGNOSTICO_BASE = fs.readFileSync(__dirname + "/prompt-diagnostico.txt", "utf8");
 function buildPromptStatic(isVideo) {
   return PROMPT_DIAGNOSTICO_BASE;
+}
+
+// Cache de contexto do Qwen (30/07/2026) — a DashScope suporta cache
+// explicito de prompt (cache_control:{type:"ephemeral"}), igual a
+// Anthropic. Como o prompt base (~9 mil tokens) e IDENTICO em toda
+// chamada, e so a parte de regiao/altitude muda por usuario, separamos
+// os dois: o bloco estatico (prompt base + instrucao extra, quando
+// houver) fica marcado pra cache; o bloco dinamico (regiao/altitude)
+// fica de fora do cache, sempre fresco. Isso deve reduzir custo e
+// tempo de processamento do prompt em chamadas repetidas, sem mudar
+// nada do conteudo/comportamento do diagnostico em si — so a forma
+// como o texto e dividido em blocos na mensagem.
+function buildSystemMessageComCache(isVideo, contextoRegional, instrucaoExtra) {
+  var estatico = buildPromptStatic(isVideo) + (instrucaoExtra || "");
+  var conteudo = [
+    { type: "text", text: estatico, cache_control: { type: "ephemeral" } }
+  ];
+  if (contextoRegional) {
+    conteudo.push({ type: "text", text: "\n\n" + contextoRegional });
+  }
+  return { role: "system", content: conteudo };
 }
 
 // ── INICIALIZAÇÃO ─────────────────────────────────────────────

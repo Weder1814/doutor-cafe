@@ -3184,6 +3184,61 @@ function buildSystemMessageComCache(isVideo, contextoRegional, instrucaoExtra) {
   return { role: "system", content: conteudo };
 }
 
+// ── ENDPOINT TEMPORARIO DE TESTE DE CACHE (10/08/2026) ─────────
+// Objetivo: descobrir se o cache_control:{type:"ephemeral"} enviado por
+// buildSystemMessageComCache esta REALMENTE sendo aplicado pela DashScope,
+// e em que campo ela reporta o hit. Faz DUAS chamadas identicas seguidas
+// com o prompt real (~9 mil tokens) e devolve o objeto "usage" CRU das
+// duas, sem passar por normalizarUsageOpenRouter (que descarta justamente
+// os campos de cache que queremos ver).
+// Como ler o resultado:
+//   - se a SEGUNDA chamada trouxer algum campo de cache > 0
+//     (cached_tokens, prompt_cache_hit_tokens, etc), o cache esta ativo;
+//   - se as duas vierem iguais e sem campo de cache, nao esta pegando.
+// APAGAR ESTE ENDPOINT depois do teste. Protegido por ADMIN_SENHA para
+// que ninguem mais consiga queimar tokens chamando ele.
+// Uso: GET /teste-cache?senha=SUA_ADMIN_SENHA
+app.get("/teste-cache", async function(req, res) {
+  if (!adminAutorizado(req)) return res.status(401).json({ erro:"Nao autorizado" });
+
+  async function chamar() {
+    var t0 = Date.now();
+    var r = await fetch(URL_MODELO_PRODUCAO, {
+      method: "POST",
+      headers: headersModeloProducao(),
+      body: JSON.stringify(corpoModeloProducao({
+        model: MODELO_PRODUCAO,
+        max_tokens: 10,
+        temperature: 0,
+        messages: [
+          buildSystemMessageComCache(false, "", INSTRUCAO_TESTE_EXTRA),
+          { role:"user", content:"Responda apenas: ok" }
+        ]
+      }))
+    });
+    var d = await r.json();
+    return {
+      http: r.status,
+      ms: Date.now() - t0,
+      usage: d.usage || null,
+      erro: d.error || null
+    };
+  }
+
+  try {
+    var primeira = await chamar();
+    var segunda  = await chamar();
+    res.json({
+      modelo: MODELO_PRODUCAO,
+      primeira: primeira,
+      segunda: segunda,
+      dica: "Procure campos de cache no usage da SEGUNDA chamada (cached_tokens, prompt_cache_hit_tokens, etc)."
+    });
+  } catch (e) {
+    res.status(500).json({ erro: String(e && e.message || e) });
+  }
+});
+
 // ── INICIALIZAÇÃO ─────────────────────────────────────────────
 initDB().then(function() {
   app.listen(process.env.PORT||8080, function() {

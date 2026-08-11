@@ -678,11 +678,32 @@ var PRECOS_USD_POR_MTOK = {
 // para o formato Anthropic (input_tokens/output_tokens) usado por logUsoAnalise
 // e calcularCustoUSD em todo o resto do arquivo — assim nao precisa duplicar
 // essas duas funcoes so por causa do provedor diferente.
+// ATUALIZADO 10/08/2026: a DashScope REPORTA cache, mas em campos com nome
+// diferente dos da Anthropic — por isso eles estavam sendo descartados aqui
+// e todas as linhas de qwen no /custo-api apareciam com cache_read = 0.
+// Formato real confirmado via /teste-cache:
+//   usage.prompt_tokens_details.cached_tokens              -> tokens lidos do cache
+//   usage.prompt_tokens_details.cache_creation_input_tokens -> tokens gravados no cache
+// ATENCAO ao detalhe que mais causa erro de contabilidade: na DashScope o
+// prompt_tokens JA INCLUI os tokens cacheados (ex: 11225 prompt, 11206 cached).
+// No formato Anthropic, input_tokens EXCLUI o que veio do cache. Por isso
+// subtraimos abaixo — sem isso o custo sairia contado em dobro.
 function normalizarUsageOpenRouter(usage) {
-  if (!usage) return { input_tokens:0, output_tokens:0 };
+  if (!usage) return { input_tokens:0, output_tokens:0, cache_creation_input_tokens:0, cache_read_input_tokens:0 };
+
+  var det        = usage.prompt_tokens_details || {};
+  var cacheRead  = det.cached_tokens || usage.prompt_cache_hit_tokens || usage.cache_read_input_tokens || 0;
+  var cacheWrite = det.cache_creation_input_tokens || usage.cache_creation_input_tokens || 0;
+  var promptTot  = usage.prompt_tokens || usage.input_tokens || 0;
+
+  // input "puro" = prompt total menos o que veio do cache (nunca negativo)
+  var inputPuro = Math.max(0, promptTot - cacheRead - cacheWrite);
+
   return {
-    input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
-    output_tokens: usage.completion_tokens || usage.output_tokens || 0
+    input_tokens: inputPuro,
+    output_tokens: usage.completion_tokens || usage.output_tokens || 0,
+    cache_creation_input_tokens: cacheWrite,
+    cache_read_input_tokens: cacheRead
   };
 }
 
@@ -770,6 +791,12 @@ function calcularCustoUSD(modelo, usage) {
   var cacheWrite = usage.cache_creation_input_tokens || 0;
   var cacheRead  = usage.cache_read_input_tokens || 0;
   // cache write custa 1.25x o input normal; cache read custa 0.1x o input normal
+  // ATENCAO (10/08/2026): esses multiplicadores 1.25x / 0.10x sao os da tabela
+  // da ANTHROPIC. Para os modelos qwen (DashScope) eles sao apenas uma
+  // SUPOSICAO — o desconto real do cache foi perguntado no ticket aberto no
+  // Model Studio e ainda nao foi respondido. Enquanto nao vier a confirmacao,
+  // o custo dos modelos qwen no /custo-api e uma ESTIMATIVA, nao valor exato.
+  // Assim que o suporte responder, ajustar aqui (idealmente por modelo).
   var custo =
     (inputTok   / 1e6) * precos.input +
     (cacheWrite / 1e6) * precos.input * 1.25 +
@@ -3183,61 +3210,6 @@ function buildSystemMessageComCache(isVideo, contextoRegional, instrucaoExtra) {
   }
   return { role: "system", content: conteudo };
 }
-
-// ── ENDPOINT TEMPORARIO DE TESTE DE CACHE (10/08/2026) ─────────
-// Objetivo: descobrir se o cache_control:{type:"ephemeral"} enviado por
-// buildSystemMessageComCache esta REALMENTE sendo aplicado pela DashScope,
-// e em que campo ela reporta o hit. Faz DUAS chamadas identicas seguidas
-// com o prompt real (~9 mil tokens) e devolve o objeto "usage" CRU das
-// duas, sem passar por normalizarUsageOpenRouter (que descarta justamente
-// os campos de cache que queremos ver).
-// Como ler o resultado:
-//   - se a SEGUNDA chamada trouxer algum campo de cache > 0
-//     (cached_tokens, prompt_cache_hit_tokens, etc), o cache esta ativo;
-//   - se as duas vierem iguais e sem campo de cache, nao esta pegando.
-// APAGAR ESTE ENDPOINT depois do teste. Protegido por ADMIN_SENHA para
-// que ninguem mais consiga queimar tokens chamando ele.
-// Uso: GET /teste-cache?senha=SUA_ADMIN_SENHA
-app.get("/teste-cache", async function(req, res) {
-  if (!adminAutorizado(req)) return res.status(401).json({ erro:"Nao autorizado" });
-
-  async function chamar() {
-    var t0 = Date.now();
-    var r = await fetch(URL_MODELO_PRODUCAO, {
-      method: "POST",
-      headers: headersModeloProducao(),
-      body: JSON.stringify(corpoModeloProducao({
-        model: MODELO_PRODUCAO,
-        max_tokens: 10,
-        temperature: 0,
-        messages: [
-          buildSystemMessageComCache(false, "", INSTRUCAO_TESTE_EXTRA),
-          { role:"user", content:"Responda apenas: ok" }
-        ]
-      }))
-    });
-    var d = await r.json();
-    return {
-      http: r.status,
-      ms: Date.now() - t0,
-      usage: d.usage || null,
-      erro: d.error || null
-    };
-  }
-
-  try {
-    var primeira = await chamar();
-    var segunda  = await chamar();
-    res.json({
-      modelo: MODELO_PRODUCAO,
-      primeira: primeira,
-      segunda: segunda,
-      dica: "Procure campos de cache no usage da SEGUNDA chamada (cached_tokens, prompt_cache_hit_tokens, etc)."
-    });
-  } catch (e) {
-    res.status(500).json({ erro: String(e && e.message || e) });
-  }
-});
 
 // ── INICIALIZAÇÃO ─────────────────────────────────────────────
 initDB().then(function() {

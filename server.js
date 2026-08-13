@@ -671,7 +671,8 @@ var PRECOS_USD_POR_MTOK = {
   "claude-haiku-4-5-20251001":  { input: 0.80,  output: 4.00  },
   "qwen2.5-vl-72b-instruct":    { input: 0.25,  output: 0.75  },
   "qwen-vl-max":                { input: 0.80,  output: 3.20  }, // confirmado na pagina de precos do Model Studio
-  "qwen3.7-plus":               { input: 0.40,  output: 1.60  }  // confirmado na pagina de precos do Model Studio (preco padrao, sem o desconto temporario de 20%)
+  "qwen3.7-plus":               { input: 0.40,  output: 1.60  }, // confirmado na pagina de precos do Model Studio (preco padrao, sem o desconto temporario de 20%)
+  "qwen3.7-flash":              { input: 0.030, output: 0.130 }  // Singapore, faixa Input<=32K. Confirmado pelo suporte da Alibaba em 12/08/2026.
 };
 
 // Normaliza o "usage" no formato OpenAI/OpenRouter (prompt_tokens/completion_tokens)
@@ -790,17 +791,20 @@ function calcularCustoUSD(modelo, usage) {
   var outputTok  = usage.output_tokens || 0;
   var cacheWrite = usage.cache_creation_input_tokens || 0;
   var cacheRead  = usage.cache_read_input_tokens || 0;
-  // cache write custa 1.25x o input normal; cache read custa 0.1x o input normal
-  // ATENCAO (10/08/2026): esses multiplicadores 1.25x / 0.10x sao os da tabela
-  // da ANTHROPIC. Para os modelos qwen (DashScope) eles sao apenas uma
-  // SUPOSICAO — o desconto real do cache foi perguntado no ticket aberto no
-  // Model Studio e ainda nao foi respondido. Enquanto nao vier a confirmacao,
-  // o custo dos modelos qwen no /custo-api e uma ESTIMATIVA, nao valor exato.
-  // Assim que o suporte responder, ajustar aqui (idealmente por modelo).
+  // ANTHROPIC: cache write custa 1.25x o input normal; cache read custa 0.1x.
+  // RESOLVIDO 12/08/2026: o suporte da Alibaba respondeu o ticket confirmando
+  // que na DashScope o cache read custa 0.2x o input normal e NAO existe
+  // sobretaxa para criacao de cache (1.0x). Ate aqui usavamos os numeros da
+  // Anthropic como suposicao para os qwen, o que subestimava o cache read e
+  // superestimava a escrita — agora os multiplicadores sao os reais de cada
+  // provedor, entao o /custo-api deixou de ser estimativa para os qwen.
+  var ehQwen    = String(modelo).indexOf("qwen") === 0;
+  var multWrite = ehQwen ? 1.00 : 1.25;
+  var multRead  = ehQwen ? 0.20 : 0.10;
   var custo =
     (inputTok   / 1e6) * precos.input +
-    (cacheWrite / 1e6) * precos.input * 1.25 +
-    (cacheRead  / 1e6) * precos.input * 0.10 +
+    (cacheWrite / 1e6) * precos.input * multWrite +
+    (cacheRead  / 1e6) * precos.input * multRead +
     (outputTok  / 1e6) * precos.output;
   return custo;
 }
@@ -2682,6 +2686,15 @@ function calcularAdubacaoNPK(produtividadeSc, pMgDm3, kMgDm3, argilaPct) {
 }
 
 
+// ── PROMPT COMPARTILHADO DA ANALISE DE SOLO ─────────────────────
+// Extraido em 12/08/2026. Antes esta string vivia duplicada dentro de
+// /analise-solo e /teste-solo-sonnet, e agora o /teste-solo-flash seria uma
+// terceira copia. O risco de duplicar e silencioso: bastava ajustar o prompt
+// de producao e esquecer os de teste pra comparacao de modelos virar mentira
+// (modelos diferentes recebendo instrucoes diferentes). Com a constante
+// unica, qualquer ajuste vale para os tres endpoints ao mesmo tempo.
+var SISTEMA_SOLO_STATIC = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nREGRA OBRIGATORIA DE FORMATO NUMERICO: todo campo em \"valores\" e em \"valores_calculo\" DEVE conter UM UNICO NUMERO (ou string curta tipo \"6,1\"), NUNCA uma lista de valores separados por barra (ex: \"4,1 / 4,4 / 5,5\" esta ERRADO) e NUNCA um intervalo (ex: \"4,1-5,5\" esta ERRADO). Se houver multiplas amostras, voce mesmo faz a consolidacao ANTES de preencher o JSON — escolhe a media ou a amostra mais critica e coloca APENAS esse numero final. Isso e obrigatorio porque esses valores alimentam uma calculadora automatica que espera numeros unicos, nao listas.\n\nREGRA OBRIGATORIA PARA VALOR NAO ANALISADO: se um nutriente (como B ou Zn) NAO aparece no laudo, preencha \"valor\":\"nao analisado\" e \"status\":\"baixo\" SEMPRE — nunca use status \"alto\" ou \"ok\" quando o valor e nulo/nao analisado, porque isso afirmaria uma informacao que voce nao tem. Ausencia de dado no laudo nunca pode virar alegacao de excesso (\"alto\"); a postura correta e conservadora, sinalizando que precisa ser testado.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar (mas sempre consolidados em UM UNICO numero por campo, conforme regra acima). Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
+
 // ── TESTE COMPARATIVO: Analise de Solo na Sonnet ─────────────────
 // Criado em 28/07/2026 apos descobrirmos que /analise-solo ja estava
 // rodando em Qwen (efeito colateral da troca global de MODELO_PRODUCAO,
@@ -2695,7 +2708,7 @@ app.post("/teste-solo-sonnet", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   if(!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nREGRA OBRIGATORIA DE FORMATO NUMERICO: todo campo em \"valores\" e em \"valores_calculo\" DEVE conter UM UNICO NUMERO (ou string curta tipo \"6,1\"), NUNCA uma lista de valores separados por barra (ex: \"4,1 / 4,4 / 5,5\" esta ERRADO) e NUNCA um intervalo (ex: \"4,1-5,5\" esta ERRADO). Se houver multiplas amostras, voce mesmo faz a consolidacao ANTES de preencher o JSON — escolhe a media ou a amostra mais critica e coloca APENAS esse numero final. Isso e obrigatorio porque esses valores alimentam uma calculadora automatica que espera numeros unicos, nao listas.\n\nREGRA OBRIGATORIA PARA VALOR NAO ANALISADO: se um nutriente (como B ou Zn) NAO aparece no laudo, preencha \"valor\":\"nao analisado\" e \"status\":\"baixo\" SEMPRE — nunca use status \"alto\" ou \"ok\" quando o valor e nulo/nao analisado, porque isso afirmaria uma informacao que voce nao tem. Ausencia de dado no laudo nunca pode virar alegacao de excesso (\"alto\"); a postura correta e conservadora, sinalizando que precisa ser testado.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar (mas sempre consolidados em UM UNICO numero por campo, conforme regra acima). Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
+  var sistemaStatic=SISTEMA_SOLO_STATIC;
   var inicio = Date.now();
   try {
     var r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -2734,6 +2747,66 @@ app.post("/teste-solo-sonnet", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
+// ── TESTE COMPARATIVO: Analise de Solo no Qwen3.7-Flash ──────────
+// Criado em 12/08/2026. Motivo: o suporte da Alibaba confirmou por e-mail que
+// o qwen3.7-flash custa US$0,030/US$0,130 por milhao (input/output, Singapore,
+// faixa <=32K) contra US$0,40/US$1,60 do qwen3.7-plus que esta em producao —
+// cerca de 13x mais barato no input e 12x na saida. Antes de trocar, precisa
+// ficar provado que a LEITURA DOS NUMEROS do laudo continua exata: em solo um
+// erro nao vira "diagnostico errado na tela", vira dose errada de calcario ou
+// gesso aplicada no talhao, porque valores_calculo alimenta direto a
+// calcularCalagemGessagem. Por isso o criterio de aprovacao e valores_calculo
+// batendo 100% com o Plus, nao a semelhanca do texto da recomendacao.
+// Mesmo prompt exato do /analise-solo de producao, so muda o modelo.
+// ATENCAO: se um dia voce editar o prompt do /analise-solo, edite este aqui
+// junto — senao a comparacao para de ser valida sem ninguem perceber.
+app.post("/teste-solo-flash", async function(req, res) {
+  if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY nao configurada no Railway." });
+  var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  if(!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+  var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
+  var sistemaStatic=SISTEMA_SOLO_STATIC;
+  var inicio = Date.now();
+  try {
+    var r = await fetch(URL_MODELO_PRODUCAO, {
+      method: "POST",
+      headers: headersModeloProducao(),
+      body: JSON.stringify(corpoModeloProducao({
+        model: "qwen3.7-flash", max_tokens: 2000, temperature: 0,
+        messages: [
+          { role:"system", content: sistemaStatic + "\n\n" + (contexto||"Sem contexto regional adicional.") },
+          { role:"user", content:[{ type:"image_url", image_url:{ url:"data:"+tipo+";base64,"+imagem } }] }
+        ]
+      }))
+    });
+    var d = await r.json();
+    var duracaoMs = Date.now() - inicio;
+    if (d.error) { console.error("ERRO MODELO /teste-solo-flash:", JSON.stringify(d.error)); return res.status(500).json({ erro:"Erro na Alibaba Cloud", detalhes: d.error }); }
+    var txt = d.choices && d.choices[0] && d.choices[0].message ? d.choices[0].message.content : "";
+    var resultado = extrairJSON(txt);
+    if (!resultado) console.error("ERRO PARSE /teste-solo-flash — texto recebido:", txt);
+    if (resultado && resultado.valores_calculo) {
+      try {
+        var calagem = calcularCalagemGessagem(resultado.valores_calculo);
+        if (calagem) resultado.calagem_gessagem = calagem;
+      } catch(eCalc) { console.error("ERRO calcularCalagemGessagem:", eCalc.message); }
+    }
+    // normaliza pro mesmo formato de usage que o card da Sonnet ja espera no HTML
+    var usageNorm = normalizarUsageOpenRouter(d.usage);
+    var custoUsd = calcularCustoUSD("qwen3.7-flash", usageNorm);
+    res.json({
+      modelo: "qwen3.7-flash",
+      duracao_ms: duracaoMs,
+      resultado_bruto: txt,
+      resultado_parseado: resultado,
+      usage: usageNorm,
+      usage_bruto: d.usage || {},
+      custo_usd_estimado: custoUsd,
+      custo_brl_estimado: custoUsd ? custoUsd*5.20 : null
+    });
+  } catch(e) { console.error("ERRO EXCECAO /teste-solo-flash:", e.message); res.status(500).json({ erro:e.message }); }
+});
+
 app.post("/analise-solo", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
@@ -2746,7 +2819,7 @@ app.post("/analise-solo", async function(req, res) {
     }
   }
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nREGRA OBRIGATORIA DE FORMATO NUMERICO: todo campo em \"valores\" e em \"valores_calculo\" DEVE conter UM UNICO NUMERO (ou string curta tipo \"6,1\"), NUNCA uma lista de valores separados por barra (ex: \"4,1 / 4,4 / 5,5\" esta ERRADO) e NUNCA um intervalo (ex: \"4,1-5,5\" esta ERRADO). Se houver multiplas amostras, voce mesmo faz a consolidacao ANTES de preencher o JSON — escolhe a media ou a amostra mais critica e coloca APENAS esse numero final. Isso e obrigatorio porque esses valores alimentam uma calculadora automatica que espera numeros unicos, nao listas.\n\nREGRA OBRIGATORIA PARA VALOR NAO ANALISADO: se um nutriente (como B ou Zn) NAO aparece no laudo, preencha \"valor\":\"nao analisado\" e \"status\":\"baixo\" SEMPRE — nunca use status \"alto\" ou \"ok\" quando o valor e nulo/nao analisado, porque isso afirmaria uma informacao que voce nao tem. Ausencia de dado no laudo nunca pode virar alegacao de excesso (\"alto\"); a postura correta e conservadora, sinalizando que precisa ser testado.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar (mas sempre consolidados em UM UNICO numero por campo, conforme regra acima). Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
+  var sistemaStatic=SISTEMA_SOLO_STATIC;
   try {
     var abortCtrl = new AbortController();
     req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });

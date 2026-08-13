@@ -2087,16 +2087,24 @@ app.post("/teste-qwen37plus-diagnostico", async function(req, res) {
     var resultado = extrairJSON(textoResposta);
     var usage = data.usage || {};
 
-    var custoUsd = ((usage.prompt_tokens||0) * 0.40 + (usage.completion_tokens||0) * 1.60) / 1000000;
+    // ATUALIZADO 12/08/2026: passou a usar calcularCustoUSD/normalizarUsageOpenRouter
+    // como todo o resto do arquivo, em vez da conta manual antiga. Motivo: o
+    // /teste-qwen37flash-diagnostico compara contra este endpoint, e comparar
+    // custo calculado por duas formulas diferentes daria diferenca artificial
+    // entre os modelos. A conta antiga tambem ignorava cache e arredondava para
+    // 5 casas, o que zerava o custo do Flash (que e ~13x menor).
+    var usageNorm = normalizarUsageOpenRouter(usage);
+    var custoUsd = calcularCustoUSD("qwen3.7-plus", usageNorm);
 
     res.json({
       modelo: "qwen3.7-plus",
       duracao_ms: duracaoMs,
       resultado_bruto: textoResposta,
       resultado_parseado: resultado,
-      usage: usage,
-      custo_usd_estimado: Math.round(custoUsd * 100000) / 100000,
-      custo_brl_estimado: Math.round(custoUsd * 5.30 * 100) / 100
+      usage: usageNorm,
+      usage_bruto: usage,
+      custo_usd_estimado: custoUsd,
+      custo_brl_estimado: custoUsd ? custoUsd * 5.20 : null
     });
   } catch (e) {
     res.status(500).json({ erro: e.message });
@@ -2106,6 +2114,88 @@ app.post("/teste-qwen37plus-diagnostico", async function(req, res) {
 // ── TESTE COMPARATIVO: Qwen3-VL-Flash (opcao mais rapida/barata da linha ──
 // Qwen3-VL — candidato alternativo ao Qwen3.7-Plus, que demonstrou lentidao
 // por gastar muitos tokens de "raciocinio interno" antes de responder.
+// ── TESTE COMPARATIVO: Diagnostico de Folha no Qwen3.7-Flash ─────
+// Criado em 12/08/2026. Este e o teste que MAIS importa financeiramente: o
+// diagnostico de folha e o "Mais usado" do app e responde pela maior parte
+// do volume de analises, entao e onde a diferenca de preco Plus->Flash
+// (US$0,40 -> US$0,030 por milhao de input, ~13x) vira economia de verdade.
+// Solo e daninha sao chamadas esporadicas em comparacao.
+// COPIA EXATA do /teste-qwen37plus-diagnostico logo acima — mesmo prompt,
+// mesmo formato de mensagem, mesmo max_tokens, mesmo enable_thinking:false.
+// A UNICA diferenca e o nome do modelo. Isso e proposital: qualquer outra
+// divergencia entre os dois endpoints faria a comparacao medir a diferenca
+// entre os ENDPOINTS em vez da diferenca entre os MODELOS.
+// CRITERIO DE APROVACAO: o campo "diagnostico" do achado principal batendo
+// com o Plus. Estagio e confianca podem divergir um degrau sem reprovar
+// (o proprio prompt admite que severidade e o ponto mais instavel), mas
+// trocar ferrugem por cercosporiose muda o fungicida que o produtor compra.
+app.post("/teste-qwen37flash-diagnostico", async function(req, res) {
+  if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY não configurada no Railway." });
+  var imagem = req.body.imagem;
+  var tipo   = req.body.tipo || "image/jpeg";
+  var regiao = req.body.regiao || null;
+  var altitude = req.body.altitude || null;
+  if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+
+  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
+  var inicio = Date.now();
+
+  try {
+    var r = await fetch("https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + process.env.DASHSCOPE_API_KEY
+      },
+      body: JSON.stringify({
+        model: "qwen3.7-flash",
+        temperature: 0,
+        max_tokens: 3000,
+        enable_thinking: false,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptCompleto },
+              { type: "image_url", image_url: { url: "data:" + tipo + ";base64," + imagem } }
+            ]
+          }
+        ]
+      })
+    });
+    var data = await r.json();
+    var duracaoMs = Date.now() - inicio;
+
+    if (!r.ok) {
+      return res.status(500).json({ erro: "Erro na Alibaba Cloud", detalhes: data });
+    }
+
+    var textoResposta = data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content : "";
+    var resultado = extrairJSON(textoResposta);
+    if (!resultado) console.error("ERRO PARSE /teste-qwen37flash-diagnostico — texto recebido:", textoResposta);
+    var usage = data.usage || {};
+
+    var usageNorm = normalizarUsageOpenRouter(usage);
+    var custoUsd = calcularCustoUSD("qwen3.7-flash", usageNorm);
+
+    res.json({
+      modelo: "qwen3.7-flash",
+      duracao_ms: duracaoMs,
+      resultado_bruto: textoResposta,
+      resultado_parseado: resultado,
+      usage: usageNorm,
+      usage_bruto: usage,
+      custo_usd_estimado: custoUsd,
+      custo_brl_estimado: custoUsd ? custoUsd * 5.20 : null
+    });
+  } catch (e) {
+    console.error("ERRO EXCECAO /teste-qwen37flash-diagnostico:", e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 app.post("/teste-qwen3vlflash-diagnostico", async function(req, res) {
   if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY não configurada no Railway." });
   var imagem = req.body.imagem;

@@ -763,8 +763,33 @@ function normalizarUsageOpenRouter(usage) {
 // /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
 // NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino,
 // que usa a Sonnet como "professora" para o dataset de fine-tuning.
-var MODELO_PRODUCAO = "qwen3.7-plus";
-var MODELO_PRODUCAO_LOG = "qwen3.7-plus";
+// ── MODELO EM PRODUCAO: qwen3.7-flash desde 12/08/2026 ───────────
+// Trocado de qwen3.7-plus para qwen3.7-flash. Motivo: custo. O Flash sai a
+// US$0,030/US$0,130 por milhao (input/output) contra US$0,40/US$1,60 do Plus
+// — cerca de 13x mais barato sem cache e ~5x com cache quente, alem de rodar
+// em ~metade do tempo (8-13s contra 14-25s medidos nos testes).
+//
+// Base da decisao: 7 fotos comparadas lado a lado em /teste-folha-flash.html.
+// O achado PRINCIPAL bateu em 6 de 7; na foto onde divergiu (mancha
+// manteigosa confirmada, tirada da web), foi o FLASH que acertou e o Plus que
+// cravou ferrugem errado. Numa ferrugem real com esporulacao visivel os dois
+// acertaram tudo, inclusive po_esporulacao_confirmado=true.
+//
+// O QUE AINDA NAO ESTA PROVADO (vale acompanhar nos logs e no campo):
+//  - Secundarios divergem mais que o principal nos dois modelos, e a MESMA
+//    foto rodada duas vezes deu secundarios diferentes em ambos — ou seja,
+//    parte do que parecia "viés do Flash" pode ser so instabilidade normal
+//    entre chamadas, mesmo com temperature 0.
+//  - O Flash pareceu generoso ao marcar confianca 'alta' sem o traco
+//    decisivo visivel (viu inseto pousado e cravou bicho mineiro com alta).
+//    Se isso se confirmar em volume, considerar trava determinstica que
+//    rebaixe confianca quando o campo 'visto' negar o traco decisivo.
+//  - Solo e daninha so tem teste raso ate agora (endpoints /teste-solo-flash
+//    e /teste-daninha-flash existem para isso).
+// Para reverter: troque as duas linhas abaixo de volta para "qwen3.7-plus".
+// Nada mais precisa mudar — o resto do arquivo referencia estas constantes.
+var MODELO_PRODUCAO = "qwen3.7-flash";
+var MODELO_PRODUCAO_LOG = "qwen3.7-flash";
 var URL_MODELO_PRODUCAO = "https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"; // endpoint dedicado do workspace (Singapore) — mais estavel que o generico
 function headersModeloProducao() {
   return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.DASHSCOPE_API_KEY };
@@ -1611,7 +1636,7 @@ app.post("/diagnostico", async function(req, res) {
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
-      resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
       resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
@@ -2432,7 +2457,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2475,7 +2500,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -2627,7 +2652,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -2954,18 +2979,13 @@ app.post("/analise-solo", async function(req, res) {
 // reduzir confusao entre especies parecidas — ex: caruru sendo confundido
 // com corda-de-viola por falta de descricao visual. Cardo-santo/serralha-brava
 // (18) adicionada apos aparecer em teste real e nao bater com nenhuma das 17.
-app.post("/identifica-daninha", async function(req, res) {
-  var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
-  var userId=req.body.userId||"anonimo";
-  if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-  if (userId !== "anonimo") {
-    var uLim = await dbGetUser(userId);
-    if (uLim && analisesRestantes(uLim) <= 0) {
-      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
-    }
-  }
-  var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
-  var sistemaStatic="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro.\n\n"+
+// ── PROMPT COMPARTILHADO DA IDENTIFICACAO DE PLANTA DANINHA ──────
+// Extraido em 12/08/2026, mesmo motivo do SISTEMA_SOLO_STATIC: sem esta
+// constante, um endpoint de teste para comparar Plus vs Flash em daninha
+// exigiria colar de novo essa string gigante, arriscando ela divergir
+// silenciosamente do prompt de producao na primeira vez que alguem
+// editar so uma das copias.
+var DANINHA_SISTEMA_STATIC="Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira. Fontes: Aegro e Rehagro.\n\n"+
 "REGRA MAIS IMPORTANTE — HONESTIDADE ACIMA DE TUDO: identifique uma especie APENAS se os tracos visiveis na foto baterem CLARAMENTE com a descricao. E MUITO melhor dizer 'nao identificado com certeza' do que cravar a especie errada — um erro destroi a confianca do produtor. Se a foto estiver distante, desfocada, ou os tracos nao forem nitidos, use confianca 'baixa' e peca uma foto melhor. NUNCA force o encaixe numa das especies abaixo: a planta pode ser outra especie fora da lista.\n\n"+
 "PRIMEIRO PASSO OBRIGATORIO — CLASSIFIQUE O GRUPO PELA ORIGEM DAS FOLHAS E CAULE (nao pela largura da folha):\n"+
 "A) FOLHA LARGA (eudicotiledonea): folhas saem ALTERNADAS ou OPOSTAS ao longo de um CAULE que cresce para cima; caule REDONDO (cilindrico), com ramos/pecíolo; nervura central com nervuras secundarias em rede. ATENCAO: algumas folhas-largas tem folha ESTREITA/lanceolada (ex: BUVA) — folha estreita NAO faz dela capim nem tiririca.\n"+
@@ -3001,6 +3021,110 @@ app.post("/identifica-daninha", async function(req, res) {
 "LIMITE DE TAMANHO (mesmo em casos de duas hipoteses, tipo buva-jovem vs cardo-santo, ou buva vs losna-branca): campo 'acao' no MAXIMO 3 frases curtas; campo 'produtos' no MAXIMO 2 itens no total (nao 2 por hipotese); campo 'alerta' no MAXIMO 1 frase. Seja direto — o produtor pode pedir mais detalhes depois se precisar.\n\n"+
 "RESPONDA SOMENTE JSON:\n"+
 "{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"grupo\":\"folha_larga|capim|junca|indefinido\",\"visto\":\"tracos visiveis que justificam a identificacao\",\"confianca\":\"alta|media|baixa\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome generico (ingrediente ativo) com formulacao, ex: Saflufenacil 700WG\",\"dose\":\"dose pratica\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\"}],\"hipoteses_mesma_planta\":\"true SOMENTE quando o array plantas contiver 2 hipoteses concorrentes para UMA UNICA planta fotografada (ex: buva-jovem vs cardo-santo, ou buva vs losna-branca); false ou omitido quando cada item do array e uma planta fisicamente diferente encontrada na foto\",\"indicador_geral\":\"o que indica sobre o solo (so preencher quando hipoteses_mesma_planta for false/omitido)\",\"manejo_integrado\":\"estrategia geral (so preencher quando hipoteses_mesma_planta for false/omitido)\"}";
+
+// ── TESTE COMPARATIVO: Identificacao de Daninha, Plus vs Flash ───
+// Criados em 12/08/2026, para estender ao catalogo de daninhas a mesma
+// comparacao ja feita em folha e solo. Aqui o risco do erro e diferente dos
+// outros dois: uma especie trocada vira herbicida ERRADO — glifosato nao
+// mata tiririca, 2,4-D nao mata capim-amargoso resistente. E um prompt
+// gigante (18 especies, com pares dificeis tipo buva-vs-losna e
+// buva-vs-cardo-santo que o proprio prompt trata como duas hipoteses
+// simultaneas), entao vale rodar fotos dos casos ambiguos, nao so os obvios.
+// Sem streaming de proposito (diferente do /identifica-daninha de producao,
+// que e SSE): aqui o objetivo e comparar o JSON final lado a lado, nao a
+// experiencia de carregamento progressivo.
+app.post("/teste-daninha-plus", async function(req, res) {
+  if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY nao configurada no Railway." });
+  var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  if(!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+  var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
+  var inicio = Date.now();
+  try {
+    var r = await fetch(URL_MODELO_PRODUCAO, {
+      method: "POST",
+      headers: headersModeloProducao(),
+      body: JSON.stringify(corpoModeloProducao({
+        model: "qwen3.7-plus", max_tokens: 2200, temperature: 0,
+        messages: [
+          { role:"system", content: DANINHA_SISTEMA_STATIC + "\n\n" + (contexto||"Sem contexto regional adicional.") },
+          { role:"user", content:[{ type:"image_url", image_url:{ url:"data:"+tipo+";base64,"+imagem } }] }
+        ]
+      }))
+    });
+    var d = await r.json();
+    var duracaoMs = Date.now() - inicio;
+    if (d.error) { console.error("ERRO MODELO /teste-daninha-plus:", JSON.stringify(d.error)); return res.status(500).json({ erro:"Erro na Alibaba Cloud", detalhes: d.error }); }
+    var txt = d.choices && d.choices[0] && d.choices[0].message ? d.choices[0].message.content : "";
+    var resultado = extrairJSON(txt);
+    if (!resultado) console.error("ERRO PARSE /teste-daninha-plus — texto recebido:", txt);
+    if (resultado && !resultado.plantas) resultado = { plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
+    var usageNorm = normalizarUsageOpenRouter(d.usage);
+    var custoUsd = calcularCustoUSD("qwen3.7-plus", usageNorm);
+    res.json({
+      modelo: "qwen3.7-plus",
+      duracao_ms: duracaoMs,
+      resultado_bruto: txt,
+      resultado_parseado: resultado,
+      usage: usageNorm,
+      usage_bruto: d.usage || {},
+      custo_usd_estimado: custoUsd,
+      custo_brl_estimado: custoUsd ? custoUsd*5.20 : null
+    });
+  } catch(e) { console.error("ERRO EXCECAO /teste-daninha-plus:", e.message); res.status(500).json({ erro:e.message }); }
+});
+
+app.post("/teste-daninha-flash", async function(req, res) {
+  if (!process.env.DASHSCOPE_API_KEY) return res.status(500).json({ erro:"DASHSCOPE_API_KEY nao configurada no Railway." });
+  var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  if(!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
+  var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
+  var inicio = Date.now();
+  try {
+    var r = await fetch(URL_MODELO_PRODUCAO, {
+      method: "POST",
+      headers: headersModeloProducao(),
+      body: JSON.stringify(corpoModeloProducao({
+        model: "qwen3.7-flash", max_tokens: 2200, temperature: 0,
+        messages: [
+          { role:"system", content: DANINHA_SISTEMA_STATIC + "\n\n" + (contexto||"Sem contexto regional adicional.") },
+          { role:"user", content:[{ type:"image_url", image_url:{ url:"data:"+tipo+";base64,"+imagem } }] }
+        ]
+      }))
+    });
+    var d = await r.json();
+    var duracaoMs = Date.now() - inicio;
+    if (d.error) { console.error("ERRO MODELO /teste-daninha-flash:", JSON.stringify(d.error)); return res.status(500).json({ erro:"Erro na Alibaba Cloud", detalhes: d.error }); }
+    var txt = d.choices && d.choices[0] && d.choices[0].message ? d.choices[0].message.content : "";
+    var resultado = extrairJSON(txt);
+    if (!resultado) console.error("ERRO PARSE /teste-daninha-flash — texto recebido:", txt);
+    if (resultado && !resultado.plantas) resultado = { plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
+    var usageNorm = normalizarUsageOpenRouter(d.usage);
+    var custoUsd = calcularCustoUSD("qwen3.7-flash", usageNorm);
+    res.json({
+      modelo: "qwen3.7-flash",
+      duracao_ms: duracaoMs,
+      resultado_bruto: txt,
+      resultado_parseado: resultado,
+      usage: usageNorm,
+      usage_bruto: d.usage || {},
+      custo_usd_estimado: custoUsd,
+      custo_brl_estimado: custoUsd ? custoUsd*5.20 : null
+    });
+  } catch(e) { console.error("ERRO EXCECAO /teste-daninha-flash:", e.message); res.status(500).json({ erro:e.message }); }
+});
+
+app.post("/identifica-daninha", async function(req, res) {
+  var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
+  var userId=req.body.userId||"anonimo";
+  if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
+  if (userId !== "anonimo") {
+    var uLim = await dbGetUser(userId);
+    if (uLim && analisesRestantes(uLim) <= 0) {
+      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
+    }
+  }
+  var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
+  var sistemaStatic=DANINHA_SISTEMA_STATIC;
 
   res.setHeader("Content-Type","text/event-stream");
   res.setHeader("Cache-Control","no-cache");
@@ -3182,6 +3306,96 @@ function extrairJSON(txt) {
 // Trava determinística (nao depende da IA obedecer o prompt): garante que toda
 // ferrugem com confianca baixa peca foto da face de baixo no campo 'acao'.
 // Isso e reforco alem da instrucao no prompt — LLM pode ocasionalmente ignorar
+// ── TRAVA DETERMINISTICA #0: normalizacao do nome do diagnostico ─
+// Criada em 12/08/2026 depois de aparecer no teste comparativo Plus vs Flash:
+// na mesma bateria de 5 fotos o modelo devolveu "magnesio" em duas e
+// "deficiencia_magnesio" em outra, para o mesmo achado. O prompt pede
+// "nome_exato", mas nao lista quais nomes existem — os nomes so aparecem
+// espalhados nas descricoes das doencas, o que basta para um modelo grande e
+// nao basta para um menor, que tende a "melhorar" o nome por conta propria.
+//
+// Por que isso e grave e nao cosmetico: o campo "diagnostico" e usado como
+// CHAVE em varios pontos do servidor, e todos degradam em SILENCIO quando a
+// chave nao existe:
+//   - CATEGORIA_DIAGNOSTICO[d.diagnostico] -> cai no fallback generico, e a
+//     IA da calculadora deixa de saber se e fungica, bacteriana ou praga;
+//   - REFERENCIAS_VISUAIS[d.diagnostico] -> a foto de referencia some do card;
+//   - corrigirFerrugemSemConfirmacao e garantirAvisoFerrugem comparam
+//     d.diagnostico !== "ferrugem" -> um nome variante tipo
+//     "ferrugem_do_cafeeiro" PULA as duas travas de seguranca da ferrugem,
+//     que sao justamente as que existem porque o prompt sozinho nao segurou.
+// Nenhum desses casos gera erro: o produtor recebe um card empobrecido ou sem
+// a correcao, e ninguem fica sabendo. Por isso a normalizacao vira a primeira
+// etapa do pipeline, ANTES das outras travas.
+var DIAGNOSTICOS_VALIDOS = [
+  "ferrugem","cercosporiose","ascochyta","antracnose","phoma","aureolada",
+  "amarelinho","mancha_anular","mancha_manteigosa","corynespora","koleroga",
+  "bicho","acaro","cochonilha","broca",
+  "nitrogenio","fosforo","magnesio","potassio","ferro","calcio","boro","zinco",
+  // causas abioticas (secao "CAUSAS ABIOTICAS" do prompt-diagnostico.txt,
+  // linhas 61-68) — faltavam aqui ate 12/08/2026. Ate essa correcao, essas 6
+  // categorias eram 100% validas e usadas em producao mas minha normalizacao
+  // as marcava como "NOME DESCONHECIDO" no log toda vez que apareciam —
+  // alarme falso meu, no meu proprio codigo, nao erro do modelo.
+  "vento_frio","geada_frio","escaldadura","fitotoxicidade","estresse_hidrico","dano_mecanico",
+  "saudavel"
+];
+// prefixos/sufixos que o modelo costuma acrescentar por conta propria.
+// Atencao: so sao removidos se o que sobrar for um nome valido — por isso
+// "mancha_" nao quebra "mancha_anular" nem "mancha_manteigosa".
+var AFIXOS_DIAGNOSTICO = [
+  "deficiencia_de_","deficiencia_","carencia_de_","carencia_","falta_de_",
+  "doenca_","praga_","mancha_de_","mancha_","podridao_","seca_de_"
+];
+var ALIASES_DIAGNOSTICO = {
+  "ferrugem_do_cafeeiro":"ferrugem","ferrugem_alaranjada":"ferrugem","hemileia_vastatrix":"ferrugem",
+  "cercospora":"cercosporiose","olho_pardo":"cercosporiose","mancha_de_olho_pardo":"cercosporiose",
+  "mancha_aureolada":"aureolada","pseudomonas":"aureolada",
+  "bicho_mineiro":"bicho","minador":"bicho",
+  "acaro_vermelho":"acaro","acaro_da_ferrugem":"acaro",
+  "broca_do_cafe":"broca","broca_do_cafeeiro":"broca",
+  "cochonilha_branca":"cochonilha",
+  "mancha_de_phoma":"phoma","phoma_ascochyta":"phoma",
+  "mal_das_folhas":"koleroga","koleroga_ou_mal_das_teias":"koleroga",
+  "leprose":"mancha_anular","coffee_ringspot":"mancha_anular",
+  "mancha_alvo":"corynespora","mancha_de_alvo":"corynespora",
+  // "magna_manteigosa": nao e prefixo, e erro de digitacao do proprio modelo
+  // (confirmado em teste real do qwen3.7-flash em 12/08/2026 — nao seria
+  // pego pelo strip de afixos porque "magna" nao e um afixo conhecido).
+  "magna_manteigosa":"mancha_manteigosa"
+};
+function normalizarNomesDiagnostico(resultado) {
+  if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
+  resultado.diagnosticos.forEach(function(d){
+    if(!d||!d.diagnostico) return;
+    var original = String(d.diagnostico);
+    // minusculas, sem acento, espacos/hifens viram underscore, sem underscore duplicado
+    var nome = original.toLowerCase().trim()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .replace(/[\s\-]+/g,"_").replace(/_+/g,"_").replace(/^_|_$/g,"");
+    if(DIAGNOSTICOS_VALIDOS.indexOf(nome) !== -1) { d.diagnostico = nome; return; }
+    if(ALIASES_DIAGNOSTICO[nome]) {
+      console.warn("NOME DIAGNOSTICO via alias:", original, "->", ALIASES_DIAGNOSTICO[nome]);
+      d.diagnostico = ALIASES_DIAGNOSTICO[nome]; return;
+    }
+    for(var i=0;i<AFIXOS_DIAGNOSTICO.length;i++){
+      var afixo = AFIXOS_DIAGNOSTICO[i];
+      if(nome.indexOf(afixo) === 0){
+        var semAfixo = nome.slice(afixo.length);
+        if(DIAGNOSTICOS_VALIDOS.indexOf(semAfixo) !== -1){
+          console.warn("NOME DIAGNOSTICO normalizado:", original, "->", semAfixo);
+          d.diagnostico = semAfixo; return;
+        }
+      }
+    }
+    // nao reconhecido: mantem o que veio (nao destroi informacao) mas registra,
+    // porque cada ocorrencia aqui e um card que vai sair empobrecido em producao.
+    console.warn("NOME DIAGNOSTICO DESCONHECIDO (nao normalizado):", original);
+    d.diagnostico = nome;
+  });
+  return resultado;
+}
+
 // uma instrucao de texto mesmo bem escrita, isso aqui garante 100% das vezes.
 var AVISO_FACE_BAIXO = "Fotografe a face de baixo (inferior) desta folha para confirmar. ";
 function garantirAvisoFerrugem(resultado) {

@@ -1555,7 +1555,7 @@ app.post("/diagnostico", async function(req, res) {
   // rodando e sendo cobrada mesmo que ninguem mais esteja esperando o resultado,
   // e o retry automatico do app dispara uma SEGUNDA chamada paga em paralelo.
   var abortCtrl = new AbortController();
-  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+  res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
 
   fetch(URL_MODELO_PRODUCAO, {
     method:"POST",
@@ -2436,7 +2436,7 @@ app.post("/diagnostico-json", async function(req, res) {
   }
   var contextoRegional=buildContextoRegional(regiao,altitude,false);
   var abortCtrl = new AbortController();
-  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+  res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
   try {
     var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
@@ -2585,8 +2585,29 @@ app.post("/plano-acao", async function(req, res) {
 
   var promptUsuario = regiaoCtx+"\n\nDiagnostico encontrou:\n"+resumoDiags;
 
+  // ── CORRIGIDO 12/08/2026 — NAO voltar para req.on("close") ──────
+  // Era: req.on("close", function(){ abortCtrl.abort(); });
+  // Sintoma: "ERRO EXCECAO /plano-acao: This operation was aborted" em TODA
+  // analise, nos logs do Railway, e o card "O que sua planta precisa" nunca
+  // aparecia para o produtor. Erro silencioso do ponto de vista do app: o
+  // diagnostico saia normal, so o plano de acao ficava eternamente vazio, o
+  // que ainda dava impressao de lentidao (o usuario esperava algo que nunca
+  // vinha). Aparecia em logs desde pelo menos 15/08, ou seja, ja vinha
+  // quebrado antes da troca de modelo para o Flash — nao foi o Flash.
+  //
+  // Causa: req = o que o CLIENTE ENVIOU. Depois que o express.json() termina
+  // de ler o corpo da requisicao, esse stream pode ser encerrado pelo Node
+  // (comportamento sensivel a versao — Railway roda Node 22), disparando
+  // "close" e abortando a chamada ao modelo enquanto o cliente ainda esperava
+  // a resposta. Ou seja, o servidor cancelava a si mesmo.
+  //
+  // Agora: res = a RESPOSTA. So aborta se a conexao de resposta cair ANTES de
+  // termos terminado de responder (guarda !res.writableEnded). Assim a
+  // intencao original — nao queimar token se o produtor fechar a tela no meio
+  // — continua valendo, sem cancelar requisicoes saudaveis.
+  // O mesmo padrao errado existia em outros 6 endpoints e foi corrigido junto.
   var abortCtrl = new AbortController();
-  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+  res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
   try {
     var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
@@ -2635,7 +2656,7 @@ app.post("/diagnostico-video", async function(req, res) {
   var content=[];
   frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+frame}}); });
   var abortCtrl = new AbortController();
-  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+  res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
   try {
     var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
@@ -2937,7 +2958,7 @@ app.post("/analise-solo", async function(req, res) {
   var sistemaStatic=SISTEMA_SOLO_STATIC;
   try {
     var abortCtrl = new AbortController();
-    req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+    res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
     var r=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
       signal: abortCtrl.signal,
@@ -3138,7 +3159,7 @@ app.post("/identifica-daninha", async function(req, res) {
   function encerrarDaninha() { clearInterval(ping); try { res.end(); } catch(e){} }
 
   var abortCtrl = new AbortController();
-  req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+  res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
 
   fetch(URL_MODELO_PRODUCAO,{
     method:"POST",
@@ -3269,7 +3290,7 @@ app.post("/identifica-defeito-grao", async function(req, res) {
 "{\"defeitos\":[{\"nome\":\"nome popular do defeito em portugues\",\"chave\":\"uma_das_chaves_do_catalogo_acima\",\"visto\":\"o que exatamente foi visto na foto que embasa essa identificacao\",\"confianca\":\"alta|media|baixa\",\"causa\":\"causa provavel especifica, baseada no catalogo\",\"acao\":\"orientacao pratica de manejo, nunca sobre venda/bebida/tipo\"}],\"resumo_geral\":\"causa raiz comum conectando os defeitos, ou string vazia se nao houver 2+ defeitos ou nao houver conexao clara\",\"recomendacao_processamento\":\"passos praticos de separacao/reprocessamento do lote, ou string vazia\"}";
   try {
     var abortCtrl = new AbortController();
-    req.on("close", function(){ try { abortCtrl.abort(); } catch(e){} });
+    res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
     var rGr=await fetch(URL_MODELO_PRODUCAO,{
       method:"POST",
       signal: abortCtrl.signal,

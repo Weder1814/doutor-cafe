@@ -1603,6 +1603,10 @@ app.post("/diagnostico", async function(req, res) {
       }
       diagsCompletos=found;
       for(var k=completosEnviados;k<found.length;k++){
+        // injeta produtos tambem no streaming: sem isso os cards que aparecem
+        // ao vivo ficariam sem fungicida ate o evento "fim" reescrever tudo,
+        // e o produtor veria o card "piscar" ganhando produto no final.
+        injetarProdutos(found[k]);
         res.write("data: "+JSON.stringify({ tipo:"diag_completo", diag:found[k], index:k })+"\n\n");
         completosEnviados++;
       }
@@ -1636,7 +1640,7 @@ app.post("/diagnostico", async function(req, res) {
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
-      resultado=normalizarNomesDiagnostico(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
       resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
@@ -2457,7 +2461,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=normalizarNomesDiagnostico(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2500,7 +2504,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = normalizarNomesDiagnostico(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -2673,7 +2677,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=normalizarNomesDiagnostico(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -3327,6 +3331,117 @@ function extrairJSON(txt) {
 // Trava determinística (nao depende da IA obedecer o prompt): garante que toda
 // ferrugem com confianca baixa peca foto da face de baixo no campo 'acao'.
 // Isso e reforco alem da instrucao no prompt — LLM pode ocasionalmente ignorar
+// ── TABELA DE PRODUTOS (movida do prompt para o servidor) ────────
+// Movida em 12/08/2026 de dentro do prompt-diagnostico.txt para ca.
+// TRES motivos, e os dois ultimos sao de seguranca, nao de custo:
+//
+// 1. CUSTO/LATENCIA: a secao PRODUTOS + as regras de "copie a dose exata"
+//    somavam ~1.200 tokens em TODA analise. O prompt inteiro tem ~11.245
+//    tokens contra ~785 da foto — ou seja, 94% do que o modelo lia era texto
+//    fixo. Dose de fungicida e dado deterministico: nao precisa de modelo
+//    para ser escolhido, precisa de tabela.
+//
+// 2. NOME COMERCIAL INVENTADO: o schema JSON pedia "nome_comercial":"marca"
+//    enquanto outra linha do mesmo prompt dizia "NUNCA invente ou cite nome
+//    comercial de memoria — associar a marca errada ao ingrediente errado
+//    pode levar o produtor a comprar o produto incorreto". O prompt se
+//    contradizia e o modelo obedecia o schema: saiu "Cuprogard" numa analise
+//    real. E o app exibe nome_comercial COM PRIORIDADE sobre o nome generico
+//    (f.nome_comercial||f.nome), entao a marca inventada era o que o produtor
+//    lia na tela. Aqui nome_comercial fica null de proposito, e o app cai no
+//    nome generico com formulacao, que e o correto.
+//
+// 3. CARENCIA INVENTADA: o schema pedia "carencia_dias" mas esse dado NUNCA
+//    existiu na tabela PRODUTOS — era 100% alucinado (saiu 30, 7 e 1 em
+//    analises diferentes do MESMO produto). Carencia e prazo legal de
+//    seguranca alimentar: quantos dias apos aplicar o cafe pode ser colhido.
+//    O campo nao e exibido em lugar nenhum do app, entao foi REMOVIDO em vez
+//    de preenchido com chute. Se um dia for exibir, preencha aqui a partir da
+//    bula de cada produto — nao deixe o modelo inventar.
+//
+// FONTE DAS DOSES: exatamente as que estavam no prompt. Onde o prompt nao
+// especificava proporcao_por_litro/intervalo para um produto (ex: os dois de
+// cercosporiose), herdei o valor explicito do mesmo produto em outra entrada
+// e marquei com // herdado — vale conferir contra a bula.
+var PRODUTOS_POR_DIAGNOSTICO = {
+  ferrugem: [
+    { nome:"Tebuconazol 200SC", tipo:"sistemico", dose_min:0.75, dose_max:1.0, unidade:"L", por:"hectare", proporcao_por_litro:0.75, unidade_proporcao:"mL", intervalo_reaplicacao:21 },
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:21 }
+  ],
+  cercosporiose: [
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:14 }, // herdado
+    { nome:"Tebuconazol 200SC", tipo:"sistemico", dose_min:0.75, dose_max:1.0, unidade:"L", por:"hectare", proporcao_por_litro:0.75, unidade_proporcao:"mL", intervalo_reaplicacao:21 }  // herdado
+  ],
+  ascochyta: [
+    { nome:"Tebuconazol 200SC", tipo:"sistemico", dose_min:0.75, dose_max:1.0, unidade:"L", por:"hectare", proporcao_por_litro:0.75, unidade_proporcao:"mL", intervalo_reaplicacao:14 },
+    { nome:"Tiofanato Metilico 700WP", tipo:"protetor", dose_min:1, dose_max:1.5, unidade:"kg", por:"hectare", proporcao_por_litro:1.25, unidade_proporcao:"g", intervalo_reaplicacao:14 }
+  ],
+  antracnose: [
+    { nome:"Azoxistrobina+Difenoconazol 325SC", tipo:"sistemico", dose_min:0.3, dose_max:0.4, unidade:"L", por:"hectare", proporcao_por_litro:0.3, unidade_proporcao:"mL", intervalo_reaplicacao:14 }
+  ],
+  antracnose_fruto: [
+    { nome:"Azoxistrobina+Difenoconazol 325SC", tipo:"sistemico", dose_min:0.3, dose_max:0.4, unidade:"L", por:"hectare", proporcao_por_litro:0.3, unidade_proporcao:"mL", intervalo_reaplicacao:14 },
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:14 }
+  ],
+  // phoma e aureolada eram ALTERNATIVAS no prompt ("escolha UM, nao combine").
+  // Escolher ficou deterministico aqui: sempre o primeiro. Antes dependia do
+  // modelo entender a convencao "OU" no meio do texto — e as vezes ele
+  // devolvia os dois juntos, o que e erro de recomendacao agronomica.
+  phoma: [
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:14 }
+  ],
+  aureolada: [
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:4, dose_max:4.5, unidade:"kg", por:"hectare", proporcao_por_litro:4, unidade_proporcao:"g", intervalo_reaplicacao:15, obs:"acao bactericida — doenca BACTERIANA, triazol sistemico nao tem efeito" }
+  ],
+  mancha_manteigosa: [
+    { nome:"Azoxistrobina+Difenoconazol 325SC", tipo:"sistemico", dose_min:0.3, dose_max:0.4, unidade:"L", por:"hectare", proporcao_por_litro:0.3, unidade_proporcao:"mL", intervalo_reaplicacao:14 },
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:14 }
+  ],
+  corynespora: [
+    { nome:"Azoxistrobina+Difenoconazol 325SC", tipo:"sistemico", dose_min:0.3, dose_max:0.4, unidade:"L", por:"hectare", proporcao_por_litro:0.3, unidade_proporcao:"mL", intervalo_reaplicacao:14 },
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:14 }
+  ],
+  koleroga: [
+    { nome:"Oxicloreto de Cobre 840WP", tipo:"protetor", dose_min:2.5, dose_max:3, unidade:"kg", por:"hectare", proporcao_por_litro:3, unidade_proporcao:"g", intervalo_reaplicacao:14, obs:"associar desbaste de ramos internos e poda para ventilacao" }
+  ],
+  bicho: [
+    { nome:"Thiamethoxam 250WG", tipo:"inseticida", dose_min:0.1, dose_max:0.2, unidade:"kg", por:"hectare", proporcao_por_litro:0.1, unidade_proporcao:"g", intervalo_reaplicacao:30 }
+  ],
+  acaro: [
+    { nome:"Abamectina 18EC", tipo:"acaricida", dose_min:0.5, dose_max:0.75, unidade:"L", por:"hectare", proporcao_por_litro:0.5, unidade_proporcao:"mL", intervalo_reaplicacao:21 }
+  ],
+  cochonilha: [
+    { nome:"Imidacloprido 700WG", tipo:"inseticida", dose_min:0.3, dose_max:0.5, unidade:"kg", por:"hectare", proporcao_por_litro:0.4, unidade_proporcao:"g", intervalo_reaplicacao:30 }
+  ],
+  broca: [
+    { nome:"Clorpirifos 480EC", tipo:"inseticida", dose_min:1.5, dose_max:2, unidade:"L", por:"hectare", proporcao_por_litro:1.75, unidade_proporcao:"mL", intervalo_reaplicacao:30 }
+  ]
+};
+
+// Preenche d.fungicidas a partir da tabela acima, ignorando o que o modelo
+// tenha mandado nesse campo. Diagnosticos sem entrada na tabela (deficiencias
+// nutricionais, causas abioticas, amarelinho, mancha_anular, saudavel,
+// fruto_*) ficam com [] — que era exatamente o que o prompt ja mandava, agora
+// garantido em codigo em vez de depender do modelo lembrar da regra.
+function injetarProdutos(d) {
+  if(!d || !d.diagnostico) return d;
+  var lista = PRODUTOS_POR_DIAGNOSTICO[d.diagnostico];
+  if(!lista){ d.fungicidas = []; return d; }
+  d.fungicidas = lista.map(function(p){
+    var copia = {};
+    for(var k in p){ if(Object.prototype.hasOwnProperty.call(p,k)) copia[k]=p[k]; }
+    copia.nome_comercial = null; // nunca marca — ver motivo 2 no comentario acima
+    return copia;
+  });
+  return d;
+}
+
+function injetarProdutosNoResultado(resultado) {
+  if(!resultado || !resultado.diagnosticos) return resultado;
+  resultado.diagnosticos.forEach(injetarProdutos);
+  return resultado;
+}
+
 // ── TRAVA DETERMINISTICA #0: normalizacao do nome do diagnostico ─
 // Criada em 12/08/2026 depois de aparecer no teste comparativo Plus vs Flash:
 // na mesma bateria de 5 fotos o modelo devolveu "magnesio" em duas e

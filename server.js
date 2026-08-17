@@ -1515,8 +1515,9 @@ app.get("/plano/:userId", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
-// ── DIAGNÓSTICO SSE ─── Sonnet 4-6 | max_tokens:3000 | stream:true ──
+// ── DIAGNÓSTICO SSE ─── modelo = MODELO_PRODUCAO | max_tokens:3000 | stream:true ──
 app.post("/diagnostico", async function(req, res) {
+  var tInicio = Date.now(); // instrumentacao de tempo — ver "TEMPO /diagnostico" abaixo
   var imagem  = req.body.imagem;
   var tipo    = req.body.tipo||"image/jpeg";
   var regiao  = req.body.regiao||null;
@@ -1571,17 +1572,53 @@ app.post("/diagnostico", async function(req, res) {
     }))
   })
   .then(function(r) {
+    var tPrimeiroByte = null; // marcado no primeiro chunk com conteudo real
     var Readable = require("stream").Readable;
     var stream = Readable.fromWeb(r.body);
     var buf="", texto="", parciaisEnviados=0, completosEnviados=0, diagsCompletos=[];
+    var posCompletos=-1; // ver comentario em extrairCompletos()
     var usageCapturado={input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0};
 
+    // CORRIGIDO 12/08/2026 — antes a regex era recriada (var re=/.../g) TODA
+    // VEZ que a funcao rodava, e o "found" era reconstruido do zero varrendo
+    // o "texto" inteiro a cada pedaco recebido do stream (dezenas de vezes
+    // por analise) — trabalho que cresce quadraticamente com o tamanho da
+    // resposta. A posicao de busca agora e rastreada manualmente em
+    // buscaParciaisDesde: como "texto" so cresce por concatenacao no final
+    // (nunca muda o que ja foi escrito), e seguro retomar a busca de onde a
+    // ULTIMA combinacao completa terminou. (Regex global sozinha nao resolve
+    // isso: ela reseta o proprio lastIndex pra 0 assim que o .exec() falha em
+    // achar mais combinacoes, entao so mover a declaracao pra fora da funcao
+    // nao muda nada sem esse controle manual de posicao.)
+    // Nao sei ainda se isso explicava os 17s medidos em producao — por isso
+    // a instrumentacao de tempo (TEMPO /diagnostico: ...) foi adicionada
+    // junto, pra medir de verdade na proxima analise em vez de supor.
+    // Como "texto" so CRESCE por concatenacao no final (nunca muda o que ja
+    // foi escrito), e seguro retomar a busca de onde a ULTIMA combinacao
+    // completa terminou — nada antes disso pode conter uma combinacao nova.
+    // CORRIGIDO 12/08/2026 — esta regex so achava a previa "parcial" quando
+    // "estagio" vinha LOGO depois de "diagnostico". Isso quebrava
+    // silenciosamente para ferrugem: o schema poe "po_esporulacao_confirmado"
+    // ENTRE diagnostico e estagio so nesse caso. Resultado: a doenca mais
+    // urgente do catalogo era a UNICA que nunca ganhava a previa ao vivo
+    // ("Analisando...") enquanto o modelo ainda gerava — o produtor via a
+    // tela parada ate o diagnostico completo chegar, so no caso da ferrugem.
+    // Achado rodando o teste funcional de /tmp/teste_parsing.js ao corrigir
+    // o re-scan quadratico (nao tinha relacao direta com aquele bug, mas o
+    // teste que escrevi pra validar aquela correcao expos este tambem).
+    // O resultado FINAL nunca foi afetado (extrairCompletos usa casamento de
+    // chaves, nao depende da ordem dos campos) — so a previa antecipada.
+    var reParcial=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*(?:"po_esporulacao_confirmado"\s*:\s*(?:true|false)\s*,\s*)?"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
+    var buscaParciaisDesde=0, diagsParciais=[];
     function detectarParciais() {
-      var re=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
-      var m, found=[];
-      while((m=re.exec(texto))!==null) found.push({ diagnostico:m[1], estagio:parseInt(m[2]), confianca:m[3], visto:"", acao:"Analisando...", fungicidas:[], parcial:true });
-      for(var k=parciaisEnviados;k<found.length;k++){
-        res.write("data: "+JSON.stringify({ tipo:"diag", diag:found[k] })+"\n\n");
+      reParcial.lastIndex = buscaParciaisDesde;
+      var m;
+      while((m=reParcial.exec(texto))!==null){
+        diagsParciais.push({ diagnostico:m[1], estagio:parseInt(m[2]), confianca:m[3], visto:"", acao:"Analisando...", fungicidas:[], parcial:true });
+        buscaParciaisDesde = reParcial.lastIndex;
+      }
+      for(var k=parciaisEnviados;k<diagsParciais.length;k++){
+        res.write("data: "+JSON.stringify({ tipo:"diag", diag:diagsParciais[k] })+"\n\n");
         parciaisEnviados++;
       }
     }
@@ -1589,7 +1626,16 @@ app.post("/diagnostico", async function(req, res) {
     function extrairCompletos() {
       var ini=texto.indexOf('"diagnosticos":[');
       if(ini===-1) return;
-      var pos=ini+16, found=[];
+      // CORRIGIDO 12/08/2026 — antes "pos" comecava do zero (ini+16) TODA
+      // chamada, entao cada diagnostico ja completo em chamadas anteriores
+      // era re-varrido caractere a caractere E re-JSON.parse'ado de novo, so
+      // pra ser descartado (indice < completosEnviados). Com 2-3 diagnosticos
+      // isso significa reprocessar o mesmo JSON completo dezenas de vezes ao
+      // longo do stream. Agora "posCompletos" persiste entre chamadas
+      // (declarado no escopo externo, acima) e cada chamada so caminha a
+      // partir de onde a anterior parou.
+      var pos = posCompletos===-1 ? ini+16 : posCompletos;
+      var found=diagsCompletos.slice();
       while(pos<texto.length){
         var s=texto.indexOf("{",pos);
         if(s===-1) break;
@@ -1601,6 +1647,7 @@ app.post("/diagnostico", async function(req, res) {
         }
         if(d>0) break;
       }
+      posCompletos=pos;
       diagsCompletos=found;
       for(var k=completosEnviados;k<found.length;k++){
         // injeta produtos tambem no streaming: sem isso os cards que aparecem
@@ -1626,6 +1673,7 @@ app.post("/diagnostico", async function(req, res) {
             usageCapturado.output_tokens=ev.usage.completion_tokens||usageCapturado.output_tokens;
           }
           if(ev.choices&&ev.choices[0]&&ev.choices[0].delta&&ev.choices[0].delta.content){
+            if(tPrimeiroByte===null) tPrimeiroByte=Date.now();
             texto+=ev.choices[0].delta.content;
             detectarParciais();
             extrairCompletos();
@@ -1635,6 +1683,20 @@ app.post("/diagnostico", async function(req, res) {
     });
 
     stream.on("end", function() {
+      // TEMPO /diagnostico: separa onde o tempo esta indo de verdade.
+      //   ate_fetch_ms   = tempo ate a Alibaba comecar a responder (rede +
+      //                    fila do lado deles + eventual escrita de cache)
+      //   stream_ms      = tempo gerando/transmitindo o conteudo (decode)
+      //   total_ms       = tempo total do endpoint, ponta a ponta
+      // Se ate_fetch_ms for a fatia grande, o problema esta ANTES do modelo
+      // comecar a gerar (rede, fila, cache). Se stream_ms for a fatia grande,
+      // o modelo esta demorando pra gerar os tokens de saida. Isso decide se
+      // o proximo passo e mexer em rede/cache ou aceitar que a geracao em si
+      // e o gargalo.
+      var tFim = Date.now();
+      var ateFetch = (tPrimeiroByte||tFim) - tInicio;
+      var duracaoStream = tPrimeiroByte ? (tFim - tPrimeiroByte) : 0;
+      console.log("TEMPO /diagnostico: modelo="+MODELO_PRODUCAO+" ate_fetch_ms="+ateFetch+" stream_ms="+duracaoStream+" total_ms="+(tFim-tInicio)+" input_tokens="+usageCapturado.input_tokens+" output_tokens="+usageCapturado.output_tokens+" cache_read="+usageCapturado.cache_read_input_tokens);
       var resultado=extrairJSON(texto);
       if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length){
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
@@ -3713,11 +3775,38 @@ function buildPromptStatic(isVideo) {
 // tempo de processamento do prompt em chamadas repetidas, sem mudar
 // nada do conteudo/comportamento do diagnostico em si — so a forma
 // como o texto e dividido em blocos na mensagem.
+// ── CHAVE: cache explicito liga/desliga ─────────────────────────
+// Colocado em 12/08/2026 investigando por que a producao levava 16-20s
+// enquanto o endpoint de teste, com o MESMO modelo e MESMA foto, levava 8-11s.
+//
+// Hipotese (ainda NAO confirmada pelo suporte — ticket 0065ACM752 aberto):
+// o marcador de cache explicito esta custando tempo sem devolver nada no
+// qwen3.7-flash. Duas evidencias:
+//  1) Medicao propria: o Flash devolveu cached_tokens = 0 em TODAS as
+//     chamadas, inclusive repetidas com 3-5 min de intervalo (dentro do TTL
+//     de 5 min). O qwen3.7-plus, no mesmo endpoint e mesmo prompt, comecava
+//     a acertar cache da segunda chamada em diante (10.880 tokens).
+//  2) Documentacao da Alibaba: "unlike an implicit cache, an explicit cache
+//     requires explicit creation and INCURS OVERHEAD". E na tabela de precos
+//     do Flash, Explicit Cache Creation ($0.038/1M) custa MAIS que input
+//     normal ($0.030/1M) — criar cache e mais caro que so ler.
+// Somando: toda analise de producao pedia criacao de cache, pagava o
+// overhead e nunca colhia o beneficio. O endpoint de teste nao pede cache
+// nenhum — e e justamente ele que roda em 8-11s.
+//
+// COMO USAR: com false, o prompt vai como texto simples (o cache IMPLICITO
+// da Alibaba continua valendo — ele e automatico e nao depende de marcador).
+// Se o suporte responder que o Flash suporta cache explicito e disser como
+// fazer acertar, volte para true e meca de novo.
+var USAR_CACHE_EXPLICITO = false;
+
 function buildSystemMessageComCache(isVideo, contextoRegional, instrucaoExtra) {
   var estatico = buildPromptStatic(isVideo) + (instrucaoExtra || "");
-  var conteudo = [
-    { type: "text", text: estatico, cache_control: { type: "ephemeral" } }
-  ];
+  var blocoEstatico = { type: "text", text: estatico };
+  if (USAR_CACHE_EXPLICITO) {
+    blocoEstatico.cache_control = { type: "ephemeral" };
+  }
+  var conteudo = [ blocoEstatico ];
   if (contextoRegional) {
     conteudo.push({ type: "text", text: "\n\n" + contextoRegional });
   }

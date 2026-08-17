@@ -801,9 +801,25 @@ function headersModeloProducao() {
 // 27/07/2026: sem isso o Qwen3.7-Plus roda em modo thinking por padrao,
 // levando 50-100s e milhares de tokens de raciocinio interno por analise —
 // inviavel para producao tanto em latencia quanto em custo).
+// Seed fixo para reduzir variacao entre chamadas identicas. Adicionado
+// 12/08/2026: um produtor analisou a MESMA foto duas vezes e recebeu
+// "corynespora" numa vez e "cercosporiose" na outra — mesmo com temperature:0.
+// A causa mais provavel NAO e o parametro seed em si: com temperature:0 o
+// modelo ja pede o token mais provavel (sem sorteio de amostragem), entao o
+// principal fator de instabilidade tende a ser arredondamento de ponto
+// flutuante que muda dependendo de quais outros pedidos estao sendo
+// processados no mesmo lote nas GPUs da Alibaba — isso o seed nao resolve
+// sozinho. Mesmo assim, e gratis, documentado pela propria Alibaba
+// (dashscope.Generation aceita seed, default 1234 se omitido) e pode reduzir
+// parte da variacao em alguns casos. Nao e garantia de determinismo total.
+var SEED_FIXO = 7431;
+
 function corpoModeloProducao(campos) {
   if (campos.model && campos.model.indexOf("qwen3") === 0 && campos.enable_thinking === undefined) {
     campos.enable_thinking = false;
+  }
+  if (campos.model && campos.model.indexOf("qwen3") === 0 && campos.seed === undefined) {
+    campos.seed = SEED_FIXO;
   }
   return campos;
 }

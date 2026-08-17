@@ -546,32 +546,84 @@ async function ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, valor) {
   return tipo;
 }
 
+// Mapa reverso do SKU (Play Console) pro tipo interno de plano. Usado pra
+// nunca precisar confiar no que o app manda no corpo da requisicao — o
+// unico dado confiavel eh o que a propria Play API devolve pro purchaseToken.
+var PRODUCT_ID_PARA_TIPO = { plano_basico:"basico", plano_pro:"pro", plano_premium:"premium" };
+
+// Processa um purchaseToken: valida na Play API, deriva o plano real (a
+// partir do lineItems confirmado, nunca do que o app alega), ativa e
+// confirma. Usado tanto pelo fluxo de compra "quente" (/verificar-compra-play)
+// quanto pela reconciliacao de compras pendentes no boot do app
+// (/reconciliar-compras-play) — uma unica fonte de verdade pras duas rotas.
+async function processarCompraPlay(userId, purchaseToken) {
+  var dadosCompra = await consultarAssinaturaPlay(purchaseToken);
+  var estado = dadosCompra.subscriptionState;
+  if (estado !== "SUBSCRIPTION_STATE_ACTIVE") {
+    return { ok:false, erro:"Assinatura nao esta ativa segundo a Google Play.", estado: estado };
+  }
+  var item = dadosCompra.lineItems && dadosCompra.lineItems[0];
+  if (!item || !item.productId) {
+    return { ok:false, erro:"Resposta da Play API sem lineItems — nao foi possivel identificar o produto comprado." };
+  }
+  var tipo = PRODUCT_ID_PARA_TIPO[item.productId];
+  if (!tipo) {
+    return { ok:false, erro:"productId retornado pela Play API nao reconhecido: "+item.productId };
+  }
+  var cicloReal = (item.offerDetails && item.offerDetails.basePlanId) || "mensal";
+  var basePlanId = tipo + "_" + cicloReal;
+  var plano = PLANOS[basePlanId];
+  if (!plano) {
+    return { ok:false, erro:"basePlanId derivado da Play API nao encontrado em PLANOS: "+basePlanId+" (confira se o nome do base plan no Play Console eh exatamente 'mensal'/'anual')." };
+  }
+  var tipoAtivado = await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, plano.valor);
+  try { await confirmarCompraPlay(item.productId, purchaseToken); } catch(eAck) { console.error("Erro ao confirmar compra:", eAck.message); }
+  return { ok:true, tipo:tipoAtivado, plano:basePlanId };
+}
+
 // Chamado pelo app logo apos o usuario completar a compra via
 // PaymentRequest/Digital Goods API. Verifica o token direto na Play API
 // antes de liberar o plano — nunca confia soh no que o cliente informa.
 app.post("/verificar-compra-play", async function(req, res) {
   var userId = req.body.userId;
-  var productId = req.body.productId;       // SKU cadastrado no Play Console, ex: "plano_basico"
-  var basePlanId = req.body.basePlanId;      // ex: "basico_mensal" — precisa bater com chave de PLANOS
   var purchaseToken = req.body.purchaseToken;
-  if (!userId || !productId || !basePlanId || !purchaseToken) {
-    return res.status(400).json({ erro:"Campos obrigatorios: userId, productId, basePlanId, purchaseToken" });
+  if (!userId || !purchaseToken) {
+    return res.status(400).json({ erro:"Campos obrigatorios: userId, purchaseToken" });
   }
-  var plano = PLANOS[basePlanId];
-  if (!plano) return res.status(400).json({ erro:"basePlanId invalido: "+basePlanId });
   try {
-    var dadosCompra = await consultarAssinaturaPlay(purchaseToken);
-    var estado = dadosCompra.subscriptionState;
-    if (estado !== "SUBSCRIPTION_STATE_ACTIVE") {
-      return res.status(402).json({ erro:"Assinatura nao esta ativa segundo a Google Play.", estado: estado });
-    }
-    var tipo = await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, plano.valor);
-    try { await confirmarCompraPlay(productId, purchaseToken); } catch(eAck) { console.error("Erro ao confirmar compra:", eAck.message); }
-    res.json({ ok:true, tipo:tipo, plano:basePlanId });
+    var resultado = await processarCompraPlay(userId, purchaseToken);
+    if (!resultado.ok) return res.status(402).json(resultado);
+    res.json(resultado);
   } catch(e) {
     console.error("Erro ao verificar compra Play:", e.message);
     res.status(500).json({ erro:e.message });
   }
+});
+
+// Reconciliacao de compras pendentes — chamado pelo app no boot, com o
+// resultado de service.listPurchases() do Digital Goods API do cliente.
+// Cobre os casos em que o usuario fechou o app no meio do fluxo de compra,
+// trocou de aparelho, ou reinstalou antes do RTDN confirmar a ativacao.
+// Limite de 10 tokens por chamada — nao ha cenario legitimo de um usuario
+// ter mais assinaturas pendentes que isso, e evita abuso do endpoint.
+app.post("/reconciliar-compras-play", async function(req, res) {
+  var userId = req.body.userId;
+  var tokens = req.body.purchaseTokens;
+  if (!userId || !Array.isArray(tokens) || !tokens.length) {
+    return res.status(400).json({ erro:"Campos obrigatorios: userId, purchaseTokens (array)." });
+  }
+  tokens = tokens.slice(0, 10);
+  var resultados = [];
+  for (var i=0;i<tokens.length;i++) {
+    try {
+      var r = await processarCompraPlay(userId, tokens[i]);
+      resultados.push(r);
+    } catch(e) {
+      console.error("Erro ao reconciliar compra Play:", e.message);
+      resultados.push({ ok:false, erro:e.message });
+    }
+  }
+  res.json({ ok:true, resultados: resultados });
 });
 
 // Webhook das Real-time Developer Notifications (RTDN), via Pub/Sub push.

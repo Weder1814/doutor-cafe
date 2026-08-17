@@ -1618,7 +1618,17 @@ app.post("/diagnostico", async function(req, res) {
         buscaParciaisDesde = reParcial.lastIndex;
       }
       for(var k=parciaisEnviados;k<diagsParciais.length;k++){
-        res.write("data: "+JSON.stringify({ tipo:"diag", diag:diagsParciais[k] })+"\n\n");
+        // NAO mostrar prevista de achado com confianca baixa. Motivo (12/08/2026):
+        // um produtor relatou ver "magnesio" aparecer ao vivo e depois SUMIR,
+        // sobrando so "cercosporiose" — o focarNoPrincipal remove achados de
+        // confianca baixa no final QUANDO ja existe um confiavel, entao a
+        // previa mostrava algo que o resultado final ia descartar. Continuamos
+        // fazendo a extracao normalmente (o servidor precisa dela de qualquer
+        // forma, existindo tela ao vivo ou nao — esconder aqui NAO economiza
+        // processamento, so evita o "pisca e some" que confunde o produtor).
+        if(diagsParciais[k].confianca!=="baixa"){
+          res.write("data: "+JSON.stringify({ tipo:"diag", diag:diagsParciais[k] })+"\n\n");
+        }
         parciaisEnviados++;
       }
     }
@@ -1648,13 +1658,18 @@ app.post("/diagnostico", async function(req, res) {
         if(d>0) break;
       }
       posCompletos=pos;
-      diagsCompletos=found;
+      diagsCompletos=found; // mantem TODOS aqui (inclusive baixa) — usado como
+      // fallback em stream.on("end") se extrairJSON(texto) falhar, e precisa
+      // ter a lista completa pra esse fallback funcionar direito.
       for(var k=completosEnviados;k<found.length;k++){
-        // injeta produtos tambem no streaming: sem isso os cards que aparecem
-        // ao vivo ficariam sem fungicida ate o evento "fim" reescrever tudo,
-        // e o produtor veria o card "piscar" ganhando produto no final.
-        injetarProdutos(found[k]);
-        res.write("data: "+JSON.stringify({ tipo:"diag_completo", diag:found[k], index:k })+"\n\n");
+        // mesma logica do detectarParciais: nao envia card completo ao vivo
+        // pra achado de confianca baixa, pelo mesmo motivo (evita "piscar e
+        // sumir" quando focarNoPrincipal remove no final). injetarProdutos
+        // roda so nos que efetivamente vao ser mostrados.
+        if(found[k].confianca!=="baixa"){
+          injetarProdutos(found[k]);
+          res.write("data: "+JSON.stringify({ tipo:"diag_completo", diag:found[k], index:k })+"\n\n");
+        }
         completosEnviados++;
       }
     }
@@ -1702,7 +1717,19 @@ app.post("/diagnostico", async function(req, res) {
         resultado=diagsCompletos.length?{diagnosticos:diagsCompletos}
           :{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente foto mais proxima com boa luz.",fungicidas:[]}]};
       }
+      // LOG 12/08/2026: guarda o que o modelo mandou ANTES das travas
+      // determinsticas (normalizacao/ferrugem/focarNoPrincipal), pra poder
+      // comparar com o resultado final. Motivo: um produtor relatou ver
+      // "magnesio" aparecer ao vivo na tela e depois SUMIR, sobrando so
+      // "cercosporiose" — comportamento esperado do focarNoPrincipal (remove
+      // achado de confianca baixa quando ja existe um confiavel), mas sem
+      // esse log nao da pra CONFIRMAR que foi isso e nao outra causa. Compare
+      // "ANTES" com "DEPOIS" no log: se o nome sumiu e a confianca dele era
+      // "baixa", foi o focarNoPrincipal fazendo o que deveria.
+      var diagsAntes = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
       resultado=normalizarNomesDiagnostico(resultado);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+      var diagsDepois = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
+      if(diagsAntes!==diagsDepois) console.log("DIAGNOSTICOS ANTES/DEPOIS das travas — ANTES: ["+diagsAntes+"] DEPOIS: ["+diagsDepois+"]");
       resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, usageCapturado, regiao);

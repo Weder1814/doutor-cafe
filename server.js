@@ -64,11 +64,25 @@ function validarCPF(cpf) {
 }
 
 // ── LIMITES DE ANÁLISES ───────────────────────────────────────
+// ── LIMITE GRATUITO ──────────────────────────────────────────────
+// Reduzido de 15 para 6 em 19/08/2026. O motivo NAO e custo: com
+// qwen3.7-flash uma analise completa (diagnostico + plano de acao) sai a
+// ~R$0,0026, entao 15 analises custam ~R$0,04 por usuario e 6 custam
+// ~R$0,016 — a "economia" e de 2 centavos por usuario. O objetivo real e
+// conversao: encurtar o caminho ate o produtor decidir assinar.
+//
+// Configuravel por variavel de ambiente para permitir ajustar o numero sem
+// alterar codigo e sem redeploy do arquivo — util para testar 5, 6, 8 e
+// medir qual converte melhor. Se ANALISES_GRATIS nao estiver definida ou
+// vier invalida, cai no default 6.
+var ANALISES_GRATIS = parseInt(process.env.ANALISES_GRATIS, 10);
+if (!Number.isInteger(ANALISES_GRATIS) || ANALISES_GRATIS < 1) ANALISES_GRATIS = 6;
+
 var LIMITES = {
-  gratuito: 15,
-  basico:   130,
-  pro:      250,
-  premium:  400,
+  gratuito: ANALISES_GRATIS,
+  basico:   150,
+  pro:      300,
+  premium:  500,
   admin:    999999
 };
 
@@ -88,7 +102,9 @@ function mesAtual() {
 
 function analisesRestantes(u) {
   var plano = u.plano || "gratuito";
-  var limite = LIMITES[plano] || 15;
+  // Fallback usa LIMITES.gratuito (nao mais o hardcode 15) para nao
+  // divergir do limite real quando o plano vier desconhecido/nulo.
+  var limite = LIMITES[plano] || LIMITES.gratuito;
   var usadas = u.analises_usadas || u.analisesUsadas || 0;
   if (plano === "gratuito") {
     return Math.max(0, limite - usadas);
@@ -974,12 +990,12 @@ setInterval(function() {
 
 // ── PLANOS ────────────────────────────────────────────────────
 var PLANOS = {
-  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:130 },
-  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:130 },
-  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:250 },
-  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:250 },
-  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:400 },
-  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:400 }
+  basico_mensal:  { nome:"Básico Mensal",  valor:29.90,  analises:150 },
+  basico_anual:   { nome:"Básico Anual",   valor:299.90, analises:150 },
+  pro_mensal:     { nome:"Pro Mensal",     valor:39.90,  analises:300 },
+  pro_anual:      { nome:"Pro Anual",      valor:399.90, analises:300 },
+  premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:500 },
+  premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:500 }
 };
 
 // ── ENDPOINTS BÁSICOS ─────────────────────────────────────────
@@ -1270,7 +1286,7 @@ app.get("/analises-restantes/:userId", async function(req, res) {
       plano: u.plano||"gratuito",
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes,
-      limite: LIMITES[u.plano||"gratuito"]||15,
+      limite: LIMITES[u.plano||"gratuito"]||LIMITES.gratuito,
       videosUsados: u.videos_usados||u.videosUsados||0,
       videosRestantes: videosRestantes(u),
       limiteVideo: VIDEO_LIMITES[u.plano||"gratuito"]||2
@@ -1295,7 +1311,7 @@ app.post("/incrementar-analise", async function(req, res) {
     plano: (atualizado&&atualizado.plano)||"gratuito",
     analisesUsadas: (atualizado&&(atualizado.analises_usadas||atualizado.analisesUsadas))||0,
     analisesRestantes: atualizado ? analisesRestantes(atualizado) : null,
-    limite: LIMITES[(atualizado&&atualizado.plano)||"gratuito"]||15
+    limite: LIMITES[(atualizado&&atualizado.plano)||"gratuito"]||LIMITES.gratuito
   });
 });
 
@@ -1566,19 +1582,46 @@ app.get("/verificar-pix/:paymentId", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
+// ── SINAIS PARA A UI SEM CONTADOR EXPLICITO ──────────────────────
+// A partir de 19/08/2026 o app nao exibe mais "voce tem N analises".
+// Mostrar o numero ancorava o produtor e o fazia "economizar" as analises
+// em vez de experimentar o app. Mas esconder o limite por completo cria um
+// problema pior: no plano gratuito o limite NAO reseta (ver
+// analisesRestantes), entao quando acaba, acaba definitivamente — e ser
+// cortado sem aviso no meio da lavoura vira frustracao e avaliacao ruim.
+//
+// Solucao: o backend continua enviando os numeros (o app pode ignora-los),
+// mas passa a enviar tambem dois sinais prontos para a UI usar:
+//   - ultimasAnalises: true quando restam poucas (avisar discretamente,
+//     sem numero: "suas analises gratuitas estao acabando")
+//   - semAnalises: true quando zerou (mostrar a tela de planos)
+// Assim o produtor nunca e pego de surpresa, e mesmo assim nao existe
+// contador visivel para ele ficar racionando.
+var AVISAR_QUANDO_RESTAM = 2;
+
 app.get("/plano/:userId", async function(req, res) {
   try {
     var u = await dbGetUser(req.params.userId);
-    if (!u) return res.json({ plano:"gratuito", analisesUsadas:0, analisesRestantes:15, limite:15, videosUsados:0, videosRestantes:2, limiteVideo:2 });
+    if (!u) return res.json({
+      plano:"gratuito", analisesUsadas:0,
+      analisesRestantes: LIMITES.gratuito, limite: LIMITES.gratuito,
+      ultimasAnalises:false, semAnalises:false,
+      videosUsados:0, videosRestantes: VIDEO_LIMITES.gratuito, limiteVideo: VIDEO_LIMITES.gratuito
+    });
     var restantes = analisesRestantes(u);
+    var planoU = u.plano||"gratuito";
     res.json({
-      plano: u.plano||"gratuito",
+      plano: planoU,
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes,
-      limite: LIMITES[u.plano||"gratuito"]||15,
+      limite: LIMITES[planoU]||LIMITES.gratuito,
+      // Sinais so fazem sentido no gratuito: nos planos pagos o limite
+      // reseta todo mes, entao nao ha "ultima chance" a avisar.
+      ultimasAnalises: planoU === "gratuito" && restantes > 0 && restantes <= AVISAR_QUANDO_RESTAM,
+      semAnalises: restantes <= 0,
       videosUsados: u.videos_usados||u.videosUsados||0,
       videosRestantes: videosRestantes(u),
-      limiteVideo: VIDEO_LIMITES[u.plano||"gratuito"]||2
+      limiteVideo: VIDEO_LIMITES[planoU]||VIDEO_LIMITES.gratuito
     });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -1830,6 +1873,30 @@ var OPENROUTER_KEY = process.env.OPENROUTER_KEY;
 // que concatena INSTRUCAO_TESTE_EXTRA em cada endpoint, ou troque o
 // conteúdo desta variável para testar outra versão da instrução.
 var INSTRUCAO_TESTE_EXTRA = "\n\n### ETAPA OBRIGATÓRIA 1 — INVENTÁRIO DOS ACHADOS VISUAIS\n\nAntes de formular qualquer diagnóstico, faça uma inspeção completa e sistemática da imagem.\n\nPRIMEIRO, identifique QUAIS ELEMENTOS estão visíveis na foto: folhas? frutos/cerejas? ramos? Se a foto mostra MAIS DE UM tipo de elemento (por exemplo, frutos E folhas ao mesmo tempo), você DEVE inspecionar cada elemento SEPARADAMENTE — não pare a inspeção depois de encontrar um achado forte num elemento (ex: frutos mumificados) sem também verificar os outros elementos visíveis (ex: manchas na folha ao lado). Um achado óbvio numa parte da imagem NÃO dispensa a inspeção das outras partes.\n\nATENÇÃO ESPECÍFICA A FRUTOS: se a foto mostra um GRUPO/CACHO de frutos escuros, NÃO assuma que todos os frutos escuros da foto pertencem à mesma categoria só porque estão perto uns dos outros. Depois de identificar frutos mumificados (antracnose_fruto), verifique se existem TAMBÉM, na mesma foto, frutos escuros DIFERENTES desses — mais isolados, enrugados/foscos mas sem mumificação em grupo — que podem ser fruto_passado (problema de colheita atrasada, não doença) coexistindo com a antracnose. Compare a textura e o padrão de agrupamento de CADA fruto escuro individualmente antes de decidir se são todos a mesma coisa.\n\nListe mentalmente TODOS os achados visuais observados, incluindo:\n\n- manchas\n- halos\n- necroses\n- cloroses\n- deformações\n- perfurações\n- insetos\n- ovos\n- micélio\n- pústulas\n- alterações nas nervuras\n- alterações nas bordas\n- distribuição dos sintomas\n- intensidade\n- estágio aparente\n\nNão interrompa a inspeção ao encontrar o primeiro problema.\n\nSomente depois que TODOS os achados, em TODOS os elementos visíveis da foto, forem identificados, relacione esses achados aos diagnósticos possíveis.\n\n### ETAPA OBRIGATÓRIA 2 — REVISÃO FINAL\n\nAntes de responder:\n\nRevise toda a imagem uma segunda vez.\n\nPergunte:\n\n\"Existe algum sinal visível que ainda não foi explicado pelo diagnóstico principal?\", \"Se a foto tem frutos E folhas, eu relatei achados relevantes das duas partes, ou só de uma?\" e \"Dentro dos frutos escuros da foto, existem SUBGRUPOS com textura/padrão diferentes entre si que eu tratei como um só?\"\n\nSe existir algo não explicado, registre-o como diagnóstico diferencial de baixa ou média confiança.";
+
+// ── GUARDA DOS ENDPOINTS DE TESTE ────────────────────────────────
+// CORRECAO 19/08/2026: os endpoints /teste-* abaixo fazem chamadas PAGAS
+// a modelos (DashScope, OpenAI, Gemini, OpenRouter, Z.ai) e, ao contrario
+// do /diagnostico-json de producao, NAO passam por checkRateLimit nem
+// verificam analises restantes do usuario. Como o servico esta publico na
+// internet, qualquer pessoa que descobrisse uma dessas URLs poderia chamar
+// em loop e drenar a cota gratuita da Alibaba / gerar cobranca na OpenAI.
+//
+// Este middleware bloqueia TODAS as rotas que comecem com "/teste-" a menos
+// que a variavel de ambiente MODO_TESTE esteja explicitamente em "1".
+// Responde 404 (e nao 403) de proposito: nao confirma para um curioso que
+// a rota existe. Por estar registrado ANTES das definicoes das rotas de
+// teste, protege tambem qualquer endpoint /teste-* criado no futuro.
+//
+// PARA RODAR OS COMPARATIVOS DE NOVO: no Railway, adicione a variavel
+// MODO_TESTE=1, faca o redeploy, rode os testes, e REMOVA a variavel
+// depois. Nunca deixe MODO_TESTE=1 ligado de forma permanente.
+app.use(function(req, res, next) {
+  if (req.path.indexOf("/teste-") === 0 && process.env.MODO_TESTE !== "1") {
+    return res.status(404).end();
+  }
+  next();
+});
 
 app.post("/teste-qwen-diagnostico", async function(req, res) {
   if (!OPENROUTER_KEY) return res.status(500).json({ erro:"OPENROUTER_KEY não configurada no Railway." });

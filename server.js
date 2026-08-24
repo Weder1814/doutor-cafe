@@ -115,6 +115,53 @@ function analisesRestantes(u) {
   }
 }
 
+// ── VERIFICACAO DE LIMITE (fail-closed) ──────────────────────────
+// CORRECAO 24/08/2026 — BUG DE ANALISES ILIMITADAS.
+//
+// O padrao antigo espalhado pelos endpoints era:
+//     var u = await dbGetUser(userId);
+//     if (u && analisesRestantes(u) <= 0) { bloqueia }
+//
+// O "u &&" fazia com que um userId AUSENTE da tabela usuarios passasse
+// direto: dbGetUser devolvia null, a condicao curto-circuitava, e o
+// bloqueio nunca acontecia. Pior: dbIncrementarAnalise so faz UPDATE
+// (nao INSERT), entao o contador desse usuario tambem nunca subia — ele
+// tinha analises infinitas, para sempre e de graca.
+//
+// A evidencia disso aparecia nos logs do Railway como:
+//   dbSalvarAnalise: insert or update on table "analises" violates
+//   foreign key constraint "analises_user_id_fkey"
+// ou seja, uma analise sendo gravada para um user_id que nao existe em
+// usuarios — exatamente o caso que escapava do bloqueio.
+//
+// Esta funcao inverte a logica para fail-CLOSED: na duvida, bloqueia.
+// Retorna null quando pode prosseguir, ou um objeto de erro para o
+// endpoint devolver.
+async function bloquearSeSemAnalises(userId) {
+  // "anonimo" é o userId usado antes do app gerar/enviar um id proprio.
+  // Continua liberado de proposito: sem id nao ha como contar nada, e
+  // esse caminho nao chega ao modelo nos endpoints que contam analise.
+  if (!userId || userId === "anonimo") return null;
+
+  var u = await dbGetUser(userId);
+
+  // Usuario desconhecido: ANTES passava direto (o bug). Agora bloqueia e
+  // pede cadastro, que e o unico caminho que cria a linha em usuarios.
+  if (!u) {
+    return { status:404, corpo:{
+      erro: "Conta nao encontrada. Faca o cadastro para continuar usando o app.",
+      precisaCadastro: true, semAnalises: true
+    }};
+  }
+
+  if (analisesRestantes(u) <= 0) {
+    return { status:403, corpo:{
+      erro: "Limite de analises atingido.", semAnalises: true, analisesRestantes: 0
+    }};
+  }
+  return null;
+}
+
 function videosRestantes(u) {
   var plano = u.plano || "gratuito";
   var limite = VIDEO_LIMITES[plano] || 2;
@@ -1300,10 +1347,8 @@ app.get("/analises-restantes/:userId", async function(req, res) {
 app.post("/incrementar-analise", async function(req, res) {
   var userId = req.body.userId;
   if (!userId) return res.json({ ok:true });
-  var u = await dbGetUser(userId);
-  if (u && analisesRestantes(u) <= 0) {
-    return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true, analisesRestantes:0 });
-  }
+  var bloqueio = await bloquearSeSemAnalises(userId);
+  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   await dbIncrementarAnalise(userId);
   var atualizado = await dbGetUser(userId);
   res.json({
@@ -1639,10 +1684,8 @@ app.post("/diagnostico", async function(req, res) {
     return res.status(429).json({ erro:"Muitas análises em sequência. Aguarde 1 minuto." });
   }
   if (userId !== "anonimo") {
-    var u = await dbGetUser(userId);
-    if (u && analisesRestantes(u) <= 0) {
-      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
-    }
+    var bloqueio = await bloquearSeSemAnalises(userId);
+    if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   }
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false);
@@ -2657,10 +2700,8 @@ app.post("/diagnostico-json", async function(req, res) {
   var userId=req.body.userId||"anonimo";
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
   if (userId !== "anonimo") {
-    var u = await dbGetUser(userId);
-    if (u && analisesRestantes(u) <= 0) {
-      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
-    }
+    var bloqueio = await bloquearSeSemAnalises(userId);
+    if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   }
   var contextoRegional=buildContextoRegional(regiao,altitude,false);
   var abortCtrl = new AbortController();
@@ -2872,10 +2913,8 @@ app.post("/diagnostico-video", async function(req, res) {
   if(!frames||frames.length===0) return res.status(400).json({ erro:"Nenhum frame recebido." });
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
   if (userId !== "anonimo") {
-    var u = await dbGetUser(userId);
-    if (u && analisesRestantes(u) <= 0) {
-      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
-    }
+    var bloqueio = await bloquearSeSemAnalises(userId);
+    if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
     if (u && videosRestantes(u) <= 0) {
       return res.status(403).json({ erro:"Limite de videos do plano atingido neste mes. Use foto ou aguarde o proximo ciclo.", semVideos:true });
     }
@@ -3176,12 +3215,8 @@ app.post("/analise-solo", async function(req, res) {
   var userId=req.body.userId||"anonimo";
   var produtividadeSc = req.body.produtividadeSc!==undefined && req.body.produtividadeSc!==null && req.body.produtividadeSc!=="" ? parseFloat(req.body.produtividadeSc) : null;
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-  if (userId !== "anonimo") {
-    var uLim = await dbGetUser(userId);
-    if (uLim && analisesRestantes(uLim) <= 0) {
-      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
-    }
-  }
+  var bloqueio = await bloquearSeSemAnalises(userId);
+  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
   var sistemaStatic=SISTEMA_SOLO_STATIC;
   try {
@@ -3366,12 +3401,8 @@ app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-  if (userId !== "anonimo") {
-    var uLim = await dbGetUser(userId);
-    if (uLim && analisesRestantes(uLim) <= 0) {
-      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
-    }
-  }
+  var bloqueio = await bloquearSeSemAnalises(userId);
+  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   var contexto=regiao?" O produtor esta na regiao "+regiao+".":"";
   var sistemaStatic=DANINHA_SISTEMA_STATIC;
 
@@ -3473,12 +3504,8 @@ app.post("/identifica-defeito-grao", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-  if (userId !== "anonimo") {
-    var uLimG = await dbGetUser(userId);
-    if (uLimG && analisesRestantes(uLimG) <= 0) {
-      return res.status(403).json({ erro:"Limite de analises atingido.", semAnalises:true });
-    }
-  }
+  var bloqueio = await bloquearSeSemAnalises(userId);
+  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   var contextoG=regiao?" O produtor esta na regiao "+regiao+".":"";
   var sistemaGraos=
 "Voce e o Doutor Cafe, especialista em pos-colheita e classificacao fisica de cafe, com base na Instrucao Normativa MAPA no 8/2003 (Classificacao Oficial Brasileira - COB) e nos manuais tecnicos EMATER-MG e Rehagro.\n\n"+

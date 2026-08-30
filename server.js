@@ -1881,7 +1881,7 @@ app.post("/diagnostico", async function(req, res) {
       // "ANTES" com "DEPOIS" no log: se o nome sumiu e a confianca dele era
       // "baixa", foi o focarNoPrincipal fazendo o que deveria.
       var diagsAntes = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
-      resultado=normalizarNomesDiagnostico(resultado);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado,regiao);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
       var diagsDepois = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
       if(diagsAntes!==diagsDepois) console.log("DIAGNOSTICOS ANTES/DEPOIS das travas — ANTES: ["+diagsAntes+"] DEPOIS: ["+diagsDepois+"]");
       resultado=anexarReferenciaVisual(resultado);
@@ -2726,7 +2726,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=normalizarNomesDiagnostico(resultado);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado,regiao);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2769,7 +2769,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = normalizarNomesDiagnostico(resultado);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado,regiao);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -2940,7 +2940,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=normalizarNomesDiagnostico(resultado);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado,regiao);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -3810,6 +3810,64 @@ var PRODUTOS_MANCHA_MANTEIGOSA = [
   { nome:"Azoxistrobina+Difenoconazol 325SC", nome_comercial:"", tipo:"sistemico", dose_min:0.3, dose_max:0.4, unidade:"L", por:"hectare", proporcao_por_litro:0.3, unidade_proporcao:"mL", intervalo_reaplicacao:14, carencia_dias:7 },
   { nome:"Oxicloreto Cobre 840WP", nome_comercial:"", tipo:"protetor", dose_min:2, dose_max:2.5, unidade:"kg", por:"hectare", proporcao_por_litro:2.5, unidade_proporcao:"g", intervalo_reaplicacao:14, carencia_dias:7 }
 ];
+// ── TRAVA DETERMINISTICA: CORYNESPORA EM REGIAO DE ARABICA ───────
+// CASO REAL 28/08/2026: a MESMA foto (folha de Mogiana) foi analisada 5
+// vezes seguidas e retornou corynespora em 2 delas e cercosporiose em 3.
+// O prompt JA tem a regra de raridade por especie (corynespora nao foi
+// constatada em Coffea arabica segundo a Fundacao Procafe; so diagnosticar
+// se os aneis concentricos forem EXTREMAMENTE nitidos), mas o modelo a
+// violou: deu corynespora com confianca 'media' e ainda escreveu no proprio
+// diagnostico_diferencial que "a distincao visual pode ser sutil se os aneis
+// nao estiverem perfeitamente definidos" — ou seja, admitiu a duvida e
+// mesmo assim escolheu a hipotese que a regra manda evitar na duvida.
+//
+// Reforcar o texto do prompt tem retorno decrescente (ja foi tentado com a
+// ferrugem em 28/07 — o modelo encontra novas formas de escapar). Esta trava
+// segue o mesmo padrao de corrigirFerrugemSemConfirmacao(): decide no
+// servidor, de forma deterministica, em vez de confiar na obediencia do
+// modelo.
+//
+// POR QUE IMPORTA: os dois diagnosticos levam a produtos DIFERENTES
+// (corynespora -> Azoxistrobina+Difenoconazol; cercosporiose -> Oxicloreto
+// + Tebuconazol), entao a alternancia faz o produtor comprar defensivo
+// diferente para a mesma folha. E um agronomo que veja "corynespora" num
+// arabica de Mogiana desconfia do app inteiro, porque isso nao e descrito
+// na literatura para essa especie.
+//
+// Regioes onde a especie predominante e Coffea arabica (mesma fonte da
+// tabela de buildContextoRegional). Rondonia (conilon) e Espirito Santo
+// (misto conilon/arabica) ficam DE FORA de proposito: la a corynespora e
+// bem documentada e o diagnostico deve passar normalmente.
+var REGIOES_ARABICA = [
+  "Cerrado Mineiro","Sul de Minas","Mogiana","Matas de Minas",
+  "Chapada Diamantina","Planalto da Bahia","Norte do Parana","Alta Paulista"
+];
+
+function corrigirCorynesporaEmArabica(resultado, regiao) {
+  if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
+  // Sem regiao informada nao ha como saber a especie — nao mexe.
+  if(!regiao || REGIOES_ARABICA.indexOf(regiao) === -1) return resultado;
+
+  resultado.diagnosticos.forEach(function(d){
+    if(!d||d.diagnostico!=="corynespora") return;
+    // Confianca 'alta' passa: e exatamente a excecao que o prompt preve
+    // ("aneis concentricos EXTREMAMENTE nitidos e inconfundiveis").
+    if(d.confianca==="alta") return;
+
+    var hipoteseDescartada = "Corynespora (mancha-alvo) tambem foi considerada pelo padrao de lesao, mas nao ha registro tecnico dessa doenca em Coffea arabica, especie predominante nesta regiao — e os aneis concentricos nao estavam nitidos o suficiente para sustentar a excecao. "+(d.diagnostico_diferencial||"");
+    console.warn("TRAVA corynespora->cercosporiose (regiao de arabica: "+regiao+", confianca era: "+d.confianca+")");
+    d.diagnostico="cercosporiose";
+    d.diagnostico_diferencial=hipoteseDescartada.trim();
+    // A confianca nao sobe: a incerteza que existia continua existindo,
+    // so mudou qual hipotese fica em primeiro lugar.
+    if(d.confianca==="alta") d.confianca="media";
+    // Os fungicidas sao injetados depois desta funcao no pipeline
+    // (injetarProdutosNoResultado), entao o produto certo de cercosporiose
+    // entra sozinho — nao precisa setar aqui como a trava da ferrugem faz.
+  });
+  return resultado;
+}
+
 function corrigirFerrugemSemConfirmacao(resultado) {
   if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
   resultado.diagnosticos.forEach(function(d){

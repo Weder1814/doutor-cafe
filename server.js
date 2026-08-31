@@ -1762,13 +1762,29 @@ app.post("/diagnostico", async function(req, res) {
     // teste que escrevi pra validar aquela correcao expos este tambem).
     // O resultado FINAL nunca foi afetado (extrairCompletos usa casamento de
     // chaves, nao depende da ordem dos campos) — so a previa antecipada.
-    var reParcial=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*(?:"po_esporulacao_confirmado"\s*:\s*(?:true|false)\s*,\s*)?"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
+    var reParcial=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*(?:"po_esporulacao_confirmado"\s*:\s*(true|false)\s*,\s*)?"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
     var buscaParciaisDesde=0, diagsParciais=[];
     function detectarParciais() {
       reParcial.lastIndex = buscaParciaisDesde;
       var m;
       while((m=reParcial.exec(texto))!==null){
-        diagsParciais.push({ diagnostico:m[1], estagio:parseInt(m[2]), confianca:m[3], visto:"", acao:"Analisando...", fungicidas:[], parcial:true });
+        // CORRIGIDO 30/08/2026 — A PREVIA MOSTRAVA O QUE AS TRAVAS IAM MUDAR.
+        // Caso real: o produtor viu "Corynespora — Media confianca" ao vivo e o
+        // card final virou "Cercosporiose", porque corrigirCorynesporaEmArabica
+        // so rodava no resultado completo. O mesmo acontecia com ferrugem ->
+        // mancha_manteigosa e com nomes crus tipo "deficiencia_magnesio".
+        // Em 12/08 esse padrao "pisca e muda" ja tinha sido tratado para o caso
+        // de REMOCAO (achado de confianca baixa, logo abaixo), mas nao para os
+        // casos de RENOMEACAO — que sao piores, porque trocam a doenca e o
+        // tratamento diante do produtor e minam a confianca no app.
+        // Aplicamos aqui as MESMAS funcoes do pipeline final, em modo
+        // silencioso (os logs saem uma vez so, no resultado completo).
+        var dParcial = { diagnostico:m[1], po_esporulacao_confirmado:(m[2]==="true"?true:(m[2]==="false"?false:undefined)), estagio:parseInt(m[3]), confianca:m[4], visto:"", acao:"Analisando...", fungicidas:[], parcial:true };
+        var envelope = { diagnosticos:[dParcial] };
+        envelope = normalizarNomesDiagnostico(envelope, true);
+        envelope = corrigirCorynesporaEmArabica(envelope, regiao);
+        envelope = corrigirFerrugemSemConfirmacao(envelope);
+        diagsParciais.push(envelope.diagnosticos[0]);
         buscaParciaisDesde = reParcial.lastIndex;
       }
       for(var k=parciaisEnviados;k<diagsParciais.length;k++){
@@ -2797,9 +2813,33 @@ var CATEGORIA_DIAGNOSTICO = {
   antracnose:"doenca fungica", phoma:"doenca fungica", mancha_manteigosa:"doenca fungica",
   corynespora:"doenca fungica", koleroga:"doenca fungica",
   aureolada:"doenca BACTERIANA (nao fungica — fungicida sistemico triazol nao tem efeito, usar so cuprico)",
+  // Frutos (adicionados 30/08/2026). fruto_verde e fruto_maduro NAO sao
+  // problemas: sem esta categoria o plano de acao caia no fallback generico
+  // e podia recomendar tratamento para fruto sadio no ponto de colheita.
+  fruto_verde:"estado NORMAL do fruto — NAO e problema, NAO recomendar nenhum tratamento",
+  fruto_maduro:"estado NORMAL do fruto, no PONTO DE COLHEITA — NAO e problema, NAO recomendar tratamento; se algo for dito, que seja sobre colheita",
+  fruto_passado:"problema de MANEJO/COLHEITA (passou do ponto no pe) — NAO e doenca, NAO recomendar fungicida; a acao correta e ajustar o momento da colheita",
+  antracnose_fruto:"doenca fungica NO FRUTO",
+  saudavel:"NENHUM problema detectado — a planta esta sadia. NAO recomendar nenhum tratamento, defensivo ou correcao; limite-se a orientacao de monitoramento de rotina",
   bicho:"praga (inseticida)", acaro:"praga (acaricida)", cochonilha:"praga (inseticida)", broca:"praga (inseticida)",
   nitrogenio:"deficiencia nutricional", fosforo:"deficiencia nutricional", magnesio:"deficiencia nutricional", potassio:"deficiencia nutricional",
-  ferro:"deficiencia nutricional", calcio:"deficiencia nutricional", boro:"deficiencia nutricional", zinco:"deficiencia nutricional"
+  ferro:"deficiencia nutricional", calcio:"deficiencia nutricional", boro:"deficiencia nutricional", zinco:"deficiencia nutricional",
+  // SEM CONTROLE QUIMICO DIRETO (adicionados 30/08/2026) — o prompt de
+  // diagnostico ja avisa que "o sistema ja sabe disso e nao vai sugerir
+  // produto para elas", mas este mapa NAO sabia: caiam no fallback
+  // "categoria nao especificada" e o plano de acao podia recomendar
+  // defensivo para problema que nenhum defensivo resolve.
+  // O caso mais grave e o amarelinho: Xylella fastidiosa nao tem cura
+  // quimica, a conduta correta e arranquio da planta — recomendar fungicida
+  // ali faria o produtor gastar a toa E manter a fonte de inoculo no talhao.
+  amarelinho:"doenca BACTERIANA SISTEMICA (Xylella fastidiosa) — NAO TEM CURA QUIMICA; NAO recomendar fungicida/bactericida. A conduta correta e arranquio e destruicao da planta doente e controle das cigarrinhas vetoras",
+  mancha_anular:"VIROSE (leprose, transmitida por acaro Brevipalpus) — NAO tem controle quimico direto contra o virus; o controle e INDIRETO, via manejo do acaro-vetor com acaricida",
+  vento_frio:"causa ABIOTICA (clima) — NAO e doenca, NAO recomendar defensivo; a acao e de manejo (ex: quebra-vento)",
+  geada_frio:"causa ABIOTICA (clima) — NAO e doenca, NAO recomendar defensivo; a acao e de manejo e recuperacao da planta",
+  escaldadura:"causa ABIOTICA (sol forte) — NAO e doenca, NAO recomendar defensivo; a acao e de manejo (sombreamento/irrigacao)",
+  fitotoxicidade:"causa ABIOTICA (dano por defensivo/adubo aplicado) — NAO recomendar mais defensivo; a acao e revisar dose e produto aplicados recentemente",
+  estresse_hidrico:"causa ABIOTICA (falta de agua) — NAO e doenca, NAO recomendar defensivo; a acao e manejo de irrigacao",
+  dano_mecanico:"causa ABIOTICA (ferimento por maquina/ferramenta/plantio) — NAO e doenca, NAO recomendar defensivo; a acao e corrigir a causa do ferimento"
 };
 app.post("/plano-acao", async function(req, res) {
   var diagnosticos=req.body.diagnosticos||[], regiao=req.body.regiao||null;
@@ -2834,14 +2874,15 @@ app.post("/plano-acao", async function(req, res) {
 "DOSE DOS PRODUTOS: quando um produto individual vier com 'DOSE EXATA A USAR', copie exatamente esse valor e unidade (kg ou L, conforme informado) ao mencionar a dose nos campos urgente/em_21_dias. NUNCA troque a unidade (ex: nao converta kg para mL) nem cite uma dose diferente da fornecida — voce nao tem acesso a bula do produto, use apenas o valor dado.\n\n"+
 "CATEGORIA DE CADA DIAGNOSTICO: cada item da lista vem com sua categoria entre colchetes (ex: [doenca fungica], [doenca BACTERIANA], [praga], [deficiencia nutricional]). USE ESSA CATEGORIA EXATA no resumo_geral e demais campos — NUNCA infira ou generalize a categoria pelo tipo de produto usado (ex: dois problemas tratados ambos com cuprico NAO significa que sao da mesma categoria biologica).\n\n"+
 "REGRA DO CAMPO NUTRICAO — EVITAR INVENCAO:\n"+
-"So recomende correcao de um nutriente especifico (nome do nutriente + dose) se: (a) esse nutriente aparece explicitamente na lista de diagnosticos recebida, OU (b) ha uma relacao causal direta e conhecida com uma doenca listada e voce EXPLICITA essa relacao (ex: 'Mg baixo favorece antracnose'). Se nenhum diagnostico de deficiencia foi recebido e nao ha relacao causal clara e citada, NAO mencione nenhum nutriente pelo nome (nem 'de forma especulativa', nem como 'sugestao geral') — apenas escreva 'Nenhuma deficiencia nutricional diagnosticada. Recomenda-se analise foliar/solo periodica.' ou deixe o campo vazio.\n\n"+
+"REGRA UNICA E ABSOLUTA: so mencione um nutriente PELO NOME se esse nutriente aparecer EXPLICITAMENTE na lista de diagnosticos recebida. Sem excecao. Se a lista nao traz nenhuma deficiencia, escreva 'Nenhuma deficiencia nutricional diagnosticada. Recomenda-se analise foliar/solo periodica.' ou deixe o campo vazio.\n"+
+"PROIBIDO ESPECULAR CAUSA NUTRICIONAL DE DOENCA (corrigido 30/08/2026 apos caso real): mesmo que voce conheca uma relacao causal entre um nutriente e a doenca diagnosticada, NAO cite esse nutriente se ele nao foi diagnosticado. Exemplo do erro que isso evita: o diagnostico trouxe apenas cercosporiose e magnesio, e o plano dizia 'a carencia de nitrogenio pode ter favorecido o avanco da doenca fungica' — nitrogenio nunca foi diagnosticado, e o produtor poderia comprar ureia sem necessidade. Uma correlacao teorica NAO e um diagnostico.\n\n"+
 "CORRELACOES NUTRICAO-DOENCA/PRAGA CONHECIDAS (fonte: SENAR, Colecao 189 — use APENAS estas relacoes verificadas quando o diagnostico bater com o padrao abaixo; NAO invente outras combinacoes):\n"+
 "- Excesso de nitrogenio favorece phoma/ascochyta (tecido novo mais tenro e suscetivel).\n"+
 "- Deficiencia de nitrogenio favorece cercosporiose e ferrugem.\n"+
 "- Deficiencia de enxofre favorece bicho-mineiro.\n"+
 "- Deficiencia de calcio e/ou boro favorece phoma/ascochyta, aureolada e antracnose (seca de ponteiros abre porta para esses fungos).\n"+
 "- Deficiencias/desequilibrios nutricionais em geral (multiplos nutrientes baixos ao mesmo tempo) aumentam suscetibilidade a acaros e mancha-anular/leprose.\n"+
-"Se o diagnostico recebido incluir ao mesmo tempo uma dessas deficiencias E a doenca/praga correspondente, mencione a relacao no campo nutricao ou resumo_geral (ex: 'A deficiencia de calcio observada favorece o avanco da phoma diagnosticada — corrigir o nutriente ajuda tambem no controle da doenca'). Fora desses pares especificos, NAO presuma relacao causal.\n\n"+
+"CONDICAO OBRIGATORIA PARA USAR QUALQUER RELACAO ACIMA: os DOIS lados do par precisam estar na lista de diagnosticos recebida — a deficiencia E a doenca/praga. Ter apenas a doenca NAO autoriza citar o nutriente. Quando os dois estiverem presentes, mencione a relacao no campo nutricao ou resumo_geral (ex: 'A deficiencia de calcio observada favorece o avanco da phoma diagnosticada — corrigir o nutriente ajuda tambem no controle da doenca'). Fora desses pares especificos, NAO presuma relacao causal.\n\n"+
 "REGRA OBRIGATORIA PARA CORRECAO DE CALCIO E MAGNESIO NO CAMPO 'nutricao' — PROIBIDO INVENTAR DOSE FOLIAR: quando o diagnostico incluir deficiencia de calcio ou magnesio, o campo 'nutricao' DEVE orientar a correcao pelo SOLO (calagem com calcario dolomitico) como solucao principal, e mencionar explicitamente: 'Use a Calculadora de Calagem no modulo Analise de Solo do app para calcular a dose exata de calcario pro seu talhao.' NUNCA cite um numero especifico de kg/hectare ou g/100L de aplicacao foliar ou de sulfato de magnesio para corrigir Ca ou Mg — essas doses variam por produto comercial e por resultado de laudo de solo, e um numero generico pode levar a sub ou super dosagem. Para os demais nutrientes, se mencionar aplicacao foliar como reforco, diga apenas para seguir a bula do produto comercial, sem inventar numero.\n\n"+
 "SEJA DIRETO E CONCISO: cada campo deve ter no maximo 3-4 frases curtas ou bullets objetivos. Evite explicacoes longas, repeticao de justificativas, ou sub-listas extensas. Priorize as informacoes mais acionaveis.\n\n"+
 "LINGUAGEM PARA PRODUTOR LEIGO — MUITO IMPORTANTE:\n"+
@@ -3725,6 +3766,11 @@ var DIAGNOSTICOS_VALIDOS = [
   // as marcava como "NOME DESCONHECIDO" no log toda vez que apareciam —
   // alarme falso meu, no meu proprio codigo, nao erro do modelo.
   "vento_frio","geada_frio","escaldadura","fitotoxicidade","estresse_hidrico","dano_mecanico",
+  // ESTADOS/PROBLEMAS DE FRUTO — faltavam aqui ate 30/08/2026. Estao definidos
+  // na secao FRUTOS do prompt-diagnostico.txt e ja tinham emoji, nome e
+  // categoria no frontend, mas nao constavam nesta lista: o mesmo alarme falso
+  // que aconteceu com as causas abioticas em 12/08 se repetiu com os frutos.
+  "fruto_verde","fruto_maduro","fruto_passado","antracnose_fruto",
   "saudavel"
 ];
 // prefixos/sufixos que o modelo costuma acrescentar por conta propria.
@@ -3751,7 +3797,7 @@ var ALIASES_DIAGNOSTICO = {
   // pego pelo strip de afixos porque "magna" nao e um afixo conhecido).
   "magna_manteigosa":"mancha_manteigosa"
 };
-function normalizarNomesDiagnostico(resultado) {
+function normalizarNomesDiagnostico(resultado, silencioso) {
   if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
   resultado.diagnosticos.forEach(function(d){
     if(!d||!d.diagnostico) return;
@@ -3762,7 +3808,7 @@ function normalizarNomesDiagnostico(resultado) {
       .replace(/[\s\-]+/g,"_").replace(/_+/g,"_").replace(/^_|_$/g,"");
     if(DIAGNOSTICOS_VALIDOS.indexOf(nome) !== -1) { d.diagnostico = nome; return; }
     if(ALIASES_DIAGNOSTICO[nome]) {
-      console.warn("NOME DIAGNOSTICO via alias:", original, "->", ALIASES_DIAGNOSTICO[nome]);
+      if(!silencioso) console.warn("NOME DIAGNOSTICO via alias:", original, "->", ALIASES_DIAGNOSTICO[nome]);
       d.diagnostico = ALIASES_DIAGNOSTICO[nome]; return;
     }
     for(var i=0;i<AFIXOS_DIAGNOSTICO.length;i++){
@@ -3770,14 +3816,14 @@ function normalizarNomesDiagnostico(resultado) {
       if(nome.indexOf(afixo) === 0){
         var semAfixo = nome.slice(afixo.length);
         if(DIAGNOSTICOS_VALIDOS.indexOf(semAfixo) !== -1){
-          console.warn("NOME DIAGNOSTICO normalizado:", original, "->", semAfixo);
+          if(!silencioso) console.warn("NOME DIAGNOSTICO normalizado:", original, "->", semAfixo);
           d.diagnostico = semAfixo; return;
         }
       }
     }
     // nao reconhecido: mantem o que veio (nao destroi informacao) mas registra,
     // porque cada ocorrencia aqui e um card que vai sair empobrecido em producao.
-    console.warn("NOME DIAGNOSTICO DESCONHECIDO (nao normalizado):", original);
+    if(!silencioso) console.warn("NOME DIAGNOSTICO DESCONHECIDO (nao normalizado):", original);
     d.diagnostico = nome;
   });
   return resultado;

@@ -1570,11 +1570,28 @@ app.post("/gerar-pix", async function(req, res) {
   var email   = req.body.email||"produtor@doutorcafe.app";
   var plano   = PLANOS[planoId];
   var nome    = req.body.nome||"Produtor Rural";
-  var cpf     = req.body.cpf||"00000000000";
+  var cpf     = (req.body.cpf||"").replace(/[^0-9]/g,"");
   if (!plano) return res.status(400).json({ erro:"Plano inválido" });
+
+  // CPF PASSOU A SER OPCIONAL (31/08/2026). Antes o app exigia nome + CPF +
+  // telefone antes de gerar o QR Code — tres campos digitados no celular, no
+  // meio da lavoura, ANTES de o produtor ver qualquer coisa. Atrito enorme
+  // num publico que ja tem dificuldade com formulario em tela pequena.
+  //
+  // O default anterior era o CPF "00000000000", que e invalido: se o Mercado
+  // Pago validar o documento, mandar isso e PIOR do que nao mandar campo
+  // nenhum. Agora so enviamos "identification" quando temos um CPF que passa
+  // numa checagem basica (11 digitos e nao todos iguais). Se o MP exigir o
+  // documento, ele responde com erro e o app pede o CPF so nesse momento —
+  // ninguem digita nada a toa no caminho normal.
+  function cpfPlausivel(v){ return v.length===11 && !/^(\d)\1{10}$/.test(v); }
+
+  var payer = { email:email, first_name:nome.split(' ')[0], last_name:nome.split(' ').slice(1).join(' ')||"Rural" };
+  if (cpfPlausivel(cpf)) payer.identification = { type:"CPF", number:cpf };
+
   var body = {
     transaction_amount: plano.valor, description: plano.nome, payment_method_id:"pix",
-    payer:{ email, first_name:nome.split(' ')[0], last_name:nome.split(' ').slice(1).join(' ')||"Rural", identification:{ type:"CPF", number:cpf } },
+    payer: payer,
     metadata:{ plano_id:planoId, user_id:userId, analises:plano.analises },
     notification_url: BASE_URL+"/webhook-pagamento"
   };
@@ -1594,6 +1611,15 @@ app.post("/gerar-pix", async function(req, res) {
       }
       res.json({ id:d.id, qr_code:d.point_of_interaction.transaction_data.qr_code, qr_code_base64:d.point_of_interaction.transaction_data.qr_code_base64, valor:plano.valor, plano:plano.nome });
     } else {
+      // Se o Mercado Pago recusou por falta/invalidez do documento, sinalizamos
+      // com precisaCpf:true para o app pedir o CPF APENAS nesse caso, em vez de
+      // exigir de todo mundo por precaucao.
+      var msg = JSON.stringify(d||{}).toLowerCase();
+      var pedeDocumento = msg.indexOf("identification")!==-1 || msg.indexOf("payer.identification")!==-1 || msg.indexOf("document")!==-1 || msg.indexOf("cpf")!==-1;
+      if (pedeDocumento && !cpfPlausivel(cpf)) {
+        console.warn("Mercado Pago exigiu documento no PIX — pedindo CPF ao usuario. Resposta:", d && (d.message||d.error));
+        return res.status(422).json({ erro:"Para gerar o PIX preciso do seu CPF.", precisaCpf:true });
+      }
       res.status(500).json({ erro:"Erro ao gerar PIX", detalhe:d.message||d.error });
     }
   } catch(e) { res.status(500).json({ erro:e.message }); }

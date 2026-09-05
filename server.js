@@ -1703,6 +1703,7 @@ app.post("/diagnostico", async function(req, res) {
   var imagem  = req.body.imagem;
   var tipo    = req.body.tipo||"image/jpeg";
   var regiao  = req.body.regiao||null;
+  var especieEscolhida = req.body.especie||null; // escolha do produtor no app; vence a inferencia por GPS
   var altitude= req.body.altitude||null;
   var userId  = req.body.userId||"anonimo";
 
@@ -1714,7 +1715,7 @@ app.post("/diagnostico", async function(req, res) {
     if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   }
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
 
   res.setHeader("Content-Type","text/event-stream");
   res.setHeader("Cache-Control","no-cache");
@@ -1923,7 +1924,7 @@ app.post("/diagnostico", async function(req, res) {
       // "ANTES" com "DEPOIS" no log: se o nome sumiu e a confianca dele era
       // "baixa", foi o focarNoPrincipal fazendo o que deveria.
       var diagsAntes = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
-      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado,regiao);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
       var diagsDepois = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
       if(diagsAntes!==diagsDepois) console.log("DIAGNOSTICOS ANTES/DEPOIS das travas — ANTES: ["+diagsAntes+"] DEPOIS: ["+diagsDepois+"]");
       resultado=anexarReferenciaVisual(resultado);
@@ -1988,10 +1989,11 @@ app.post("/teste-qwen-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2130,10 +2132,11 @@ app.post("/teste-pixtral-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2243,10 +2246,11 @@ app.post("/teste-gemini-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2313,10 +2317,11 @@ app.post("/teste-qwen-vl-max-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2379,10 +2384,11 @@ app.post("/teste-qwen37plus-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2472,10 +2478,11 @@ app.post("/teste-qwen37flash-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2539,10 +2546,11 @@ app.post("/teste-qwen3vlflash-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2613,10 +2621,11 @@ app.post("/teste-glm46vflash-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2679,10 +2688,11 @@ app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
   var imagem = req.body.imagem;
   var tipo   = req.body.tipo || "image/jpeg";
   var regiao = req.body.regiao || null;
+  var especieEscolhida = req.body.especie||null; // endpoint de comparacao: aceita a especie como os de producao
   var altitude = req.body.altitude || null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var promptCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional + INSTRUCAO_TESTE_EXTRA;
   var inicio = Date.now();
 
@@ -2738,14 +2748,14 @@ app.post("/teste-gpt5mini-diagnostico", async function(req, res) {
 
 app.post("/diagnostico-json", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg";
-  var regiao=req.body.regiao||null, altitude=req.body.altitude||null;
+  var regiao=req.body.regiao||null, altitude=req.body.altitude||null, especieEscolhida=req.body.especie||null;
   var userId=req.body.userId||"anonimo";
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
   if (userId !== "anonimo") {
     var bloqueio = await bloquearSeSemAnalises(userId);
     if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   }
-  var contextoRegional=buildContextoRegional(regiao,altitude,false);
+  var contextoRegional=buildContextoRegional(regiao,altitude,false, especieEscolhida);
   var abortCtrl = new AbortController();
   res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
   try {
@@ -2768,7 +2778,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado,regiao);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2787,10 +2797,10 @@ app.post("/diagnostico-json", async function(req, res) {
 // pode precisar de pequenos ajustes de campo.
 app.post("/gerar-exemplo-treino", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg";
-  var regiao=req.body.regiao||null, altitude=req.body.altitude||null;
+  var regiao=req.body.regiao||null, altitude=req.body.altitude||null, especieEscolhida=req.body.especie||null;
   if (!imagem) return res.status(400).json({ erro:"Envie a imagem em base64 no campo 'imagem'." });
 
-  var contextoRegional = buildContextoRegional(regiao, altitude, false);
+  var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
   var systemCompleto = buildPromptStatic(false) + "\n\n" + contextoRegional;
 
   try {
@@ -2811,7 +2821,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado,regiao);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -2975,7 +2985,7 @@ app.post("/plano-acao", async function(req, res) {
 
 // ── DIAGNÓSTICO VÍDEO ─── Sonnet | max_tokens:3000 ───────────
 app.post("/diagnostico-video", async function(req, res) {
-  var frames=req.body.frames, regiao=req.body.regiao||null, altitude=req.body.altitude||null;
+  var frames=req.body.frames, regiao=req.body.regiao||null, altitude=req.body.altitude||null, especieEscolhida=req.body.especie||null;
   var userId=req.body.userId||"anonimo";
   if(!frames||frames.length===0) return res.status(400).json({ erro:"Nenhum frame recebido." });
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
@@ -2986,7 +2996,7 @@ app.post("/diagnostico-video", async function(req, res) {
       return res.status(403).json({ erro:"Limite de videos do plano atingido neste mes. Use foto ou aguarde o proximo ciclo.", semVideos:true });
     }
   }
-  var contextoRegional=buildContextoRegional(regiao,altitude,true);
+  var contextoRegional=buildContextoRegional(regiao,altitude,true, especieEscolhida);
   var content=[];
   frames.forEach(function(frame,i){ content.push({type:"text",text:"Frame "+(i+1)+":"}); content.push({type:"image_url",image_url:{url:"data:image/jpeg;base64,"+frame}}); });
   var abortCtrl = new AbortController();
@@ -3007,7 +3017,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado,regiao);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -3915,10 +3925,19 @@ var REGIOES_ARABICA = [
   "Chapada Diamantina","Planalto da Bahia","Norte do Parana","Alta Paulista"
 ];
 
-function corrigirCorynesporaEmArabica(resultado, regiao) {
+function corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida) {
   if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
   // Sem regiao informada nao ha como saber a especie — nao mexe.
-  if(!regiao || REGIOES_ARABICA.indexOf(regiao) === -1) return resultado;
+  // A trava vale para ARABICA. Quem manda e a escolha do produtor: se ele
+  // marcou conilon, corynespora e diagnostico legitimo e nao convertemos,
+  // mesmo que a regiao do GPS seja tipicamente de arabica (ele pode ter um
+  // talhao de conilon fora da area classica). Sem escolha explicita, cai na
+  // inferencia por regiao.
+  var especie = especieDaRegiao(regiao, especieEscolhida);
+  if(especie === "conilon") return resultado;
+  if(especie !== "arabica"){
+    if(!regiao || REGIOES_ARABICA.indexOf(normalizarRegiao(regiao)) === -1) return resultado;
+  }
 
   resultado.diagnosticos.forEach(function(d){
     if(!d||d.diagnostico!=="corynespora") return;
@@ -4062,7 +4081,53 @@ function anexarReferenciaVisual(resultado) {
 //   cache_control:{type:"ephemeral"} para reaproveitar via cache hit (ate 90% mais barato).
 // - buildContextoRegional: texto curto e variavel por regiao/altitude, NAO cacheado,
 //   enviado como bloco separado apos o bloco cacheado.
-function buildContextoRegional(regiao, altitude, isVideo) {
+// ── ESPECIE POR REGIAO E NORMALIZACAO DO NOME ───────────────────
+// BUG CORRIGIDO 05/09/2026: o app envia a regiao COM acento ("Rondonia"
+// vira "Rondônia", "Espirito Santo" vira "Espírito Santo", "Norte do
+// Parana" vira "Norte do Paraná"), mas todas as tabelas do servidor usam
+// as chaves SEM acento. Resultado silencioso:
+//   - buildContextoRegional nao achava a chave e o modelo recebia
+//     "regiao cafeeira brasileira." generico — justamente em RO e ES, as
+//     duas regioes de conilon;
+//   - a trava de corynespora nao reconhecia "Norte do Paraná" (que E
+//     arabica), entao corynespora passaria batido la.
+// A comparacao agora e sempre feita sobre o nome normalizado.
+function normalizarRegiao(regiao){
+  if(!regiao) return "";
+  return String(regiao).normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
+}
+
+// Especie predominante por regiao. E isto que decide quais regras o modelo
+// deve aplicar: as de arabica (o padrao deste prompt) ou as de conilon.
+// "mista" = a regiao tem as duas e a altitude/municipio e que definem.
+var ESPECIE_POR_REGIAO = {
+  "Cerrado Mineiro":"arabica", "Sul de Minas":"arabica", "Mogiana":"arabica",
+  "Matas de Minas":"arabica", "Chapada Diamantina":"arabica",
+  "Planalto da Bahia":"arabica", "Norte do Parana":"arabica",
+  "Alta Paulista":"arabica",
+  "Rondonia":"conilon", "Extremo Sul da Bahia":"conilon",
+  "Espirito Santo":"mista"
+};
+
+// A escolha do produtor no app SEMPRE vence a inferencia por regiao.
+// Ele sabe o que plantou; o mapa so palpita. Isso resolve os casos que a
+// coordenada nao resolve: Espirito Santo (tem as duas especies), lavoura
+// fora de qualquer faixa catalogada, GPS impreciso ou desligado.
+function especieDaRegiao(regiao, especieEscolhida){
+  if(especieEscolhida==="conilon" || especieEscolhida==="arabica") return especieEscolhida;
+  return ESPECIE_POR_REGIAO[normalizarRegiao(regiao)] || "desconhecida";
+}
+
+// Frase explicita para o prompt. Sem isso a especie ficava apenas implicita
+// no meio do texto do contexto regional, e o modelo tinha que inferir.
+function frasePorEspecie(especie){
+  if(especie==="conilon") return " ESPECIE: CONILON/ROBUSTA (Coffea canephora) — APLIQUE o bloco REGRAS DA ESPECIE CONILON/ROBUSTA do prompt.";
+  if(especie==="arabica") return " ESPECIE: ARABICA (Coffea arabica) — NAO aplique as regras de conilon; valem as regras padrao deste prompt.";
+  if(especie==="mista")   return " ESPECIE: REGIAO MISTA — pode ser arabica (montanha, acima de ~700m) ou conilon (areas baixas e quentes). Use a altitude informada para decidir; se nao houver altitude, NAO assuma nenhuma das duas com confianca alta e diga no campo 'visto' que a especie nao pode ser confirmada.";
+  return " ESPECIE NAO IDENTIFICADA pela localizacao: trate como cafeeiro generico, NAO aplique regras especificas de conilon nem afirme especie no diagnostico.";
+}
+
+function buildContextoRegional(regiao, altitude, isVideo, especieEscolhida) {
   var contextoRegional="";
   if(regiao){
     var def={
@@ -4071,17 +4136,23 @@ function buildContextoRegional(regiao, altitude, isVideo) {
       "Mogiana":"regiao quente 22-26C com risco de acaro vermelho e broca em periodos secos. Deficiencia de Potassio comum. Cercosporiose e a doenca fungica foliar mais frequente da regiao. Especie predominante: Coffea arabica.",
       "Matas de Minas":"alta umidade favorece ferrugem e bicho-mineiro. Deficiencia de Fosforo e Magnesio. Especie predominante: Coffea arabica.",
       "Chapada Diamantina":"altitude elevada favorece Phoma. Deficiencia de Nitrogenio e Boro. Especie predominante: Coffea arabica.",
-      "Planalto da Bahia":"clima seco favorece acaro vermelho. Deficiencia de Ferro em solos alcalinos. Especie predominante: Coffea arabica.",
-      "Rondonia":"alta umidade favorece ferrugem, antracnose, cercosporiose e mancha de corynespora (bem documentada nesta regiao). Solos acidos. Especie predominante: Coffea canephora (conilon/robusta) - praticamente toda a lavoura local.",
+      "Extremo Sul da Bahia":"regiao de CONILON (Coffea canephora, clonal) — Itamaraju e municipios vizinhos. Mancha manteigosa comum, corynespora possivel, escaldadura relevante em clones suscetiveis. Atencao a nematoide e fusariose em lavoura jovem.",
+  "Planalto da Bahia":"clima seco favorece acaro vermelho. Deficiencia de Ferro em solos alcalinos. Especie predominante: Coffea arabica.",
+      "Rondonia":"alta umidade favorece ferrugem (pico fevereiro a julho), cercosporiose, koleroga e mancha de corynespora (documentada em Ouro Preto d'Oeste e Nova Brasilandia d'Oeste). Mancha manteigosa e COMUM aqui. Nematoide-das-galhas e fusariose sao serios em plantas jovens. Solos acidos. Especie predominante: Coffea canephora (conilon/robusta), propagacao CLONAL.",
       "Norte do Parana":"risco de geadas maio-agosto. Risco de deficiencia de Manganes. Especie predominante: Coffea arabica.",
-      "Espirito Santo":"regiao mista: Conilon Capixaba nas areas mais baixas e quentes ao norte (especie Coffea canephora, onde corynespora e relevante), e Coffea arabica nas Montanhas do Espirito Santo ao sul, altitude mais elevada. Alta umidade favorece cercosporiose e cochonilha em ambas.",
+      "Espirito Santo":"regiao MISTA: no norte, areas baixas e quentes sao Conilon Capixaba (Coffea canephora, clonal) — la corynespora e relevante (descrita em Castelo-ES), mancha manteigosa e comum e escaldadura por sol pesa muito em alguns clones; nas montanhas do sul (Brejetuba, Iuna) predomina Coffea arabica, com ferrugem e cercosporiose. Considere a altitude e o municipio antes de assumir a especie.",
       "Alta Paulista":"clima quente e seco favorece acaro vermelho. Deficiencia de Zinco. Especie predominante: Coffea arabica."
     };
-    var info=def[regiao]||"regiao cafeeira brasileira.";
+    var regiaoNorm=normalizarRegiao(regiao);
+    var info=def[regiaoNorm]||"regiao cafeeira brasileira.";
     contextoRegional="CONTEXTO REGIONAL: Produtor na regiao "+regiao+". "+info;
+    contextoRegional+=frasePorEspecie(especieDaRegiao(regiao, especieEscolhida));
     if(altitude){ contextoRegional+=" Altitude: "+altitude+"m."; if(altitude>900) contextoRegional+=" Altitude alta: maior risco de Phoma e Cercosporiose."; if(altitude<600) contextoRegional+=" Altitude baixa: maior risco de ferrugem acaro vermelho e broca."; }
   } else {
+    // Sem regiao (GPS negado ou fora das faixas): a especie escolhida pelo
+    // produtor ainda vale e continua guiando as regras.
     contextoRegional="Sem contexto regional adicional.";
+    contextoRegional+=frasePorEspecie(especieDaRegiao(null, especieEscolhida));
   }
   if(isVideo) contextoRegional+="\n\nVoce recebeu multiplos frames de um video da mesma planta. Analise TODOS os frames em conjunto.";
   return contextoRegional;

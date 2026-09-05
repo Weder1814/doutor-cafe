@@ -65,10 +65,10 @@ function validarCPF(cpf) {
 
 // ── LIMITES DE ANÁLISES ───────────────────────────────────────
 // ── LIMITE GRATUITO ──────────────────────────────────────────────
-// Reduzido de 15 para 6 em 19/08/2026. O motivo NAO e custo: com
+// Reduzido de 15 para 6 em 19/08/2026 e ajustado para 10 em 05/09/2026. O motivo NAO e custo: com
 // qwen3.7-flash uma analise completa (diagnostico + plano de acao) sai a
-// ~R$0,0026, entao 15 analises custam ~R$0,04 por usuario e 6 custam
-// ~R$0,016 — a "economia" e de 2 centavos por usuario. O objetivo real e
+// ~R$0,0026, entao 15 analises custam ~R$0,04 por usuario e 10 custam
+// ~R$0,033 — a "economia" e de 2 centavos por usuario. O objetivo real e
 // conversao: encurtar o caminho ate o produtor decidir assinar.
 //
 // Configuravel por variavel de ambiente para permitir ajustar o numero sem
@@ -76,7 +76,7 @@ function validarCPF(cpf) {
 // medir qual converte melhor. Se ANALISES_GRATIS nao estiver definida ou
 // vier invalida, cai no default 6.
 var ANALISES_GRATIS = parseInt(process.env.ANALISES_GRATIS, 10);
-if (!Number.isInteger(ANALISES_GRATIS) || ANALISES_GRATIS < 1) ANALISES_GRATIS = 6;
+if (!Number.isInteger(ANALISES_GRATIS) || ANALISES_GRATIS < 1) ANALISES_GRATIS = 10;
 
 var LIMITES = {
   gratuito: ANALISES_GRATIS,

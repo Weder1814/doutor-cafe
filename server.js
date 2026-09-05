@@ -3922,16 +3922,30 @@ function corrigirCorynesporaEmArabica(resultado, regiao) {
 
   resultado.diagnosticos.forEach(function(d){
     if(!d||d.diagnostico!=="corynespora") return;
-    // Confianca 'alta' passa: e exatamente a excecao que o prompt preve
-    // ("aneis concentricos EXTREMAMENTE nitidos e inconfundiveis").
-    if(d.confianca==="alta") return;
+    // EXCECAO DE CONFIANCA 'ALTA' REMOVIDA EM 05/09/2026.
+    // Ela existia porque o prompt previa "aneis concentricos EXTREMAMENTE
+    // nitidos" como excecao. Na pratica virou a porta de escape: o modelo
+    // passou a declarar confianca 'alta' e escrever no diferencial "embora
+    // seja raridade em arabica na Mogiana, o sinal visual e inequivoco" —
+    // usando a propria excecao como justificativa. Caso real em 05/09.
+    //
+    // A literatura da Fundacao Procafe nao diz que corynespora e RARA em
+    // Coffea arabica: diz que NAO FOI CONSTATADA. Afirmar por foto de
+    // celular algo que a fitopatologia nao registra na especie nao se
+    // sustenta, por mais nitido que o padrao pareca.
+    //
+    // O custo do erro tambem e assimetrico: converter e ter sido corynespora
+    // muda pouco (o controle e fungicida de mancha foliar nos dois casos),
+    // mas NAO converter e cravar corynespora num arabica destroi a
+    // credibilidade do app diante de qualquer agronomo.
 
     var hipoteseDescartada = "Corynespora (mancha-alvo) tambem foi considerada pelo padrao de lesao, mas nao ha registro tecnico dessa doenca em Coffea arabica, especie predominante nesta regiao — e os aneis concentricos nao estavam nitidos o suficiente para sustentar a excecao. "+(d.diagnostico_diferencial||"");
     console.warn("TRAVA corynespora->cercosporiose (regiao de arabica: "+regiao+", confianca era: "+d.confianca+")");
     d.diagnostico="cercosporiose";
     d.diagnostico_diferencial=hipoteseDescartada.trim();
-    // A confianca nao sobe: a incerteza que existia continua existindo,
-    // so mudou qual hipotese fica em primeiro lugar.
+    // Confianca 'alta' cai para 'media': a certeza que o modelo declarou
+    // era sobre CORYNESPORA, nao sobre cercosporiose. Herdar 'alta' seria
+    // transferir para a nova hipotese uma seguranca que ninguem afirmou.
     if(d.confianca==="alta") d.confianca="media";
     // Os fungicidas sao injetados depois desta funcao no pipeline
     // (injetarProdutosNoResultado), entao o produto certo de cercosporiose

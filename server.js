@@ -1781,7 +1781,7 @@ app.post("/diagnostico", async function(req, res) {
     // teste que escrevi pra validar aquela correcao expos este tambem).
     // O resultado FINAL nunca foi afetado (extrairCompletos usa casamento de
     // chaves, nao depende da ordem dos campos) — so a previa antecipada.
-    var reParcial=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*(?:"po_esporulacao_confirmado"\s*:\s*(true|false)\s*,\s*)?"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
+    var reParcial=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*(?:"po_esporulacao_confirmado"\s*:\s*(true|false)\s*,\s*)?(?:"centro_claro_confirmado"\s*:\s*(true|false)\s*,\s*)?"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
     var buscaParciaisDesde=0, diagsParciais=[];
     function detectarParciais() {
       reParcial.lastIndex = buscaParciaisDesde;
@@ -1798,11 +1798,12 @@ app.post("/diagnostico", async function(req, res) {
         // tratamento diante do produtor e minam a confianca no app.
         // Aplicamos aqui as MESMAS funcoes do pipeline final, em modo
         // silencioso (os logs saem uma vez so, no resultado completo).
-        var dParcial = { diagnostico:m[1], po_esporulacao_confirmado:(m[2]==="true"?true:(m[2]==="false"?false:undefined)), estagio:parseInt(m[3]), confianca:m[4], visto:"", acao:"Analisando...", fungicidas:[], parcial:true };
+        var dParcial = { diagnostico:m[1], po_esporulacao_confirmado:(m[2]==="true"?true:(m[2]==="false"?false:undefined)), centro_claro_confirmado:(m[3]==="true"?true:(m[3]==="false"?false:undefined)), estagio:parseInt(m[4]), confianca:m[5], visto:"", acao:"Analisando...", fungicidas:[], parcial:true };
         var envelope = { diagnosticos:[dParcial] };
         envelope = normalizarNomesDiagnostico(envelope, true);
         envelope = corrigirCorynesporaEmArabica(envelope, regiao);
         envelope = corrigirFerrugemSemConfirmacao(envelope, especieDaRegiao(regiao, especieEscolhida));
+        envelope = corrigirCercosporioseSemCentroClaro(envelope);
         diagsParciais.push(envelope.diagnosticos[0]);
         buscaParciaisDesde = reParcial.lastIndex;
       }
@@ -1916,7 +1917,7 @@ app.post("/diagnostico", async function(req, res) {
       // "ANTES" com "DEPOIS" no log: se o nome sumiu e a confianca dele era
       // "baixa", foi o focarNoPrincipal fazendo o que deveria.
       var diagsAntes = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
-      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=focarNoPrincipal(resultado);
       var diagsDepois = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
       if(diagsAntes!==diagsDepois) console.log("DIAGNOSTICOS ANTES/DEPOIS das travas — ANTES: ["+diagsAntes+"] DEPOIS: ["+diagsDepois+"]");
       resultado=anexarReferenciaVisual(resultado);
@@ -2770,7 +2771,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2813,7 +2814,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado = corrigirCercosporioseSemCentroClaro(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -3017,7 +3018,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -3981,6 +3982,53 @@ function corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida) {
 // provavel diante de mancha sem po. Mas o texto passa a avisar que ferrugem
 // em clone resistente nao pode ser descartada so pela ausencia de po, porque
 // ferrugem ja causou perdas de ate 47% em conilon no Espirito Santo.
+// ── TRAVA DETERMINISTICA: CERCOSPORIOSE x AUREOLADA (campo centro_claro) ──
+// CASO REAL 07/09/2026: a MESMA foto foi analisada duas vezes, em aparelhos
+// diferentes (iOS e Android testador), poucos segundos de diferenca. Uma
+// chamada deu "aureolada", a outra "cercosporiose" — para a MESMA lesao. O
+// prompt ja tinha o criterio certo (centro branco-acinzentado = cercosporiose;
+// mancha uniforme sem centro claro = aureolada), mas texto livre nao garante
+// que o modelo pese esse criterio do mesmo jeito em duas chamadas — a mesma
+// instabilidade de amostragem ja vista com corynespora antes da trava daquela.
+//
+// A diferenca pratica entre as duas NAO e cosmetica: aureolada e bacteriana
+// (fungicida sistemico nao funciona nela; ver categoria em CATEGORIA_DIAGNOSTICO),
+// cercosporiose e fungica. Alternar entre as duas troca a classe de produto
+// que o produtor deveria comprar.
+//
+// Igual a ferrugem: fonte de verdade e o campo estruturado centro_claro_confirmado,
+// nao o texto livre — texto e mais facil do modelo contornar sem perceber.
+function corrigirCercosporioseSemCentroClaro(resultado) {
+  if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
+  resultado.diagnosticos.forEach(function(d){
+    if(!d) return;
+    var campoPresente = d.centro_claro_confirmado===true || d.centro_claro_confirmado===false;
+    if(!campoPresente) { delete d.centro_claro_confirmado; return; } // modelo nao preencheu: nao ha o que decidir aqui, mantem como veio
+
+    if(d.diagnostico==="cercosporiose" && d.centro_claro_confirmado===false){
+      // Sem o traco decisivo da cercosporiose: pelo prompt, isso e aureolada.
+      d.diagnostico_diferencial="Cercosporiose tambem foi considerada pelo padrao geral da lesao, mas sem centro branco-acinzentado confirmado na mancha — isso e o traco decisivo que falta para cercosporiose. "+(d.diagnostico_diferencial||"");
+      d.diagnostico="aureolada";
+      if(d.confianca==="alta") d.confianca="media";
+      // injetarProdutosNoResultado() ja rodou ANTES desta trava no pipeline
+      // (mesma ordem usada pela trava da ferrugem), entao os produtos que
+      // estao em d.fungicidas agora sao os de CERCOSPORIOSE. Precisamos
+      // reinjetar para o novo diagnostico ("aureolada"), senao o produtor
+      // veria produto de fungo com o diagnostico de bacteria.
+      injetarProdutos(d);
+    } else if(d.diagnostico==="aureolada" && d.centro_claro_confirmado===true){
+      // Caminho inverso, mais raro: modelo disse aureolada mas confirmou o
+      // centro claro que so cercosporiose tem — corrige na outra direcao.
+      d.diagnostico_diferencial="Aureolada tambem foi considerada, mas a mancha tem centro branco-acinzentado confirmado, que e o traco decisivo da cercosporiose. "+(d.diagnostico_diferencial||"");
+      d.diagnostico="cercosporiose";
+      if(d.confianca==="alta") d.confianca="media";
+      injetarProdutos(d);
+    }
+    delete d.centro_claro_confirmado; // campo interno, nao deve vazar pro app
+  });
+  return resultado;
+}
+
 function corrigirFerrugemSemConfirmacao(resultado, especie) {
   if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
   resultado.diagnosticos.forEach(function(d){

@@ -823,61 +823,53 @@ function normalizarUsageOpenRouter(usage) {
   };
 }
 
-// ── TROCA TEMPORARIA DE MODELO PARA TESTE (Sonnet -> Qwen) ──────
-// Ativado a pedido do Dinho para rodar 5 fotos de teste no app real
-// com Qwen no lugar de Sonnet/Haiku em TODOS os endpoints de producao.
-// PARA REVERTER: troque MODELO_PRODUCAO de volta para "claude-sonnet-4-6"
-// (ou crie uma logica separada por endpoint se quiser granularidade).
-// Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
-// /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
-// NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino,
-// que usa a Sonnet como "professora" para o dataset de fine-tuning.
-// ── TROCA TEMPORARIA DE MODELO PARA TESTE (Sonnet -> Qwen, agora DIRETO
-// na Alibaba Cloud, sem passar pelo OpenRouter) ──────────────────────
-// Ativado a pedido do Dinho para rodar testes no app real com Qwen no
-// lugar de Sonnet/Haiku. Migrado do OpenRouter pra Alibaba Cloud Model
-// Studio (DashScope) direto porque o OpenRouter reparte a mesma chamada
-// entre varios provedores terceiros (Nebius, Parasail, etc.) com leves
-// diferencas de configuracao/quantizacao entre eles — isso causava a
-// MESMA foto dar diagnosticos diferentes em celulares diferentes no
-// mesmo dia. Chamando direto na Alibaba (dona do modelo), essa fonte de
-// instabilidade desaparece, igual a Sonnet ja e chamada direto na
-// Anthropic sem intermediario.
-// PARA REVERTER PARA SONNET: troque MODELO_PRODUCAO de volta e restaure
-// as chamadas para api.anthropic.com (ver historico do arquivo).
-// Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
-// /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
-// NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino.
-// ── MODELO DE PRODUCAO: Sonnet -> Qwen3.7-Plus (27/07/2026) ─────────
-// Troca decidida apos rodada extensa de testes comparativos no mesmo dia
-// (9 fotos reais, ver teste-comparacao.html): Qwen3.7-Plus bateu com a
-// Sonnet no diagnostico principal em 8 de 9 fotos, e no unico caso de
-// discordancia real foi a SONNET quem errou (confirmado pelo Dinho em
-// campo). Motivo da troca: ~5-8x mais barato e 2-3x mais rapido que
-// Sonnet, mantendo qualidade equivalente nos testes rodados.
-// Ativado durante a ultima semana de testes fechados no Google Play —
-// bom momento pra validar com os testadores reais alem dos testes manuais.
-// RISCOS CONHECIDOS A MONITORAR (nao totalmente resolvidos nos testes):
-//   1. Achados SECUNDARIOS (multiplas condicoes coexistindo na mesma foto)
-//      tendem a ser menos completos que a Sonnet — Qwen aplicou a correcao
-//      de varredura por regiao (frutos vs folhas) mas ainda errou um caso
-//      de subgrupos DENTRO do mesmo aglomerado de frutos (fruto_passado
-//      coexistindo com antracnose_fruto). Ajuste feito em INSTRUCAO_TESTE_EXTRA
-//      em 27/07/2026, MAS NAO RE-TESTADO ainda apos esse ajuste especifico.
-//   2. Estagio de severidade (ex: ferrugem estagio 3 vs 4) pode divergir
-//      mesmo quando o diagnostico principal bate.
-//   3. analise-solo, identifica-daninha, plano-acao e identifica-defeito-grao
-//      NAO foram testados com fotos reais nesta rodada — so /diagnostico-json
-//      foi validado. Monitore esses endpoints com atencao extra.
+// ── MODELO DE PRODUCAO — HISTORICO E RISCOS EM ABERTO ───────────
+// (consolidado em 06/09/2026: havia tres blocos aqui, dois deles rotulados
+// "TROCA TEMPORARIA PARA TESTE" para uma troca que virou definitiva ha mais
+// de um mes — rotulo enganoso para quem lesse depois. O conteudo util foi
+// preservado e reunido abaixo.)
+//
+// LINHA DO TEMPO
+//   ate 27/07/2026 : Claude Sonnet (chamada direta na Anthropic)
+//   27/07/2026     : Sonnet -> Qwen3.7-Plus
+//   12/08/2026     : Qwen3.7-Plus -> Qwen3.7-Flash (ver bloco logo abaixo)
+//
+// POR QUE SAIU DA SONNET (27/07): rodada comparativa com 9 fotos reais no
+// mesmo dia (teste-comparacao.html). O Qwen3.7-Plus bateu com a Sonnet no
+// diagnostico principal em 8 das 9 fotos, e no unico caso de divergencia
+// real quem errou foi a SONNET — confirmado pelo Dinho em campo. Somado a
+// isso, ~5-8x mais barato e 2-3x mais rapido.
+//
+// POR QUE CHAMAMOS A ALIBABA DIRETO, SEM OPENROUTER: o OpenRouter reparte a
+// mesma chamada entre provedores terceiros (Nebius, Parasail e outros), com
+// leves diferencas de configuracao/quantizacao entre eles. Na pratica isso
+// fazia a MESMA foto dar diagnosticos diferentes em celulares diferentes no
+// mesmo dia. Chamando direto na Alibaba (dona do modelo) essa fonte de
+// instabilidade some — mesmo motivo pelo qual a Sonnet era chamada direto na
+// Anthropic. NAO volte a usar intermediario sem levar isso em conta.
+//
+// RISCOS ANOTADOS NA TROCA QUE CONTINUAM EM ABERTO (revisados em 06/09/2026):
+//   1. Achados SECUNDARIOS (varias condicoes na mesma foto) sairem menos
+//      completos que na Sonnet. Um ajuste foi feito em INSTRUCAO_TESTE_EXTRA
+//      em 27/07 e ATE HOJE NAO FOI RE-TESTADO especificamente.
+//   2. Estagio de severidade pode divergir mesmo com o diagnostico principal
+//      correto. CONFIRMADO em producao: a mesma foto ja retornou estagio 2 e
+//      estagio 3 em rodadas seguidas.
+//   3. /analise-solo, /identifica-daninha, /plano-acao e /identifica-defeito-grao
+//      NUNCA foram validados com fotos reais — so /diagnostico-json foi.
+//      O app JA ESTA PUBLICO na Play Store com esses endpoints no ar.
+//      Esta e a maior divida de validacao em aberto do projeto.
+//
 // PARA REVERTER PARA SONNET: troque MODELO_PRODUCAO para "claude-sonnet-4-6",
-// URL_MODELO_PRODUCAO para "https://api.anthropic.com/v1/messages", e
-// restaure o formato de chamada Anthropic (system+x-api-key), ver historico
-// do arquivo ou o endpoint /gerar-exemplo-treino (mantido em Sonnet) como
-// referencia de como montar essa chamada.
-// Endpoints afetados: /diagnostico, /diagnostico-json, /diagnostico-video,
-// /analise-solo, /identifica-daninha, /plano-acao, /identifica-defeito-grao.
-// NAO afetado (mantido em Sonnet de proposito): /gerar-exemplo-treino,
-// que usa a Sonnet como "professora" para o dataset de fine-tuning.
+// URL_MODELO_PRODUCAO para "https://api.anthropic.com/v1/messages" e restaure
+// o formato de chamada Anthropic (system + x-api-key). O endpoint
+// /gerar-exemplo-treino continua em Sonnet de proposito (usa a Sonnet como
+// "professora" do dataset de fine-tuning) e serve de referencia viva de como
+// montar essa chamada.
+//
+// ENDPOINTS QUE USAM O MODELO DE PRODUCAO: /diagnostico, /diagnostico-json,
+// /diagnostico-video, /analise-solo, /identifica-daninha, /plano-acao,
+// /identifica-defeito-grao.
 // ── MODELO EM PRODUCAO: qwen3.7-flash desde 12/08/2026 ───────────
 // Trocado de qwen3.7-plus para qwen3.7-flash. Motivo: custo. O Flash sai a
 // US$0,030/US$0,130 por milhao (input/output) contra US$0,40/US$1,60 do Plus
@@ -1810,7 +1802,7 @@ app.post("/diagnostico", async function(req, res) {
         var envelope = { diagnosticos:[dParcial] };
         envelope = normalizarNomesDiagnostico(envelope, true);
         envelope = corrigirCorynesporaEmArabica(envelope, regiao);
-        envelope = corrigirFerrugemSemConfirmacao(envelope);
+        envelope = corrigirFerrugemSemConfirmacao(envelope, especieDaRegiao(regiao, especieEscolhida));
         diagsParciais.push(envelope.diagnosticos[0]);
         buscaParciaisDesde = reParcial.lastIndex;
       }
@@ -1924,7 +1916,7 @@ app.post("/diagnostico", async function(req, res) {
       // "ANTES" com "DEPOIS" no log: se o nome sumiu e a confianca dele era
       // "baixa", foi o focarNoPrincipal fazendo o que deveria.
       var diagsAntes = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
-      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=focarNoPrincipal(resultado);
       var diagsDepois = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
       if(diagsAntes!==diagsDepois) console.log("DIAGNOSTICOS ANTES/DEPOIS das travas — ANTES: ["+diagsAntes+"] DEPOIS: ["+diagsDepois+"]");
       resultado=anexarReferenciaVisual(resultado);
@@ -2778,7 +2770,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2821,7 +2813,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado);resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -3025,7 +3017,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -3981,7 +3973,15 @@ function corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida) {
   return resultado;
 }
 
-function corrigirFerrugemSemConfirmacao(resultado) {
+// Recebe a especie porque em CONILON a leitura muda: clones de resistencia
+// intermediaria expressam ferrugem como mancha clorotica com POUCA ou
+// NENHUMA esporulacao visivel (fonte: Incaper, livro Cafe Conilon). A
+// conversao para mancha_manteigosa continua — em conilon a manteigosa e
+// comum (10-15% das lavouras), entao ela segue sendo a hipotese mais
+// provavel diante de mancha sem po. Mas o texto passa a avisar que ferrugem
+// em clone resistente nao pode ser descartada so pela ausencia de po, porque
+// ferrugem ja causou perdas de ate 47% em conilon no Espirito Santo.
+function corrigirFerrugemSemConfirmacao(resultado, especie) {
   if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
   resultado.diagnosticos.forEach(function(d){
     if(!d||d.diagnostico!=="ferrugem") return;
@@ -3999,6 +3999,9 @@ function corrigirFerrugemSemConfirmacao(resultado) {
     var deveCorrigir = campoPresente ? (confirmadoPeloCampo===false) : (semConfirmacaoTexto && !comConfirmacaoTexto);
     if(deveCorrigir){
       var suspeitaFerrugem = "Suspeita de ferrugem tambem considerada (ponto central com coloracao alaranjada), mas sem confirmacao de po/esporulacao na face inferior — fotografe a face de baixo desta folha para descartar ou confirmar ferrugem antes de decidir o tratamento. "+(d.diagnostico_diferencial||"");
+      if(especie==="conilon"){
+        suspeitaFerrugem += " Atencao: em conilon, clones de resistencia intermediaria podem expressar ferrugem apenas como mancha clorotica com pouca ou nenhuma esporulacao — vale conferir a face inferior de outras folhas do mesmo ramo antes de descartar ferrugem.";
+      }
       d.diagnostico="mancha_manteigosa";
       if(d.confianca==="alta") d.confianca="media";
       d.diagnostico_diferencial=suspeitaFerrugem.trim();

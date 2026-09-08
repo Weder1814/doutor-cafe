@@ -1039,7 +1039,13 @@ var PLANOS = {
 
 // ── ENDPOINTS BÁSICOS ─────────────────────────────────────────
 app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe API", db: pool?"postgres":"memoria" }); });
-app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now() }); });
+// /ping passa a devolver o limite gratuito real (07/09/2026). Motivo: o app
+// instalado tem o numero escrito no HTML, e uma versao antiga presa no cache
+// do service worker continua prometendo um numero que o backend nao cumpre
+// mais — foi o que aconteceu com "15 analises gratis" depois que o limite
+// mudou. Com o valor vindo do /ping, que TODO app chama no boot, o texto se
+// corrige sozinho mesmo em shell antigo, sem depender de novo deploy chegar.
+app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now(), gratis: ANALISES_GRATIS }); });
 
 // ── PREÇO DO CAFÉ (Coffee C via Alpha Vantage — API oficial) ───
 // Requer variavel de ambiente ALPHAVANTAGE_API_KEY no Railway (gratis em
@@ -2875,6 +2881,49 @@ app.post("/plano-acao", async function(req, res) {
   var userId=req.body.userId||"anonimo";
   if(diagnosticos.length===0) return res.json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
 
+  // ── PROTECAO ADICIONADA 07/09/2026 ────────────────────────────
+  // Este era o UNICO dos sete endpoints que chamam o modelo sem nenhuma
+  // trava. Pior que a falta de limite era a origem do texto: o corpo do
+  // prompt do usuario vinha montado a partir de campos que o CLIENTE mandou
+  // (d.diagnostico, d.estagio, f.nome, f.dose_min...), concatenados direto.
+  // Na pratica era um endpoint de LLM aberto: qualquer um com a URL podia
+  // rodar prompt arbitrario na conta da Alibaba, e o alerta de custo de
+  // US$20/mes so avisaria depois do estrago.
+  //
+  // Por que NAO uso bloquearSeSemAnalises aqui: no app o incrementarAnalise()
+  // roda IMEDIATAMENTE antes desta chamada (index.html, fluxo do diagnostico).
+  // Na ultima analise do plano gratuito, o contador chega a zero e uma trava
+  // de cota derrubaria justamente o plano de acao daquela analise — o produtor
+  // veria o diagnostico e nunca a recomendacao. O plano faz parte de uma
+  // analise que ja foi cobrada; cobrar de novo aqui e cobrar duas vezes.
+  //
+  // O que fecha o buraco entao: o prompt deixa de aceitar texto do cliente.
+  // Abaixo, cada diagnostico e reduzido a uma CHAVE de vocabulario fixo
+  // (DIAGNOSTICOS_VALIDOS) e a lista de produtos e RECONSTRUIDA no servidor a
+  // partir de PRODUTOS_POR_DIAGNOSTICO — o mesmo caminho que ja alimenta o
+  // card de calda. Nada que o cliente escreve chega ao modelo. Sem superficie
+  // de injecao, o endpoint deixa de ter valor para quem quisesse abusar dele,
+  // e o rate limit por usuario cobre o resto.
+  if(!checkRateLimit(userId)) return res.status(429).json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"", erro:"Muitas analises em sequencia. Aguarde 1 minuto." });
+
+  diagnosticos = diagnosticos.slice(0, 8).map(function(d){
+    if(!d || typeof d !== "object") return null;
+    var chave = String(d.diagnostico||"").toLowerCase().trim();
+    if(ALIASES_DIAGNOSTICO[chave]) chave = ALIASES_DIAGNOSTICO[chave];
+    if(DIAGNOSTICOS_VALIDOS.indexOf(chave) === -1) return null; // fora do vocabulario: descarta
+    var est = parseInt(d.estagio, 10);
+    return {
+      diagnostico: chave,
+      estagio: (est >= 1 && est <= 5) ? est : "nao informado",
+      // produtos vem SEMPRE da tabela do servidor, nunca do corpo da requisicao
+      fungicidas: (PRODUTOS_POR_DIAGNOSTICO[chave] || []).map(function(prod){
+        return { nome:prod.nome, tipo:prod.tipo, dose_min:prod.dose_min, dose_max:prod.dose_max, unidade:prod.unidade, por:prod.por };
+      })
+    };
+  }).filter(Boolean);
+
+  if(diagnosticos.length===0) return res.json({ resumo_geral:"", urgente:"", em_21_dias:"", nutricao:"", resumo:"" });
+
   var regiaoCtx=regiao?" Regiao: "+regiao+".":"";
   var resumoDiags=diagnosticos.map(function(d,i){
     var f=d.fungicidas&&d.fungicidas.length>0
@@ -2882,7 +2931,13 @@ app.post("/plano-acao", async function(req, res) {
           var dose=(f.dose_min!=null&&f.dose_max!=null&&f.unidade&&f.por)
             ?" DOSE EXATA A USAR: "+f.dose_min+"-"+f.dose_max+f.unidade+"/"+f.por+" (NAO altere esta dose nem a unidade)"
             :"";
-          return (f.nome_comercial||f.nome)+" ("+f.tipo+")"+dose;
+          // 07/09/2026: era (f.nome_comercial||f.nome). Alem de o servidor ja
+          // zerar nome_comercial em injetarProdutos(), este objeto voltava
+          // pelo CLIENTE — bastava um app adulterado (ou uma versao antiga em
+          // cache) mandar nome_comercial preenchido para injetar marca dentro
+          // do mesmo prompt que proibe citar marca. Hoje a lista inteira e
+          // reconstruida no servidor; o campo nem existe mais aqui.
+          return (f.nome||"")+" ("+f.tipo+")"+dose;
         }).join("; ")
       :"sem fungicida indicado";
     var cat=CATEGORIA_DIAGNOSTICO[d.diagnostico]||"categoria nao especificada — nao presuma, use so o nome";
@@ -3033,8 +3088,131 @@ app.post("/diagnostico-video", async function(req, res) {
 // extrai os numeros brutos do laudo (campo valores_calculo), nunca calcula.
 var PRNT_PADRAO = 80; // PRNT medio de calcario comercial — ajustavel
 
+// ── NORMALIZACAO DE UNIDADE DO LAUDO DE SOLO ────────────────────
+// CRIADA 07/09/2026. Motivo: o SISTEMA_SOLO_STATIC manda o modelo copiar os
+// numeros "EXATAMENTE como aparecem no laudo, sem converter unidade", e grava
+// num campo chamado ca_cmolc/t_cmolc. Isso funciona para laudo de laboratorio
+// mineiro (cmolc/dm3), mas NAO para laudo do padrao IAC/SP, que reporta os
+// mesmos cations em mmolc/dm3 — valores 10x maiores. A Mogiana faz divisa com
+// SP, entao esse laudo VAI aparecer.
+//
+// Por que era grave: a formula da 5a Aproximacao e linear nos cations
+// (NC = (Ve/100)*T - SB), entao um laudo em mmolc nao da erro nem numero
+// estranho — da uma dose 10x maior, com aparencia perfeitamente normal.
+// 1,6 t/ha de calcario vira 16 t/ha. O produtor compra, aplica, e supercalagem
+// nao tem volta: pH sobe demais, Zn/B/Mn/Fe ficam indisponiveis e o cafezal
+// entra em deficiencia induzida por uma ou duas safras. Nao aparece em log
+// nenhum, porque do ponto de vista do codigo esta tudo certo.
+//
+// Mesmo problema com argila: laudo que reporta em g/kg (350) em vez de %
+// (35) fazia Y=4 na formula do aluminio e jogava a classe de P para a faixa
+// mais argilosa.
+//
+// A deteccao usa faixas fisicas, nao heuristica de texto: em cmolc/dm3 um
+// solo de cafezal nao tem T acima de ~25, nem Ca acima de ~20, nem Al acima
+// de ~8. Quando algum desses estoura, o laudo esta em mmolc — divide por 10.
+function normalizarUnidadesLaudo(vc) {
+  var avisos = [];
+  if (!vc) return { vc: vc, avisos: avisos };
+
+  var out = {};
+  for (var k in vc) { if (Object.prototype.hasOwnProperty.call(vc, k)) out[k] = vc[k]; }
+
+  function num(v) {
+    if (v === null || v === undefined || v === "") return NaN;
+    return parseFloat(String(v).replace(",", "."));
+  }
+
+  var ca = num(out.ca_cmolc), mg = num(out.mg_cmolc), kk = num(out.k_cmolc);
+  var al = num(out.al_cmolc), t = num(out.t_cmolc), tef = num(out.ctc_efetiva_cmolc);
+
+  // Indicadores fisicamente impossiveis em cmolc/dm3 num solo de lavoura.
+  var suspeitaMmolc =
+    (!isNaN(t)   && t   > 25) ||
+    (!isNaN(tef) && tef > 25) ||
+    (!isNaN(ca)  && ca  > 20) ||
+    (!isNaN(mg)  && mg  > 12) ||
+    (!isNaN(al)  && al  > 8)  ||
+    (!isNaN(kk)  && kk  > 3);
+
+  if (suspeitaMmolc) {
+    ["ca_cmolc","mg_cmolc","k_cmolc","al_cmolc","t_cmolc","ctc_efetiva_cmolc"].forEach(function(campo){
+      var v = num(out[campo]);
+      if (!isNaN(v)) out[campo] = v / 10;
+    });
+    avisos.push("Laudo lido em mmolc/dm3 (padrao IAC/SP) e convertido para cmolc/dm3 antes do calculo.");
+    ca = num(out.ca_cmolc); mg = num(out.mg_cmolc); kk = num(out.k_cmolc);
+    al = num(out.al_cmolc); t = num(out.t_cmolc); tef = num(out.ctc_efetiva_cmolc);
+  }
+
+  // Argila: % (0-100) vs g/kg (0-1000).
+  var arg = num(out.argila_pct);
+  if (!isNaN(arg)) {
+    if (arg > 100 && arg <= 1000) {
+      out.argila_pct = arg / 10;
+      avisos.push("Teor de argila lido em g/kg e convertido para %.");
+    } else if (arg > 1000 || arg < 0) {
+      out.argila_pct = null;
+      avisos.push("Teor de argila do laudo fora de faixa e ignorado no calculo.");
+    }
+  }
+
+  // Coerencia interna: T (CTC a pH 7) nunca e menor que a soma de bases nem
+  // que a CTC efetiva. Quando isso acontece, o modelo trocou colunas do laudo.
+  var sb = (isNaN(ca)?0:ca) + (isNaN(mg)?0:mg) + (isNaN(kk)?0:kk);
+  if (!isNaN(t) && t > 0 && sb > t * 1.05) {
+    out._incoerente = "soma de bases (Ca+Mg+K) maior que a CTC a pH 7,0";
+  } else if (!isNaN(t) && !isNaN(tef) && tef > 0 && tef > t * 1.05) {
+    out._incoerente = "CTC efetiva maior que a CTC a pH 7,0";
+  }
+
+  return { vc: out, avisos: avisos };
+}
+
+// ── K DO LAUDO EM mg/dm3, COM UNIDADE CONFERIDA ─────────────────
+// CRIADA 07/09/2026. calcularAdubacaoNPK classifica K por faixa em mg/dm3
+// (<60 baixo, 60-120 medio, 120-200 bom, >200 muito bom), mas o valor vinha
+// de resultado.valores.K.valor — o campo de EXIBICAO, cuja unidade o prompt
+// nunca especificou. Laudo que mostra K em cmolc/dm3 (0,20 — leitura comum)
+// entrava como "0,20 < 60" => classe BAIXO => 200 a 450 kg/ha de K2O num solo
+// que ja tinha potassio suficiente. Alem do dinheiro jogado fora, excesso de
+// K no cafeeiro induz deficiencia de Mg e Ca por antagonismo cationico —
+// exatamente o quadro que o app depois diagnostica na folha, fechando um
+// ciclo em que o proprio app causa o problema que ele encontra.
+//
+// Ordem de preferencia: (1) k_mg_dm3, campo novo com unidade explicita no
+// prompt; (2) k_cmolc ja normalizado acima, convertido por 391 (massa molar
+// 39,1 x 10); (3) o campo de exibicao, e so quando a faixa nao deixa duvida.
+// Na duvida real, devolve NaN — o app deixa de recomendar K2O e diz por que.
+// Nao recomendar e recuperavel; mandar aplicar 450 kg/ha a mais nao e.
+function resolverKmgdm3(vc, valores) {
+  function num(v) {
+    if (v === null || v === undefined || v === "") return NaN;
+    return parseFloat(String(v).replace(",", "."));
+  }
+  vc = vc || {};
+
+  var direto = num(vc.k_mg_dm3);
+  if (!isNaN(direto) && direto >= 1 && direto <= 1500) return { valor: direto, aviso: null };
+
+  var kc = num(vc.k_cmolc);
+  if (!isNaN(kc) && kc > 0 && kc <= 3) return { valor: kc * 391, aviso: null };
+
+  var kv = valores && valores.K ? num(valores.K.valor) : NaN;
+  if (!isNaN(kv)) {
+    if (kv > 0 && kv < 3) return { valor: kv * 391, aviso: null };   // so pode ser cmolc/dm3
+    if (kv >= 40 && kv <= 1500) return { valor: kv, aviso: null };   // so pode ser mg/dm3
+    return { valor: NaN, aviso: "Nao recomendei dose de potassio: o laudo traz K = " + kv + " sem unidade clara (podia ser mg/dm3 ou mmolc/dm3, e a dose muda muito entre as duas). Confira a unidade do K no laudo com seu agronomo antes de comprar adubo potassico." };
+  }
+
+  return { valor: NaN, aviso: null };
+}
+
 function calcularCalagemGessagem(vc) {
   if (!vc) return null;
+  if (vc._incoerente) {
+    return { implausivel: true, motivo: vc._incoerente };
+  }
   var ca = parseFloat(vc.ca_cmolc), mg = parseFloat(vc.mg_cmolc), k = parseFloat(vc.k_cmolc);
   var al = parseFloat(vc.al_cmolc), t = parseFloat(vc.t_cmolc), tEf = parseFloat(vc.ctc_efetiva_cmolc);
   var argila = parseFloat(vc.argila_pct);
@@ -3061,6 +3239,16 @@ function calcularCalagemGessagem(vc) {
   }
 
   if (nc === null || isNaN(nc) || nc <= 0) return null;
+
+  // TETO DE PLAUSIBILIDADE (07/09/2026). Recomendacao de calagem para cafezal
+  // em MG fica praticamente sempre entre 0,2 e 6 t/ha; a 5a Aproximacao nem
+  // preve aplicacao de uma vez acima disso. Se a conta passou de 8 t/ha, o
+  // problema esta no numero que entrou (unidade errada, coluna trocada, OCR
+  // ruim), nao no solo. Preferimos NAO dar dose a dar uma dose absurda com
+  // cara de precisa: supercalagem nao se desfaz na safra seguinte.
+  if (nc > 8) {
+    return { implausivel: true, motivo: "necessidade de calcario calculada em " + (Math.round(nc*10)/10) + " t/ha, fora da faixa agronomica para cafezal" };
+  }
 
   var qc = nc * (100 / PRNT_PADRAO);
   var resultado = {
@@ -3174,7 +3362,7 @@ function calcularAdubacaoNPK(produtividadeSc, pMgDm3, kMgDm3, argilaPct) {
 // de producao e esquecer os de teste pra comparacao de modelos virar mentira
 // (modelos diferentes recebendo instrucoes diferentes). Com a constante
 // unica, qualquer ajuste vale para os tres endpoints ao mesmo tempo.
-var SISTEMA_SOLO_STATIC = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nREGRA OBRIGATORIA DE FORMATO NUMERICO: todo campo em \"valores\" e em \"valores_calculo\" DEVE conter UM UNICO NUMERO (ou string curta tipo \"6,1\"), NUNCA uma lista de valores separados por barra (ex: \"4,1 / 4,4 / 5,5\" esta ERRADO) e NUNCA um intervalo (ex: \"4,1-5,5\" esta ERRADO). Se houver multiplas amostras, voce mesmo faz a consolidacao ANTES de preencher o JSON — escolhe a media ou a amostra mais critica e coloca APENAS esse numero final. Isso e obrigatorio porque esses valores alimentam uma calculadora automatica que espera numeros unicos, nao listas.\n\nREGRA OBRIGATORIA PARA VALOR NAO ANALISADO: se um nutriente (como B ou Zn) NAO aparece no laudo, preencha \"valor\":\"nao analisado\" e \"status\":\"baixo\" SEMPRE — nunca use status \"alto\" ou \"ok\" quando o valor e nulo/nao analisado, porque isso afirmaria uma informacao que voce nao tem. Ausencia de dado no laudo nunca pode virar alegacao de excesso (\"alto\"); a postura correta e conservadora, sinalizando que precisa ser testado.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar (mas sempre consolidados em UM UNICO numero por campo, conforme regra acima). Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
+var SISTEMA_SOLO_STATIC = "Voce e o Doutor Cafe, agronomista especialista em cafeicultura brasileira com base nas normas do Incaper, Embrapa e na 5a Aproximacao (CFSEMG/1999, norma oficial de MG ainda vigente).\n\nAnalise este laudo de analise de solo e faca recomendacoes especificas para o cultivo de cafe arabica.\n\nSe o laudo tiver MAIS DE UMA amostra/talhao, NAO detalhe cada amostra separadamente: consolide tudo em UMA UNICA recomendacao objetiva (use a media ou a amostra mais critica como referencia) e preencha os \"valores\" com a amostra mais representativa ou a media simples entre elas. O campo \"acao\" deve ter no maximo 4 frases curtas, direto ao ponto.\n\nREGRA OBRIGATORIA DE FORMATO NUMERICO: todo campo em \"valores\" e em \"valores_calculo\" DEVE conter UM UNICO NUMERO (ou string curta tipo \"6,1\"), NUNCA uma lista de valores separados por barra (ex: \"4,1 / 4,4 / 5,5\" esta ERRADO) e NUNCA um intervalo (ex: \"4,1-5,5\" esta ERRADO). Se houver multiplas amostras, voce mesmo faz a consolidacao ANTES de preencher o JSON — escolhe a media ou a amostra mais critica e coloca APENAS esse numero final. Isso e obrigatorio porque esses valores alimentam uma calculadora automatica que espera numeros unicos, nao listas.\n\nREGRA OBRIGATORIA PARA VALOR NAO ANALISADO: se um nutriente (como B ou Zn) NAO aparece no laudo, preencha \"valor\":\"nao analisado\" e \"status\":\"baixo\" SEMPRE — nunca use status \"alto\" ou \"ok\" quando o valor e nulo/nao analisado, porque isso afirmaria uma informacao que voce nao tem. Ausencia de dado no laudo nunca pode virar alegacao de excesso (\"alto\"); a postura correta e conservadora, sinalizando que precisa ser testado.\n\nCAMPO valores_calculo — MUITO IMPORTANTE: preencha com os valores BRUTOS em cmolc/dm3 (ou meq/100cm3, equivalente) EXATAMENTE como aparecem no laudo, para Ca, Mg, K, Al trocavel, CTC efetiva (t) e CTC a pH 7,0 (T), alem do teor de argila em % se informado. Copie os numeros exatos, sem converter unidade, sem arredondar, sem estimar (mas sempre consolidados em UM UNICO numero por campo, conforme regra acima). Se o laudo NAO trouxer algum desses valores explicitamente, deixe o campo correspondente como null — NUNCA invente ou estime um numero que nao esta no laudo.\n\nCAMPO k_mg_dm3 — UNIDADE OBRIGATORIA: alem de k_cmolc, preencha k_mg_dm3 com o potassio em mg/dm3 (tambem escrito como ppm ou mg/kg) SOMENTE se o laudo trouxer o K nessa unidade. Se o laudo so mostrar K em cmolc/dm3 ou mmolc/dm3, deixe k_mg_dm3 como null — NAO converta voce mesmo. Essas duas unidades diferem por um fator de 391 e alimentam a tabela oficial de adubacao potassica: trocar uma pela outra muda a recomendacao em centenas de kg/ha de K2O.\n\nRESPONDA SOMENTE JSON sem texto extra:\n{\"acao\":\"recomendacao completa em linguagem simples, maximo 4 frases\",\"valores\":{\"pH\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"MO\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"P\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"K\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Ca\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Mg\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"V%\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"B\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"},\"Zn\":{\"valor\":\"valor\",\"status\":\"ok|baixo|alto\"}},\"valores_calculo\":{\"ca_cmolc\":null,\"mg_cmolc\":null,\"k_cmolc\":null,\"k_mg_dm3\":null,\"al_cmolc\":null,\"t_cmolc\":null,\"ctc_efetiva_cmolc\":null,\"argila_pct\":null}}";
 
 // ── TESTE COMPARATIVO: Analise de Solo na Sonnet ─────────────────
 // Criado em 28/07/2026 apos descobrirmos que /analise-solo ja estava
@@ -3315,19 +3503,47 @@ app.post("/analise-solo", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /analise-solo — texto recebido:", txt);
+    // NORMALIZACAO DE UNIDADE ANTES DE QUALQUER CONTA (07/09/2026) — ver
+    // comentario em normalizarUnidadesLaudo(). As duas calculadoras passam a
+    // receber sempre cmolc/dm3 e argila em %, venha o laudo de onde vier.
+    var avisosLaudo = [];
+    if(resultado && resultado.valores_calculo){
+      try {
+        var norm = normalizarUnidadesLaudo(resultado.valores_calculo);
+        resultado.valores_calculo = norm.vc;
+        avisosLaudo = norm.avisos || [];
+      } catch(eNorm) { console.error("ERRO normalizarUnidadesLaudo:", eNorm.message); }
+    }
     if(resultado && resultado.valores_calculo){
       try {
         var calagem = calcularCalagemGessagem(resultado.valores_calculo);
-        if(calagem) resultado.calagem_gessagem = calagem;
+        if(calagem && calagem.implausivel){
+          // Nao anexa calagem_gessagem: o card simplesmente nao aparece, e o
+          // produtor recebe o motivo em linguagem dele no campo de acao.
+          console.error("CALAGEM IMPLAUSIVEL /analise-solo:", calagem.motivo, JSON.stringify(resultado.valores_calculo));
+          resultado.acao = "Nao calculei a dose de calcario desta vez: os numeros que li no laudo nao fecham (" + calagem.motivo + "), e uma dose errada de calcario custa caro e nao tem volta na mesma safra. Tire outra foto do laudo com a tabela bem nitida e reta, ou confira a dose com seu agronomo. " + (resultado.acao || "");
+        } else if(calagem){
+          if(avisosLaudo.length) calagem.observacao = avisosLaudo.join(" ") + " " + calagem.observacao;
+          resultado.calagem_gessagem = calagem;
+        }
       } catch(eCalc) { console.error("ERRO calcularCalagemGessagem:", eCalc.message); }
     }
     if(resultado && produtividadeSc){
       try {
-        var pNum = resultado.valores && resultado.valores.P && resultado.valores.P.valor ? parseFloat(String(resultado.valores.P.valor).replace(",",".")) : NaN;
-        var kNum = resultado.valores && resultado.valores.K && resultado.valores.K.valor ? parseFloat(String(resultado.valores.K.valor).replace(",",".")) : NaN;
-        var argilaNum = resultado.valores_calculo ? parseFloat(resultado.valores_calculo.argila_pct) : NaN;
-        var npk = calcularAdubacaoNPK(produtividadeSc, pNum, kNum, argilaNum);
-        if(npk) resultado.adubacao_npk = npk;
+        var vcN = resultado.valores_calculo || {};
+        var pBruto = resultado.valores && resultado.valores.P && resultado.valores.P.valor ? parseFloat(String(resultado.valores.P.valor).replace(",",".")) : NaN;
+        // P quase sempre vem em mg/dm3; acima de 500 nao e solo de lavoura.
+        var pNum = (!isNaN(pBruto) && pBruto >= 0 && pBruto <= 500) ? pBruto : NaN;
+        var kInfo = resolverKmgdm3(vcN, resultado.valores);
+        var argilaNum = parseFloat(vcN.argila_pct);
+        var npk = calcularAdubacaoNPK(produtividadeSc, pNum, kInfo.valor, argilaNum);
+        if(npk){
+          var extras = [];
+          if(kInfo.aviso) extras.push(kInfo.aviso);
+          if(avisosLaudo.length) extras.push(avisosLaudo.join(" "));
+          if(extras.length) npk.observacao = extras.join(" ") + " " + npk.observacao;
+          resultado.adubacao_npk = npk;
+        }
       } catch(eNpk) { console.error("ERRO calcularAdubacaoNPK:", eNpk.message); }
     }
     logUsoAnalise(userId, "solo", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
@@ -3356,19 +3572,19 @@ var DANINHA_SISTEMA_STATIC="Voce e o Doutor Cafe, agronomista especialista em ca
 "TESTE DECISIVO (use SEMPRE): (1) As folhas saem ao longo de um caule que sobe, alternadas/opostas? => FOLHA LARGA (grupo A), mesmo que as folhas sejam estreitas. (2) As folhas saem todas da base? entao veja o caule: triangular = TIRIRICA (C); redondo com nos = CAPIM (B). (3) A MARGEM da folha tem dentes/recortes visiveis (irregular, nao lisa)? Capim e tiririca SEMPRE tem margem LISA/inteira — margem denteada ou recortada so existe em folha larga. Dentro de folha larga com dentes: se a folha continua UMA PECA SO (dentes so na beirada, sem dividir a folha) = pode ser BUVA; se os recortes vao fundo e DIVIDEM a folha em segmentos separados (quase ate a nervura central) = LOSNA-BRANCA.\n"+
 "ATENCAO AO ANGULO DA FOTO (erro comum): uma foto tirada de CIMA PARA BAIXO, direto no topo/broto de uma planta erguida, mostra as folhas se espalhando em RODA ao redor do centro — isso PARECE uma roseta saindo da base (como tiririca), mas NAO E, e sim uma planta de caule unico vista de cima. Antes de concluir 'folhas da base', verifique se da pra ver claramente um UNICO CAULE ERGUIDO abaixo do conjunto de folhas (mesmo que so a base do caule apareca no canto). Se houver duvida sobre o angulo (nao da pra confirmar se as folhas saem de um caule ereto ou realmente da base do solo), use confianca 'baixa' ou 'media' e peca uma FOTO DE LADO mostrando a planta inteira (da base ate o topo) no campo 'acao', em vez de cravar tiririca so pela forma circular do topo.\n"+
 "REGRA DE OURO 1: BUVA vs TIRIRICA — a BUVA e alta (ate 2m), folhas ESTREITAS ALTERNADAS subindo por um caule UNICO e redondo, com flores/pappus algodonoso no topo. A TIRIRICA e baixa, folhas saem DA BASE em 3 fileiras, caule TRIANGULAR. Se a planta e alta e tem folhas subindo pelo caule, e BUVA, NUNCA tiririca.\n"+
-"REGRA DE OURO 1B: BUVA vs LOSNA-BRANCA E UM CASO DIFICIL — a diferenca de profundidade de recorte na folha pode ser sutil e nao e 100% confiavel sozinha (buva pode ter folha bem serrilhada tambem). O traco REALMENTE decisivo entre essas duas e a INFLORESCENCIA: buva=capitulos pequenos esbranquicados/creme que viram pluma/pappus algodonoso; losna=capitulos brancos pequenos SEMIGLOBOSOS distintos. Se a foto NAO mostra claramente a flor/inflorescencia DA PROPRIA planta em foco, NAO escolha uma das duas como se tivesse certeza — mas TAMBEM NAO retorne generico 'Nao identificado' (essas sao 2 pragas MUITO comuns em lavoura de cafe, e o produtor precisa de uma resposta util). Em vez disso: gere DOIS itens separados no array \"plantas\" (nao combine num nome so) — primeiro item \"nome\":\"Buva\", confianca 'media', 'grupo':'folha_larga'; segundo item \"nome\":\"Losna-branca\", confianca 'baixa' (buva e mais comum em cafezal, por isso vem primeiro). Marque \"hipoteses_mesma_planta\":true no nivel raiz do JSON. Em cada item, no campo 'acao', explique a diferenca visual das flores das duas e recomende fotografar a flor para confirmar; produtos de cada item devem ser so os daquela planta especifica (Galigan/Heat para buva, Ametrina/2,4-D para losna) — nao misture as duas no mesmo item. So use \"Nao identificado com certeza\" quando a planta genuinamente NAO se parecer com NENHUMA especie da lista (nao apenas quando houver duvida entre duas conhecidas).\n"+
+"REGRA DE OURO 1B: BUVA vs LOSNA-BRANCA E UM CASO DIFICIL — a diferenca de profundidade de recorte na folha pode ser sutil e nao e 100% confiavel sozinha (buva pode ter folha bem serrilhada tambem). O traco REALMENTE decisivo entre essas duas e a INFLORESCENCIA: buva=capitulos pequenos esbranquicados/creme que viram pluma/pappus algodonoso; losna=capitulos brancos pequenos SEMIGLOBOSOS distintos. Se a foto NAO mostra claramente a flor/inflorescencia DA PROPRIA planta em foco, NAO escolha uma das duas como se tivesse certeza — mas TAMBEM NAO retorne generico 'Nao identificado' (essas sao 2 pragas MUITO comuns em lavoura de cafe, e o produtor precisa de uma resposta util). Em vez disso: gere DOIS itens separados no array \"plantas\" (nao combine num nome so) — primeiro item \"nome\":\"Buva\", confianca 'media', 'grupo':'folha_larga'; segundo item \"nome\":\"Losna-branca\", confianca 'baixa' (buva e mais comum em cafezal, por isso vem primeiro). Marque \"hipoteses_mesma_planta\":true no nivel raiz do JSON. Em cada item, no campo 'acao', explique a diferenca visual das flores das duas e recomende fotografar a flor para confirmar; nao misture as duas hipoteses no mesmo item — o servidor ja associa o herbicida certo a cada especie que voce nomear. So use \"Nao identificado com certeza\" quando a planta genuinamente NAO se parecer com NENHUMA especie da lista (nao apenas quando houver duvida entre duas conhecidas).\n"+
 "REGRA DE OURO 2: cor da flor e decisiva. Flor AZUL/lilas com 3 petalas + caule suculento = TRAPOERABA. Flor BRANCA em estrela com folhas opostas asperas = POAIA-BRANCA (NAO e trapoeraba).\n\n"+
 "REGRA MAIS IMPORTANTE 2: Identifique as especies de plantas daninhas visiveis na imagem que voce reconhece com seguranca.\n\n"+
 "PLANTAS DANINHAS DO CAFE:\n"+
-"1. PICAO-PRETO (Bidens pilosa): ERETA ramificada 30cm-1,2m, CAULE de secao QUADRANGULAR (4 quinas, nao redondo), folhas OPOSTAS compostas/pinatipartidas serrilhadas em 3 segmentos, flores pequenas AMARELAS com petalas brancas ao redor, frutos com sementes ESPINHOSAS pretas alongadas que grudam em roupa/pelo. Solo fertil e adubado. Goal BR 5-6L/ha PRE-emergencia ou POS-emergencia.\n"+
-"2. CAPIM-AMARGOSO (Digitaria insularis): GRAMINEA perene em TOUCEIRAS 50cm-1,5m, folhas LONGAS estreitas com pelos BRANCOS nas bordas e nervura central esbranquicada, inflorescencia em PANICULA prateada/roxa no topo. Solo degradado ou compactado, comum em areas com resistencia a glifosato. ACCase: Fusilade, Verdict Max 0,2-0,4L/ha.\n"+
+"1. PICAO-PRETO (Bidens pilosa): ERETA ramificada 30cm-1,2m, CAULE de secao QUADRANGULAR (4 quinas, nao redondo), folhas OPOSTAS compostas/pinatipartidas serrilhadas em 3 segmentos, flores pequenas AMARELAS com petalas brancas ao redor, frutos com sementes ESPINHOSAS pretas alongadas que grudam em roupa/pelo. Solo fertil e adubado. Oxifluorfem 240EC 5-6L/ha PRE-emergencia ou POS-emergencia.\n"+
+"2. CAPIM-AMARGOSO (Digitaria insularis): GRAMINEA perene em TOUCEIRAS 50cm-1,5m, folhas LONGAS estreitas com pelos BRANCOS nas bordas e nervura central esbranquicada, inflorescencia em PANICULA prateada/roxa no topo. Solo degradado ou compactado, comum em areas com resistencia a glifosato. Graminicida ACCase (Fluazifope-P-butilico 250EC ou Haloxifope-P-metilico 540EC) 0,2-0,4L/ha.\n"+
 "3. CAPIM-PE-DE-GALINHA (Eleusine indica): GRAMINEA anual touceiras RASAS e achatadas em formato de LEQUE, folhas planas dobradas na base, espiga terminal com 2-7 racemos digitados lembrando \"pe de galinha\". Solo COMPACTADO por trafego de maquinas. ACCase + glifosato.\n"+
-"4. BUVA/VOADEIRA (Conyza bonariensis / C. sumatrensis / C. canadensis): FASE JOVEM (roseta, ANTES de esticar) — folhas em ROSETA BASAL, SEM caule ereto visivel ainda (ou caule bem curto/nao desenvolvido), formato obovado/espatulado (mais larga perto da ponta), margem com dentes IRREGULARES que podem ser profundos a ponto de parecer lobada, mas o LIMBO permanece como peca continua e conectada (nao se separa em segmentos como losna-branca ou cardo-santo). FASE ADULTA (apos esticar) — ERETA 0,5-2m, caule UNICO ROLICO (redondo, NAO triangular), estriado e piloso, pouco ramificado (ramos so proximos ao apice). Folhas NUMEROSAS, estreito-lanceoladas (compridas e finas), alternadas, cobrindo densamente o caule de baixo para cima. MARGEM da folha pode variar de LISA ate BEM DENTEADA/SERRILHADA dependendo da especie — ISSO E NORMAL EM BUVA. O que importa NAO e se tem dentes, e sim ATE ONDE o recorte vai: nos dentes da buva, o LIMBO CONTINUA INTEIRO E CONECTADO no meio da folha (os dentes ficam so na beirada, tipo uma serra, sem separar a folha em pedacos). Panicula terminal com capitulos pequenos esbranquicados/creme que viram PAPPUS algodonoso. CONTRASTE COM LOSNA-BRANCA: em buva, mesmo com dentes fortes, a folha e UMA PECA SO (recorte so na margem); em losna-branca, os recortes vao fundo, quase ate a nervura central, dividindo a folha em segmentos como se fossem varias folhinhas (aspecto de samambaia/salsa). CONTRASTE COM CARDO-SANTO/SERRALHA-BRAVA (item 18) EM FASE DE ROSETA JOVEM (traco mais dificil do catalogo, atencao redobrada): quando so a roseta basal estiver visivel, sem caule ereto desenvolvido, sem espinhos endurecidos nitidos na margem e sem latex leitoso visivel ao partir a folha, PREFIRA BUVA como hipotese principal em vez de cardo-santo — buva e disparadamente mais comum e mais problematica em cafezal brasileiro (resistencia a glifosato generalizada e confirmada), enquanto cardo-santo/serralha e mais tipica de solo exposto/beira de construcao/estrada. So va para cardo-santo/serralha se houver espinhos rigidos bem marcados (Carduus/Cirsium) ou se souber que ha latex ao cortar a folha (Sonchus). Se restar duvida real entre os dois nessa fase de roseta, NAO combine as duas num nome so — gere DOIS itens separados no array \"plantas\": o primeiro (buva) com confianca 'media' e urgencia refletindo a prioridade real, o segundo (cardo-santo/serralha) com confianca 'baixa'; marque \"hipoteses_mesma_planta\":true no nivel raiz do JSON (fora do array) para o app saber que sao duas hipoteses da MESMA planta fotografada, nao duas plantas diferentes encontradas. Em cada um dos dois itens, peca no campo 'acao' a foto do caule alongado ou da flor, ou o teste do latex, para confirmar. Solo de plantio direto, resistencia a glifosato comum. Galigan 240EC 3L/ha, Heat 700WG 70-100g/ha (glifosato sozinho falha).\n"+
+"4. BUVA/VOADEIRA (Conyza bonariensis / C. sumatrensis / C. canadensis): FASE JOVEM (roseta, ANTES de esticar) — folhas em ROSETA BASAL, SEM caule ereto visivel ainda (ou caule bem curto/nao desenvolvido), formato obovado/espatulado (mais larga perto da ponta), margem com dentes IRREGULARES que podem ser profundos a ponto de parecer lobada, mas o LIMBO permanece como peca continua e conectada (nao se separa em segmentos como losna-branca ou cardo-santo). FASE ADULTA (apos esticar) — ERETA 0,5-2m, caule UNICO ROLICO (redondo, NAO triangular), estriado e piloso, pouco ramificado (ramos so proximos ao apice). Folhas NUMEROSAS, estreito-lanceoladas (compridas e finas), alternadas, cobrindo densamente o caule de baixo para cima. MARGEM da folha pode variar de LISA ate BEM DENTEADA/SERRILHADA dependendo da especie — ISSO E NORMAL EM BUVA. O que importa NAO e se tem dentes, e sim ATE ONDE o recorte vai: nos dentes da buva, o LIMBO CONTINUA INTEIRO E CONECTADO no meio da folha (os dentes ficam so na beirada, tipo uma serra, sem separar a folha em pedacos). Panicula terminal com capitulos pequenos esbranquicados/creme que viram PAPPUS algodonoso. CONTRASTE COM LOSNA-BRANCA: em buva, mesmo com dentes fortes, a folha e UMA PECA SO (recorte so na margem); em losna-branca, os recortes vao fundo, quase ate a nervura central, dividindo a folha em segmentos como se fossem varias folhinhas (aspecto de samambaia/salsa). CONTRASTE COM CARDO-SANTO/SERRALHA-BRAVA (item 18) EM FASE DE ROSETA JOVEM (traco mais dificil do catalogo, atencao redobrada): quando so a roseta basal estiver visivel, sem caule ereto desenvolvido, sem espinhos endurecidos nitidos na margem e sem latex leitoso visivel ao partir a folha, PREFIRA BUVA como hipotese principal em vez de cardo-santo — buva e disparadamente mais comum e mais problematica em cafezal brasileiro (resistencia a glifosato generalizada e confirmada), enquanto cardo-santo/serralha e mais tipica de solo exposto/beira de construcao/estrada. So va para cardo-santo/serralha se houver espinhos rigidos bem marcados (Carduus/Cirsium) ou se souber que ha latex ao cortar a folha (Sonchus). Se restar duvida real entre os dois nessa fase de roseta, NAO combine as duas num nome so — gere DOIS itens separados no array \"plantas\": o primeiro (buva) com confianca 'media' e urgencia refletindo a prioridade real, o segundo (cardo-santo/serralha) com confianca 'baixa'; marque \"hipoteses_mesma_planta\":true no nivel raiz do JSON (fora do array) para o app saber que sao duas hipoteses da MESMA planta fotografada, nao duas plantas diferentes encontradas. Em cada um dos dois itens, peca no campo 'acao' a foto do caule alongado ou da flor, ou o teste do latex, para confirmar. Solo de plantio direto, resistencia a glifosato comum. Oxifluorfem 240EC 3L/ha, Saflufenacil 700WG 70-100g/ha (glifosato sozinho falha).\n"+
 "5. LOSNA-BRANCA / MENTRASTO / SANTA-MARIA (Parthenium hysterophorus): FOLHA LARGA. ERETA 50-90cm, herbacea, pilosa, caule sulcado, pouco ramificado embaixo e MUITO ramificado em cima. Folhas ALTERNADAS com limbo recortado tao PROFUNDAMENTE que os segmentos quase se separam, chegando perto da nervura central (aspecto de folha de samambaia, salsa ou cenoura — a folha parece DIVIDIDA em varias partes, nao apenas com bordas denteadas). Capitulos pequenos SEMIGLOBOSOS com flores brancas nas pontas dos ramos (poucas flores liguladas, ao redor de 5). CONTRASTE COM BUVA: losna tem folha DIVIDIDA/segmentada quase ate o centro; buva tem folha INTEIRA como peca unica, mesmo quando a borda tem dentes fortes. Se a folha e uma peca continua so com dentes na beirada, e BUVA; se parece varias folhinhas juntas (segmentada), e LOSNA. Toxica para humanos e animais (cuidado ao manusear), infestante agressiva em cafezais. Ametrina, Glifosato, 2,4-D em pos-emergencia precoce.\n"+
-"6. CARURU (Amaranthus spp.): ERETA (NAO trepadeira) 20cm-2m, caule ROXO ou AVERMELHADO grosso e estriado, folhas OVALADAS pecioladas alternadas com nervuras bem marcadas, inflorescencia TERMINAL em ESPIGA densa avermelhada ou esverdeada. Solo fertil rico em nitrogenio. Heat 700WG 70-100g/ha POS-emergencia, ou Aurora 400EC 1-1,5L/ha.\n"+
+"6. CARURU (Amaranthus spp.): ERETA (NAO trepadeira) 20cm-2m, caule ROXO ou AVERMELHADO grosso e estriado, folhas OVALADAS pecioladas alternadas com nervuras bem marcadas, inflorescencia TERMINAL em ESPIGA densa avermelhada ou esverdeada. Solo fertil rico em nitrogenio. Saflufenacil 700WG 70-100g/ha POS-emergencia, ou Carfentrazona-etilica 400EC 1-1,5L/ha.\n"+
 "7. TIRIRICA (Cyperus rotundus): JUNCA (Cyperaceae). BAIXA 15-40cm (planta INTEIRA baixa, nao so o topo), folhas estreitas BRILHANTES saindo TODAS DA BASE em TRES FILEIRAS, caule MACICO e TRIANGULAR (3 lados) ao corte, inflorescencia em umbela com espiguetas marrom-avermelhadas, raizes com TUBERCULOS/rizomas. CONTRASTE: se a planta e ALTA com folhas ALTERNADAS subindo por um caule, NAO e tiririca (provavelmente buva) — CUIDADO: uma foto de cima no topo de planta alta pode PARECER roseta basal sem ser. So classifique como tiririca se as folhas saem da BASE em 3 fileiras E/OU o caule e triangular, E a planta como um todo e baixa. Solo com DRENAGEM RUIM ou encharcado. Glifosato + Diuron, dificil por causa dos tuberculos.\n"+
-"8. CORDA-DE-VIOLA (Ipomoea spp.): TREPADEIRA vigorosa, folhas CORDADAS em forma de coracao grandes 5-15cm, flores roxas ou brancas em forma de trombeta, caule volvel enrolando em TUDO ao redor. Cobre completamente o cafeeiro sufocando-o. Solo FERTIL disturbado. Aurora 400EC 1-1,5L/ha POS-emergencia precoce. Ally 600WG 4-6g/ha. Controle URGENTE antes de florescer para evitar banco de sementes.\n"+
-"9. CAPIM-GORDURA (Melinis minutiflora): GRAMINEA perene PELUDA e VISCOSA ao toque, cor AMARELO-ESVERDEADA, folhas macias com pelos longos, cheiro caracteristico de MEL ao amassar, inflorescencia rosada aberta. Solo pobre e acido, pastagem degradada. ACCase: Select 240EC 0,45L/ha.\n"+
+"8. CORDA-DE-VIOLA (Ipomoea spp.): TREPADEIRA vigorosa, folhas CORDADAS em forma de coracao grandes 5-15cm, flores roxas ou brancas em forma de trombeta, caule volvel enrolando em TUDO ao redor. Cobre completamente o cafeeiro sufocando-o. Solo FERTIL disturbado. Carfentrazona-etilica 400EC 1-1,5L/ha POS-emergencia precoce. Metsulfurom-metilico 600WG 4-6g/ha. Controle URGENTE antes de florescer para evitar banco de sementes.\n"+
+"9. CAPIM-GORDURA (Melinis minutiflora): GRAMINEA perene PELUDA e VISCOSA ao toque, cor AMARELO-ESVERDEADA, folhas macias com pelos longos, cheiro caracteristico de MEL ao amassar, inflorescencia rosada aberta. Solo pobre e acido, pastagem degradada. Graminicida ACCase (Cletodim 240EC) 0,45L/ha.\n"+
 "10. CAPIM-BRAQUIARIA (Urochloa spp.): GRAMINEA perene estolonifera/touceira robusta 40cm-1m, folhas LARGAS pilosas na base, bainha com pelos, inflorescencia em RACEMOS alongados unilaterais tipo \"dedos\". Geralmente presente nas ENTRELINHAS (pastagem/cobertura), torna-se problema quando invade a LINHA do cafeeiro. ACCase seletivo na linha.\n"+
 "11. TRAPOERABA (Commelina benghalensis): RASTEIRA SUCULENTA enraizando nos nos, folhas OVALADAS com BAINHA membranosa envolvendo o caule (tipico de Commelinaceae), flores AZUIS/lilas com 3 petalas (2 grandes + 1 pequena). CONTRASTE COM POAIA-BRANCA: trapoeraba tem flor AZUL e caule suculento com bainha; poaia tem flor BRANCA e folhas asperas sem bainha. Solo UMIDO e sombreado. 2,4-D, dificil por reenraizamento.\n"+
 "12. GUANXUMA (Sida spp.): ARBUSTIVA ereta 50cm-1,5m, caule fibroso lenhoso na base, folhas OVALADAS serrilhadas com peciolo longo, flores AMARELAS pequenas com 5 petalas, frutos em capsula segmentada tipo \"queijinho\". Solo DEGRADADO ou de baixa fertilidade. 2,4-D.\n"+
@@ -3378,11 +3594,11 @@ var DANINHA_SISTEMA_STATIC="Voce e o Doutor Cafe, agronomista especialista em ca
 "16. LEITEIRO / AMENDOIM-BRAVO (Euphorbia heterophylla): ERETA 20cm-2m, herbacea, TRACO DECISIVO: solta LATEX BRANCO LEITOSO abundante ao quebrar caule ou folha (teste mais confiavel). HETEROFILIA marcante: folhas de FORMATOS VARIADOS (lanceoladas, ovaladas, obovadas ou elipticas) na MESMA planta, as vezes ate no mesmo ramo — essa variacao de formato e caracteristica da especie. Inflorescencia pouco vistosa (pequenos capitulos verdes). Solo fertil. Glifosato, 2,4-D; resistencia comum a inibidores de ALS.\n"+
 "17. GRAMA-SEDA / GRAMA-BERMUDA (Cynodon dactylon): CAPIM perene ESTOLONIFERO rasteiro que forma tapete denso, folhas curtas cinza-esverdeadas, inflorescencia em 3-6 racemos digitados finos. Espalha por estolões e rizomas. Glifosato repetido.\n"+
 "18. CARDO-SANTO / SERRALHA-BRAVA (Sonchus oleraceus / Sonchus asper / Carduus/Cirsium spp.): FOLHA LARGA. Roseta basal de folhas GRANDES, LOBADAS e com margem ESPINHOSA/dentada bem marcada, achatada contra o solo no inicio; caule ERETO UNICO emergindo do centro da roseta (as vezes ROXO-AVERMELHADO), folhas superiores ALTERNADAS subindo pelo caule, menores e mais verdes que as basais. Folhas mais velhas/basais podem ter tom ACINZENTADO-ESBRANQUICADO (indumento farinaceo/tricomas densos), formando um contraste visivel com as folhas novas do topo, mais verdes e lisas. TRACO DECISIVO para especie exata: a FLOR — Sonchus (serralha) tem capitulo AMARELO tipo dente-de-leao; Carduus/Cirsium (cardo) tem capitulo ROXO/lilas espinhoso. Se a flor nao estiver visivel na foto, use \"nome\":\"Cardo-santo / Serralha-brava (possivel Sonchus ou Carduus/Cirsium)\", confianca 'media', e peca foto da flor no campo 'acao' para confirmar; inclua produtos para as duas hipoteses (2,4-D ou Glifosato para Sonchus; picloram ou 2,4-D para Carduus/Cirsium). ATENCAO — CONFUSAO COMUM COM BUVA JOVEM (item 4): quando a planta estiver so em fase de roseta (sem caule ereto desenvolvido, sem espinhos rigidos nitidos, sem latex visivel), BUVA jovem e a hipotese MAIS PROVAVEL primeiro, por ser muito mais comum em cafezal — so cravar cardo-santo/serralha-brava com confianca alta se houver espinhos endurecidos claros na margem ou caule roxo-avermelhado grosso bem caracteristico emergindo do centro. Solo compactado, perturbado ou com baixa cobertura vegetal — comum em bordas de construcao, estradas e areas de solo exposto.\n\n"+
-"IMPORTANTE no campo 'nome' de cada produto: use o nome generico (ingrediente ativo, ex: Saflufenacil, Carfentrazona-etilica, Glifosato) com a formulacao quando souber. Nomes comerciais citados nas notas acima sao apenas referencia interna — NAO os repita como se fossem o nome do produto, pois o produtor pode ter acesso a uma marca diferente com o mesmo generico.\n\n"+
+"CAMPO 'produtos' — NAO PREENCHA: devolva sempre \"produtos\":[] (array vazio). Quem monta a lista de herbicidas, dose e modo de uso e o servidor, a partir de uma tabela fixa indexada pela especie que voce identificar. Sua unica tarefa e ACERTAR A ESPECIE e descrever o que voce viu. As mencoes de ingrediente ativo nas descricoes acima sao contexto para voce entender a gravidade de cada planta, nao um pedido de recomendacao.\n\n"+
 "REGRA FINAL: Só use confianca 'alta' se o TRACO DECISIVO daquela especie estiver VISIVEL e confirmado na foto (ex: tiririca => folhas da base em 3 fileiras OU caule triangular, margem lisa; buva => folha estreita alternada no caule, formando UMA PECA SO mesmo com dentes na borda + pappus/flores esbranquicadas; losna-branca => folha DIVIDIDA em segmentos que quase chegam a nervura central, tipo samambaia; trapoeraba => flor azul/bainha; poaia => flor branca). Se o traco decisivo NAO aparece, use no maximo 'media'. Se a planta nao corresponde CLARAMENTE a nenhuma especie da lista, use \"nome\":\"Nao identificado com certeza\", confianca 'baixa', e no campo 'acao' peca uma foto mais proxima e nitida da planta inteira (folha, caule e base) — NAO escolha a especie mais parecida so para preencher. Preencha 'grupo' com o grupo que voce viu (folha_larga|capim|junca|indefinido) e 'visto' com os tracos concretos observados.\n"+
-"LIMITE DE TAMANHO (mesmo em casos de duas hipoteses, tipo buva-jovem vs cardo-santo, ou buva vs losna-branca): campo 'acao' no MAXIMO 3 frases curtas; campo 'produtos' no MAXIMO 2 itens no total (nao 2 por hipotese); campo 'alerta' no MAXIMO 1 frase. Seja direto — o produtor pode pedir mais detalhes depois se precisar.\n\n"+
+"LIMITE DE TAMANHO (mesmo em casos de duas hipoteses, tipo buva-jovem vs cardo-santo, ou buva vs losna-branca): campo 'acao' no MAXIMO 3 frases curtas; campo 'alerta' no MAXIMO 1 frase. NAO cite produto, marca nem dose em nenhum campo de texto — o servidor acrescenta isso depois. Seja direto — o produtor pode pedir mais detalhes depois se precisar.\n\n"+
 "RESPONDA SOMENTE JSON:\n"+
-"{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"grupo\":\"folha_larga|capim|junca|indefinido\",\"visto\":\"tracos visiveis que justificam a identificacao\",\"confianca\":\"alta|media|baixa\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[{\"nome\":\"nome generico (ingrediente ativo) com formulacao, ex: Saflufenacil 700WG\",\"dose\":\"dose pratica\",\"como_usar\":\"instrucao\"}],\"alerta\":\"aviso importante\"}],\"hipoteses_mesma_planta\":\"true SOMENTE quando o array plantas contiver 2 hipoteses concorrentes para UMA UNICA planta fotografada (ex: buva-jovem vs cardo-santo, ou buva vs losna-branca); false ou omitido quando cada item do array e uma planta fisicamente diferente encontrada na foto\",\"indicador_geral\":\"o que indica sobre o solo (so preencher quando hipoteses_mesma_planta for false/omitido)\",\"manejo_integrado\":\"estrategia geral (so preencher quando hipoteses_mesma_planta for false/omitido)\"}";
+"{\"plantas\":[{\"nome\":\"nome popular\",\"nome_cientifico\":\"nome cientifico\",\"grupo\":\"folha_larga|capim|junca|indefinido\",\"visto\":\"tracos visiveis que justificam a identificacao\",\"confianca\":\"alta|media|baixa\",\"indicador\":\"o que indica sobre o solo\",\"acao\":\"o que fazer\",\"urgencia\":\"alta|media|baixa\",\"produtos\":[],\"alerta\":\"aviso importante\"}],\"hipoteses_mesma_planta\":\"true SOMENTE quando o array plantas contiver 2 hipoteses concorrentes para UMA UNICA planta fotografada (ex: buva-jovem vs cardo-santo, ou buva vs losna-branca); false ou omitido quando cada item do array e uma planta fisicamente diferente encontrada na foto\",\"indicador_geral\":\"o que indica sobre o solo (so preencher quando hipoteses_mesma_planta for false/omitido)\",\"manejo_integrado\":\"estrategia geral (so preencher quando hipoteses_mesma_planta for false/omitido)\"}";
 
 // ── TESTE COMPARATIVO: Identificacao de Daninha, Plus vs Flash ───
 // Criados em 12/08/2026, para estender ao catalogo de daninhas a mesma
@@ -3475,6 +3691,160 @@ app.post("/teste-daninha-flash", async function(req, res) {
   } catch(e) { console.error("ERRO EXCECAO /teste-daninha-flash:", e.message); res.status(500).json({ erro:e.message }); }
 });
 
+// ── TABELA DE HERBICIDAS POR DANINHA (servidor) ──────────────────
+// CRIADA 07/09/2026. Ate aqui, a identificacao de daninha era o unico modulo
+// que ainda deixava o MODELO escolher o produto e a dose, escrevendo tudo
+// dentro do campo "produtos". Na folha esse mesmo desenho ja tinha falhado:
+// o modelo associava marca ao ingrediente errado, e a correcao que funcionou
+// foi tirar a tabela do prompt e passar a injetar do servidor
+// (ver injetarProdutos / PRODUTOS_POR_DIAGNOSTICO).
+//
+// Em daninha o custo do erro e maior que em doenca, por dois motivos:
+//   1. Herbicida errado nao e so dinheiro perdido — e mecanismo de acao que
+//      nao funciona naquela especie. Glifosato isolado nao resolve tiririca
+//      (tuberculo rebrota) nem buva resistente; graminicida ACCase nao mata
+//      folha larga nenhuma. O produtor pulveriza, nao morre, e ele conclui
+//      que o app errou o diagnostico — quando o diagnostico estava certo.
+//   2. Latifolicida em cafezal tem risco de deriva sobre a propria lavoura.
+//      2,4-D e picloram sao hormonais: deriva encrespa folha nova e aborta
+//      chumbinho. Esse aviso nao pode depender de o modelo lembrar de dar.
+//
+// As doses abaixo sao as mesmas que ja estavam no prompt (fonte Aegro e
+// Rehagro), so que agora vivem em um lugar unico, versionado e conferivel.
+// Onde o prompt nao trazia dose, o campo diz para seguir a bula em vez de
+// inventar numero.
+var HERBICIDAS_POR_DANINHA = {
+  picao_preto: [
+    { nome:"Oxifluorfem 240EC", dose:"5-6 L/ha", como_usar:"Pre-emergencia ou pos-emergencia inicial, jato dirigido na entrelinha." }
+  ],
+  capim_amargoso: [
+    { nome:"Graminicida ACCase (Fluazifope-P-butilico 250EC ou Haloxifope-P-metilico 540EC)", dose:"0,2-0,4 L/ha", como_usar:"Pos-emergencia com a touceira em pleno crescimento. Glifosato isolado falha nesta especie." }
+  ],
+  capim_pe_de_galinha: [
+    { nome:"Graminicida ACCase (Cletodim 240EC ou Fluazifope-P-butilico 250EC)", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia, pode ser associado ao glifosato. Trate tambem a compactacao do solo, que e a causa." }
+  ],
+  buva: [
+    { nome:"Oxifluorfem 240EC", dose:"3 L/ha", como_usar:"Pos-emergencia PRECOCE, com a buva ainda em roseta (ate 10 cm). Depois que estica, o controle cai muito." },
+    { nome:"Saflufenacil 700WG", dose:"70-100 g/ha", como_usar:"Em mistura, para buva que ja escapou do glifosato. Glifosato sozinho falha nesta especie." }
+  ],
+  losna_branca: [
+    { nome:"Ametrina", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia precoce." },
+    { nome:"2,4-D", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia precoce, jato dirigido. Planta toxica ao toque: use luva na roçada manual." }
+  ],
+  caruru: [
+    { nome:"Saflufenacil 700WG", dose:"70-100 g/ha", como_usar:"Pos-emergencia, com a planta pequena." },
+    { nome:"Carfentrazona-etilica 400EC", dose:"1-1,5 L/ha", como_usar:"Pos-emergencia, alternativa de contato." }
+  ],
+  tiririca: [
+    { nome:"Glifosato + Diurom", dose:"conforme a bula dos produtos que voce comprar", como_usar:"Exige REPETICAO: o tuberculo rebrota. Uma aplicacao so nao resolve, planeje o retorno em 30-45 dias." }
+  ],
+  corda_de_viola: [
+    { nome:"Carfentrazona-etilica 400EC", dose:"1-1,5 L/ha", como_usar:"Pos-emergencia PRECOCE, antes de a trepadeira subir no cafeeiro." },
+    { nome:"Metsulfurom-metilico 600WG", dose:"4-6 g/ha", como_usar:"Jato dirigido. Controle antes do florescimento, para nao formar banco de sementes." }
+  ],
+  capim_gordura: [
+    { nome:"Graminicida ACCase (Cletodim 240EC)", dose:"0,45 L/ha", como_usar:"Pos-emergencia, com o capim em crescimento ativo." }
+  ],
+  braquiaria: [
+    { nome:"Graminicida ACCase seletivo", dose:"conforme a bula do produto que voce comprar", como_usar:"Aplicar so na LINHA do cafeeiro. Na entrelinha a braquiaria protege o solo — nao elimine tudo." }
+  ],
+  trapoeraba: [
+    { nome:"2,4-D", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia. Especie dificil: reenraiza pelos nos, entao exija repasse e nao deixe pedaco cortado no solo umido." }
+  ],
+  guanxuma: [
+    { nome:"2,4-D", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia, com a planta ainda herbacea. Depois que a base lignifica, o controle quimico cai." }
+  ],
+  maria_pretinha: [
+    { nome:"Glifosato", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia." },
+    { nome:"2,4-D", dose:"conforme a bula do produto que voce comprar", como_usar:"Alternativa em jato dirigido. Fruto toxico: cuidado com criança e animal na lavoura." }
+  ],
+  poaia_branca: [
+    { nome:"2,4-D", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia PRECOCE." },
+    { nome:"Glifosato", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia precoce. Indica solo compactado e acido — corrigir isso reduz a reinfestacao." }
+  ],
+  beldroega: [
+    { nome:"Glifosato", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia. NAO roce nem incorpore: pedaco de caule enraiza de novo e piora a infestacao." }
+  ],
+  leiteiro: [
+    { nome:"Glifosato", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia precoce." },
+    { nome:"2,4-D", dose:"conforme a bula do produto que voce comprar", como_usar:"Alternativa. Ha resistencia comum a inibidores de ALS nesta especie — evite repetir esse mecanismo." }
+  ],
+  grama_seda: [
+    { nome:"Glifosato", dose:"conforme a bula do produto que voce comprar", como_usar:"Exige aplicacoes REPETIDAS: espalha por estolao e rizoma, e uma passada so nao elimina." }
+  ],
+  cardo_serralha: [
+    { nome:"2,4-D", dose:"conforme a bula do produto que voce comprar", como_usar:"Pos-emergencia com a roseta ainda achatada no solo, antes de emitir o caule." },
+    { nome:"Glifosato", dose:"conforme a bula do produto que voce comprar", como_usar:"Alternativa para Sonchus (serralha). Se a flor for roxa e espinhosa (cardo), o picloram e mais eficaz — confirme com seu agronomo." }
+  ]
+};
+
+// Palavras-chave em ordem de especificidade: a primeira que casar vence.
+// Ordem importa — "capim-pe-de-galinha" precisa ser testado antes de "capim".
+var CHAVES_DANINHA = [
+  ["picao_preto",         ["picao","bidens"]],
+  ["capim_amargoso",      ["amargoso","digitaria insularis"]],
+  ["capim_pe_de_galinha", ["pe-de-galinha","pe de galinha","eleusine"]],
+  ["capim_gordura",       ["gordura","melinis"]],
+  ["grama_seda",          ["grama-seda","grama seda","bermuda","cynodon"]],
+  ["braquiaria",          ["braquiaria","brachiaria","urochloa"]],
+  ["buva",                ["buva","voadeira","conyza"]],
+  ["losna_branca",        ["losna","mentrasto","santa-maria","santa maria","parthenium"]],
+  ["caruru",              ["caruru","amaranthus"]],
+  ["tiririca",            ["tiririca","cyperus"]],
+  ["corda_de_viola",      ["corda-de-viola","corda de viola","ipomoea"]],
+  ["trapoeraba",          ["trapoeraba","commelina"]],
+  ["guanxuma",            ["guanxuma","sida "]],
+  ["maria_pretinha",      ["maria-pretinha","maria pretinha","solanum"]],
+  ["poaia_branca",        ["poaia","erva-quente","erva quente","richardia","spermacoce"]],
+  ["beldroega",           ["beldroega","portulaca"]],
+  ["leiteiro",            ["leiteiro","amendoim-bravo","amendoim bravo","euphorbia"]],
+  ["cardo_serralha",      ["cardo","serralha","sonchus","carduus","cirsium"]]
+];
+
+function slugDaninha(nome, cientifico) {
+  var txt = ((nome||"") + " " + (cientifico||"")).toLowerCase();
+  txt = txt.normalize ? txt.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : txt;
+  for (var i=0; i<CHAVES_DANINHA.length; i++) {
+    var chave = CHAVES_DANINHA[i][0], termos = CHAVES_DANINHA[i][1];
+    for (var j=0; j<termos.length; j++) {
+      if (txt.indexOf(termos[j]) > -1) return chave;
+    }
+  }
+  return null;
+}
+
+// Hormonais: risco de deriva sobre o proprio cafeeiro. O aviso e do servidor
+// justamente para nao depender de o modelo lembrar de escreve-lo.
+var HORMONAIS = ["2,4-d", "picloram"];
+
+function injetarHerbicidas(resultado) {
+  if (!resultado || !resultado.plantas) return resultado;
+  resultado.plantas.forEach(function(pl){
+    if (!pl) return;
+    var chave = slugDaninha(pl.nome, pl.nome_cientifico);
+    var lista = chave ? HERBICIDAS_POR_DANINHA[chave] : null;
+    if (!lista) {
+      // Especie fora do catalogo (ou "nao identificado"): sem produto. Melhor
+      // nenhuma recomendacao do que herbicida escolhido no chute.
+      pl.produtos = [];
+      if (!pl.alerta) pl.alerta = "Sem recomendacao de herbicida porque a especie nao foi confirmada — mande uma foto mais proxima da planta inteira, ou consulte seu agronomo antes de pulverizar.";
+      return;
+    }
+    pl.produtos = lista.map(function(prod){
+      return { nome: prod.nome, dose: prod.dose, como_usar: prod.como_usar };
+    });
+    var temHormonal = pl.produtos.some(function(prod){
+      var n = prod.nome.toLowerCase();
+      return HORMONAIS.some(function(h){ return n.indexOf(h) > -1; });
+    });
+    if (temHormonal) {
+      var avisoDeriva = "Cuidado com a deriva: esse tipo de herbicida (hormonal) encrespa folha nova e derruba chumbinho do cafe. Aplique com jato dirigido na entrelinha, ponta antideriva e sem vento.";
+      pl.alerta = pl.alerta ? (pl.alerta + " " + avisoDeriva) : avisoDeriva;
+    }
+  });
+  return resultado;
+}
+
 app.post("/identifica-daninha", async function(req, res) {
   var imagem=req.body.imagem, tipo=req.body.tipo||"image/jpeg", regiao=req.body.regiao||null;
   var userId=req.body.userId||"anonimo";
@@ -3547,13 +3917,22 @@ app.post("/identifica-daninha", async function(req, res) {
 
     stream.on("end", function(){
       var resultado=extrairJSON(texto);
+      // Objeto de fallback: ate 07/09/2026 faltavam confianca, grupo e visto,
+      // que o card do app le. Sem eles a tela mostrava campo vazio ou
+      // "undefined" justamente no caso em que o app ja estava inseguro.
+      function daninhaNaoIdentificada(){
+        return {nome:"Planta nao identificada",nome_cientifico:"",grupo:"indefinido",visto:"",confianca:"baixa",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto, mostrando a planta inteira: folha, caule e a base junto ao solo.",urgencia:"baixa",produtos:[],alerta:""};
+      }
       if(resultado){
         if(!resultado.plantas) resultado={ plantas:[resultado], indicador_geral:resultado.indicador||"", manejo_integrado:resultado.manejo_preventivo||"" };
-        if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}];
+        if(!resultado.plantas||resultado.plantas.length===0) resultado.plantas=[daninhaNaoIdentificada()];
       } else {
         console.error("EXTRAIRJSON FALHOU DANINHA. Tamanho texto:", texto.length, "| Ultimos 300 chars:", texto.substring(Math.max(0,texto.length-300)));
-        resultado={plantas:[{nome:"Planta nao identificada",nome_cientifico:"",indicador:"Nao foi possivel identificar",acao:"Fotografe mais de perto.",urgencia:"baixa",produtos:[],alerta:""}],indicador_geral:"",manejo_integrado:""};
+        resultado={plantas:[daninhaNaoIdentificada()],indicador_geral:"",manejo_integrado:""};
       }
+      // TRAVA DETERMINISTICA: o herbicida, a dose e o aviso de deriva vem da
+      // tabela do servidor, nunca do texto que o modelo escreveu.
+      try { injetarHerbicidas(resultado); } catch(eHerb){ console.error("ERRO injetarHerbicidas:", eHerb.message); }
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "daninha", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
       encerrarDaninha();

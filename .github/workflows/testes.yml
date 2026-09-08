@@ -1,0 +1,31 @@
+# Roda as travas de solo a cada push e a cada pull request.
+# Motivo: o desenvolvimento e feito pelo celular, sem terminal para rodar
+# "node teste-solo.js" na mao. O GitHub roda por nos e marca o commit com
+# visto verde ou X vermelho.
+#
+# X vermelho em "Travas de solo" = dose de calcario ou de potassio saindo
+# errada. Nao faca deploy nesse estado.
+
+name: Testes
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:   # permite rodar na mao pelo botao "Run workflow"
+
+jobs:
+  solo:
+    name: Travas de solo (calagem e NPK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Sintaxe do servidor
+        run: node --check server.js
+
+      - name: Travas de calagem, unidade do laudo e potassio
+        run: node teste-solo.js

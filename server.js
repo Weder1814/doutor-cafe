@@ -1787,7 +1787,7 @@ app.post("/diagnostico", async function(req, res) {
     // teste que escrevi pra validar aquela correcao expos este tambem).
     // O resultado FINAL nunca foi afetado (extrairCompletos usa casamento de
     // chaves, nao depende da ordem dos campos) — so a previa antecipada.
-    var reParcial=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*(?:"po_esporulacao_confirmado"\s*:\s*(true|false)\s*,\s*)?(?:"centro_claro_confirmado"\s*:\s*(true|false)\s*,\s*)?"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
+    var reParcial=/"diagnostico"\s*:\s*"([^"]+)"\s*,\s*(?:"po_esporulacao_confirmado"\s*:\s*(true|false)\s*,\s*)?(?:"centro_claro_confirmado"\s*:\s*(true|false)\s*,\s*)?(?:"halo_largo_confirmado"\s*:\s*(?:true|false)\s*,\s*)?"estagio"\s*:\s*(\d+)\s*,\s*"confianca"\s*:\s*"([^"]+)"/g;
     var buscaParciaisDesde=0, diagsParciais=[];
     function detectarParciais() {
       reParcial.lastIndex = buscaParciaisDesde;
@@ -2959,6 +2959,7 @@ app.post("/plano-acao", async function(req, res) {
 "CATEGORIA DE CADA DIAGNOSTICO: cada item da lista vem com sua categoria entre colchetes (ex: [doenca fungica], [doenca BACTERIANA], [praga], [deficiencia nutricional]). USE ESSA CATEGORIA EXATA no resumo_geral e demais campos — NUNCA infira ou generalize a categoria pelo tipo de produto usado (ex: dois problemas tratados ambos com cuprico NAO significa que sao da mesma categoria biologica).\n\n"+
 "REGRA DO CAMPO NUTRICAO — EVITAR INVENCAO:\n"+
 "REGRA UNICA E ABSOLUTA: so mencione um nutriente PELO NOME se esse nutriente aparecer EXPLICITAMENTE na lista de diagnosticos recebida. Sem excecao. Se a lista nao traz nenhuma deficiencia, escreva 'Nenhuma deficiencia nutricional diagnosticada. Recomenda-se analise foliar/solo periodica.' ou deixe o campo vazio.\n"+
+"PROIBIDO INVENTAR EPIDEMIOLOGIA REGIONAL (adicionado 07/09/2026 apos teste de campo). Caso ocorrido: o diagnostico foi aureolada na Mogiana e o plano afirmou 'Como a regiao (Mogiana) e endemica para a doenca, manter o programa de fungicidas preventivo'. A palavra endemica nao aparece em NENHUM lugar do contexto que voce recebeu — foi inventada, e serviu para justificar um programa preventivo de fungicida que ninguem pediu. NUNCA afirme que uma regiao e endemica, tradicional, de alta pressao ou de risco para uma doenca, e NUNCA recomende programa preventivo com base nisso, a menos que essa informacao esteja EXPLICITA no contexto regional recebido. Sem isso, limite-se ao que a foto mostrou. Uma afirmacao epidemiologica inventada faz o produtor pulverizar a lavoura inteira por precaucao, gastando com produto que talvez nao precisasse.\n\n"+
 "PROIBIDO ESPECULAR CAUSA NUTRICIONAL DE DOENCA (corrigido 30/08/2026 apos caso real): mesmo que voce conheca uma relacao causal entre um nutriente e a doenca diagnosticada, NAO cite esse nutriente se ele nao foi diagnosticado. Exemplo do erro que isso evita: o diagnostico trouxe apenas cercosporiose e magnesio, e o plano dizia 'a carencia de nitrogenio pode ter favorecido o avanco da doenca fungica' — nitrogenio nunca foi diagnosticado, e o produtor poderia comprar ureia sem necessidade. Uma correlacao teorica NAO e um diagnostico.\n\n"+
 "CORRELACOES NUTRICAO-DOENCA/PRAGA CONHECIDAS (fonte: SENAR, Colecao 189 — use APENAS estas relacoes verificadas quando o diagnostico bater com o padrao abaixo; NAO invente outras combinacoes):\n"+
 "- Excesso de nitrogenio favorece phoma/ascochyta (tecido novo mais tenro e suscetivel).\n"+
@@ -4453,9 +4454,39 @@ function corrigirCercosporioseSemCentroClaro(resultado) {
       delete d.centro_claro_confirmado; return;
     }
 
-    if(d.diagnostico==="cercosporiose" && d.centro_claro_confirmado===false){
+    // REDESENHADA 07/09/2026 apos teste de campo. A versao anterior tratava
+    // "sem centro branco" como PROVA de aureolada e convertia. Isso derrubou
+    // uma cercosporiose real, confirmada pelo produtor: as lesoes eram iniciais
+    // e ainda nao tinham formado o centro claro — situacao que o proprio prompt
+    // preve na "forma atipica". Eu tinha usado a ausencia do traco de UMA
+    // doenca como evidencia da OUTRA, que e um erro de logica: falta de prova
+    // de A nao e prova de B.
+    // Agora a conversao exige o traco POSITIVO da aureolada (halo largo e
+    // difuso, lesao irregular tipo respingo, varias espalhadas). Sem ele, a
+    // cercosporiose fica de pe — so perde a confianca alta, porque sem o centro
+    // branco ela realmente nao esta confirmada.
+    // O custo do erro tambem e assimetrico e pesa para este lado: a dose de
+    // cobre da aureolada e 4-4,5 kg/ha contra 2-2,5 da cercosporiose, entao
+    // converter errado faz o produtor aplicar quase o dobro de cobre.
+    var haloLargo = d.halo_largo_confirmado === true;
+    if(d.diagnostico==="cercosporiose" && d.centro_claro_confirmado===false && !haloLargo){
+      // Sem centro branco E sem halo largo: continua cercosporiose (forma
+      // inicial/atipica), mas nao pode ostentar confianca alta.
+      if(d.confianca==="alta") d.confianca="media";
+      d.diagnostico_diferencial="O centro branco-acinzentado classico da cercosporiose nao esta confirmado nesta foto, o que e comum em lesao inicial. Aureolada (bacteriana) foi considerada e descartada porque o halo destas lesoes nao e largo e difuso como o dela. Se surgirem manchas com halo amarelo bem largo e formato de respingo no talhao, refaca a analise.";
+      delete d.centro_claro_confirmado; delete d.halo_largo_confirmado; return;
+    }
+    if(d.diagnostico==="cercosporiose" && d.centro_claro_confirmado===false && haloLargo){
       // Sem o traco decisivo da cercosporiose: pelo prompt, isso e aureolada.
-      d.diagnostico_diferencial="Cercosporiose tambem foi considerada pelo padrao geral da lesao, mas sem centro branco-acinzentado confirmado na mancha — isso e o traco decisivo que falta para cercosporiose. "+(d.diagnostico_diferencial||"");
+      // CORRIGIDO 07/09/2026 apos teste de campo. Antes esta linha CONCATENAVA
+      // o diagnostico_diferencial que o modelo tinha escrito — texto redigido
+      // quando ele ainda achava que era cercosporiose. Resultado na tela do
+      // produtor: o card dizia AUREOLADA (bacteriana) e o texto logo abaixo
+      // terminava dizendo que "o formato favorece a hipotese fungica". Duas
+      // conclusoes opostas no mesmo cartao, e a errada por ultimo, que e a que
+      // fica na cabeca de quem le. Agora a trava SUBSTITUI o raciocinio velho.
+      d.diagnostico_diferencial="Cercosporiose tambem foi considerada pelo padrao geral da lesao, mas o centro branco-acinzentado — traco decisivo dela — nao foi confirmado nesta foto. Por isso o app trata como aureolada, que e bacteriana: se estiver errado e for cercosporiose, o cobre indicado tambem ajuda; ja o contrario nao vale, porque fungicida sistemico nao tem efeito nenhum em bacteria. Se aparecer centro claro nitido em outras manchas do talhao, refaca a analise.";
+      // (o raciocinio anterior do modelo e descartado de proposito)
       d.diagnostico="aureolada";
       if(d.confianca==="alta") d.confianca="media";
       // injetarProdutosNoResultado() ja rodou ANTES desta trava no pipeline
@@ -4472,7 +4503,7 @@ function corrigirCercosporioseSemCentroClaro(resultado) {
       if(d.confianca==="alta") d.confianca="media";
       injetarProdutos(d);
     }
-    delete d.centro_claro_confirmado; // campo interno, nao deve vazar pro app
+    delete d.centro_claro_confirmado; delete d.halo_largo_confirmado; // campos internos, nao devem vazar pro app
   });
   return resultado;
 }

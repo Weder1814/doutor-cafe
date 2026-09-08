@@ -1923,7 +1923,7 @@ app.post("/diagnostico", async function(req, res) {
       // "ANTES" com "DEPOIS" no log: se o nome sumiu e a confianca dele era
       // "baixa", foi o focarNoPrincipal fazendo o que deveria.
       var diagsAntes = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
-      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
       var diagsDepois = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
       if(diagsAntes!==diagsDepois) console.log("DIAGNOSTICOS ANTES/DEPOIS das travas — ANTES: ["+diagsAntes+"] DEPOIS: ["+diagsDepois+"]");
       resultado=anexarReferenciaVisual(resultado);
@@ -2777,7 +2777,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2820,7 +2820,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado = corrigirCercosporioseSemCentroClaro(resultado);resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado = corrigirCercosporioseSemCentroClaro(resultado);resultado = avisarCarencia(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -3073,7 +3073,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -4122,7 +4122,25 @@ var PRODUTOS_POR_DIAGNOSTICO = {
     { nome:"Imidacloprido 700WG", tipo:"inseticida", dose_min:0.3, dose_max:0.5, unidade:"kg", por:"hectare", proporcao_por_litro:0.4, unidade_proporcao:"g", intervalo_reaplicacao:30 }
   ],
   broca: [
-    { nome:"Clorpirifos 480EC", tipo:"inseticida", dose_min:1.5, dose_max:2, unidade:"L", por:"hectare", proporcao_por_litro:1.75, unidade_proporcao:"mL", intervalo_reaplicacao:30 }
+    // CLORPIRIFOS REMOVIDO 07/09/2026 (auditoria pre-lancamento). Motivos:
+    //  1. Banido para uso agricola na Uniao Europeia, nos EUA e na Argentina
+    //     por neurotoxicidade no desenvolvimento. No Brasil ainda tem registro,
+    //     mas esta na fila de reavaliacao da Anvisa por esse mesmo motivo.
+    //  2. Cafe brasileiro e de exportacao. O limite de residuo europeu para
+    //     clorpirifos foi reduzido ao limite de deteccao — residuo detectavel
+    //     reprova o lote. Recomendar isso para BROCA, que so e diagnosticada
+    //     com o fruto ja formado, e recomendar bem perto da colheita.
+    //  3. A monografia da Anvisa manteve apenas as modalidades tratorizada,
+    //     pivo central e aerea com GPS. O publico deste app pulveriza com
+    //     costal de 20 L — a propria calculadora de calda do app assume isso.
+    //     Ou seja, estavamos indicando um produto numa modalidade que nem
+    //     consta como mantida para ele.
+    // Preferimos deixar a broca SEM produto quimico sugerido a sugerir um
+    // errado: o app passa a orientar o manejo que funciona e nao depende de
+    // registro (colheita bem feita e repasse eliminam o inoculo do ano
+    // seguinte), e manda confirmar o quimico com agronomo. Quando um
+    // substituto for validado com bula e carencia conferidas no AGROFIT,
+    // basta acrescentar aqui.
   ]
 };
 
@@ -4377,12 +4395,63 @@ function corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida) {
 //
 // Igual a ferrugem: fonte de verdade e o campo estruturado centro_claro_confirmado,
 // nao o texto livre — texto e mais facil do modelo contornar sem perceber.
+// ── AVISO DE CARENCIA (intervalo de seguranca) ───────────────────
+// CRIADO 07/09/2026 na auditoria pre-lancamento. Lacuna encontrada: dos 20
+// produtos da tabela, apenas 1 tinha o campo carencia_dias, e o app NUNCA
+// mostrava carencia ao produtor em lugar nenhum. O app dizia qual produto
+// aplicar, a dose, e de quantos em quantos dias repetir — e nao dizia quantos
+// dias antes da colheita precisa parar.
+//
+// Por que isso e serio num app de cafe especificamente:
+//   1. Varios diagnosticos so existem com a lavoura JA carregada de fruto
+//      (broca, antracnose_fruto, cercosporiose de fruto). Ou seja, o app fala
+//      justamente com quem esta perto da colheita.
+//   2. Cafe brasileiro e majoritariamente de exportacao, e residuo acima do
+//      LMR do comprador rejeita o lote inteiro. O prejuizo nao e o custo da
+//      aplicacao: e a saca.
+//   3. Respeitar carencia e obrigacao legal de bula, nao recomendacao.
+//
+// Por que o aviso e generico e nao um numero por produto: a carencia varia por
+// marca comercial e por cultura dentro do mesmo ingrediente ativo. Preencher
+// um numero por ingrediente sem conferir bula a bula no AGROFIT seria repetir
+// o erro que esta auditoria veio corrigir — dar precisao que nao existe. O
+// numero exato entra depois, conferido com agronomo, no campo carencia_dias.
+//
+// Vai no campo 'acao' de proposito: e o unico lugar que aparece no app sem
+// depender de deploy novo do frontend chegar no aparelho do produtor.
+var AVISO_CARENCIA = "Antes de aplicar, confira a CARENCIA na bula (quantos dias antes da colheita voce precisa parar). Se a lavoura ja esta com fruto, isso decide se pode aplicar agora: produto aplicado dentro da carencia deixa residuo no cafe e pode reprovar o lote na venda.";
+
+function avisarCarencia(resultado) {
+  if(!resultado || !resultado.diagnosticos) return resultado;
+  resultado.diagnosticos.forEach(function(d){
+    if(!d || !d.fungicidas || !d.fungicidas.length) return;   // sem quimico, sem carencia
+    if((d.acao||"").indexOf("CARENCIA") > -1) return;         // ja avisado
+    d.acao = (d.acao ? d.acao.trim() + " " : "") + AVISO_CARENCIA;
+  });
+  return resultado;
+}
+
 function corrigirCercosporioseSemCentroClaro(resultado) {
   if(!resultado||!resultado.diagnosticos||!resultado.diagnosticos.length) return resultado;
   resultado.diagnosticos.forEach(function(d){
     if(!d) return;
     var campoPresente = d.centro_claro_confirmado===true || d.centro_claro_confirmado===false;
-    if(!campoPresente) { delete d.centro_claro_confirmado; return; } // modelo nao preencheu: nao ha o que decidir aqui, mantem como veio
+    if(!campoPresente) {
+      // CORRIGIDO 07/09/2026 (auditoria). Antes esta trava simplesmente
+      // desistia quando o campo vinha ausente — ou seja, o modelo escapava
+      // dela so por OMITIR centro_claro_confirmado, e a cercosporiose passava
+      // com fungicida sistemico e confianca alta. A trava irma da ferrugem ja
+      // tinha rede de seguranca para esse caso; esta nao tinha.
+      // Nao viramos o diagnostico sem evidencia: rebaixamos a confianca e
+      // registramos a hipotese concorrente, que e o que a ausencia do traco
+      // decisivo autoriza. Recomendar sistemico para aureolada (bacteria) nao
+      // tem efeito nenhum, entao o produtor precisa saber que a duvida existe.
+      if(d.diagnostico==="cercosporiose" && d.confianca==="alta"){
+        d.confianca="media";
+        d.diagnostico_diferencial="Aureolada (bacteriana) tambem entra na duvida: o centro branco-acinzentado, que e o traco decisivo da cercosporiose, nao foi confirmado nesta foto. Se a mancha for parda uniforme sem centro claro, fungicida sistemico nao resolve. "+(d.diagnostico_diferencial||"");
+      }
+      delete d.centro_claro_confirmado; return;
+    }
 
     if(d.diagnostico==="cercosporiose" && d.centro_claro_confirmado===false){
       // Sem o traco decisivo da cercosporiose: pelo prompt, isso e aureolada.

@@ -1923,7 +1923,7 @@ app.post("/diagnostico", async function(req, res) {
       // "ANTES" com "DEPOIS" no log: se o nome sumiu e a confianca dele era
       // "baixa", foi o focarNoPrincipal fazendo o que deveria.
       var diagsAntes = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
-      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
+      resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=garantirCloroseInternerval(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
       var diagsDepois = (resultado.diagnosticos||[]).map(function(d){ return d.diagnostico+"("+d.confianca+")"; }).join(", ");
       if(diagsAntes!==diagsDepois) console.log("DIAGNOSTICOS ANTES/DEPOIS das travas — ANTES: ["+diagsAntes+"] DEPOIS: ["+diagsDepois+"]");
       resultado=anexarReferenciaVisual(resultado);
@@ -2777,7 +2777,7 @@ app.post("/diagnostico-json", async function(req, res) {
     if(!resultado||!resultado.diagnosticos||resultado.diagnosticos.length===0){
       resultado={diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente uma foto mais clara.",fungicidas:[]}]};
     }
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=garantirCloroseInternerval(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado);
@@ -2820,7 +2820,7 @@ app.post("/gerar-exemplo-treino", async function(req, res) {
     var txt = d.content && d.content[0] ? d.content[0].text : "";
     var resultado = extrairJSON(txt);
     if (!resultado) return res.status(500).json({ erro:"Não foi possível extrair JSON da resposta da Sonnet.", bruto: txt });
-    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado = corrigirCercosporioseSemCentroClaro(resultado);resultado = avisarCarencia(resultado);resultado = focarNoPrincipal(resultado);
+    resultado = normalizarNomesDiagnostico(resultado);resultado = corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado = injetarProdutosNoResultado(resultado);resultado = garantirAvisoFerrugem(resultado);resultado = corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado = corrigirCercosporioseSemCentroClaro(resultado);resultado = garantirCloroseInternerval(resultado);resultado = avisarCarencia(resultado);resultado = focarNoPrincipal(resultado);
 
     var linhaJsonl = {
       messages: [
@@ -3074,7 +3074,7 @@ app.post("/diagnostico-video", async function(req, res) {
     var txt=d.choices&&d.choices[0]&&d.choices[0].message?d.choices[0].message.content:"";
     var resultado=extrairJSON(txt);
     if(!resultado&&!d.error) console.error("ERRO PARSE /diagnostico-video — texto recebido:", txt);
-    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
+    resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=garantirCloroseInternerval(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
@@ -4421,6 +4421,43 @@ function corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida) {
 // Vai no campo 'acao' de proposito: e o unico lugar que aparece no app sem
 // depender de deploy novo do frontend chegar no aparelho do produtor.
 var AVISO_CARENCIA = "Antes de aplicar, confira a CARENCIA na bula (quantos dias antes da colheita voce precisa parar). Se a lavoura ja esta com fruto, isso decide se pode aplicar agora: produto aplicado dentro da carencia deixa residuo no cafe e pode reprovar o lote na venda.";
+
+// ── TRAVA: CLOROSE INTERNERVAL NAO PODE SUMIR ────────────────────
+// CRIADA 07/09/2026 apos teste de campo. Caso real: folha com duas lesoes de
+// cercosporiose E clorose internerval evidente (nervuras verdes sobre limbo
+// amarelado, bem mais clara que as folhas vizinhas na mesma foto). O produtor
+// confirmou cercosporiose + magnesio. O app listou so a cercosporiose.
+//
+// Primeiro tentei resolver com texto no prompt — uma instrucao mandando olhar
+// a folha duas vezes, lesoes e cor de fundo separadamente. Nao adiantou: a
+// analise seguinte repetiu a omissao. E o mesmo padrao ja visto neste projeto:
+// quando o criterio e objetivo, texto sozinho no prompt nao segura; so trava
+// deterministica no servidor segura.
+//
+// Entao o prompt passou a devolver cor_fundo_limbo como campo obrigatorio,
+// avaliado separadamente dos diagnosticos, e a decisao veio para ca. A pressao
+// do prompt por "prefira uma lista menor" existe para barrar achado
+// especulativo, e estava barrando um achado evidente — lista menor nunca foi
+// para esconder deficiencia, que afeta a planta inteira e nao so a folha
+// fotografada.
+function garantirCloroseInternerval(resultado) {
+  if(!resultado || !resultado.diagnosticos) return resultado;
+  if(resultado.cor_fundo_limbo !== "clorose_internerval") return resultado;
+  var jaTem = resultado.diagnosticos.some(function(d){
+    return d && (d.diagnostico==="magnesio" || d.diagnostico==="ferro" || d.diagnostico==="manganes" || d.diagnostico==="zinco");
+  });
+  if(jaTem) return resultado;
+  resultado.diagnosticos.push({
+    diagnostico: "magnesio",
+    estagio: 2,
+    confianca: "media",
+    visto: "O limbo da folha esta amarelado com as nervuras nitidamente mais verdes, formando um desenho de rede. Esse padrao e clorose internerval e foi avaliado separadamente das manchas.",
+    diagnostico_diferencial: "Clorose internerval com nervuras verdes aponta para magnesio, que e o caso mais comum no cafeeiro. Ferro e manganes dao padrao parecido, mas costumam comecar pelas folhas NOVAS do ponteiro, enquanto magnesio comeca pelas folhas VELHAS da base do ramo. Repare em que parte da planta o amarelado esta para confirmar.",
+    acao: "Alem do tratamento da mancha, corrija o magnesio: sulfato de magnesio via foliar da resposta rapida, e se o solo estiver acido use calcario DOLOMITICO na calagem, que fornece magnesio junto com a correcao. Confirme com analise de solo antes de definir a quantidade.",
+    fungicidas: []
+  });
+  return resultado;
+}
 
 function avisarCarencia(resultado) {
   if(!resultado || !resultado.diagnosticos) return resultado;

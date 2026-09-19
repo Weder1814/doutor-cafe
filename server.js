@@ -100,8 +100,28 @@ function mesAtual() {
   return agora.getFullYear() + "-" + String(agora.getMonth() + 1).padStart(2, "0");
 }
 
-function analisesRestantes(u) {
+// ── PLANO VENCIDO CONTA COMO GRATUITO ────────────────────────────
+// Fonte de verdade unica para "qual plano vale AGORA". Sem isso, o plano
+// gravado no banco valia para sempre. Um plano sem data de expiracao
+// (admin, ativacao manual, conta antiga anterior a esta coluna) continua
+// valendo normalmente — so expira quem tem data e ja passou dela.
+function planoVigente(u) {
+  if (!u) return "gratuito";
   var plano = u.plano || "gratuito";
+  if (plano === "gratuito" || plano === "admin") return plano;
+  var exp = u.plano_expira_em || u.planoExpiraEm || null;
+  if (!exp) return plano;                       // sem data: mantem (ativacao manual)
+  var t = new Date(exp).getTime();
+  if (isNaN(t)) return plano;                   // data ilegivel: nao pune o usuario
+  // Tolerancia de 3 dias: a Google tem periodo de carencia quando o cartao
+  // falha, e o RTDN de renovacao as vezes chega algumas horas depois do
+  // vencimento. Derrubar no segundo exato tiraria acesso de quem esta em dia.
+  if (Date.now() > t + (3 * 24 * 60 * 60 * 1000)) return "gratuito";
+  return plano;
+}
+
+function analisesRestantes(u) {
+  var plano = planoVigente(u);
   // Fallback usa LIMITES.gratuito (nao mais o hardcode 15) para nao
   // divergir do limite real quando o plano vier desconhecido/nulo.
   var limite = LIMITES[plano] || LIMITES.gratuito;
@@ -163,7 +183,8 @@ async function bloquearSeSemAnalises(userId) {
 }
 
 function videosRestantes(u) {
-  var plano = u.plano || "gratuito";
+  // usa o plano VIGENTE (respeita expiracao), nao o gravado cru
+  var plano = planoVigente(u);
   var limite = VIDEO_LIMITES[plano] || 2;
   var usados = u.videos_usados || u.videosUsados || 0;
   if (plano === "gratuito") {
@@ -253,6 +274,19 @@ async function initDB() {
     `);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mes_reset TEXT DEFAULT ''`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS videos_usados INTEGER DEFAULT 0`);
+    // ── EXPIRACAO DO PLANO (18/09/2026) ──────────────────────────
+    // Ate aqui o plano do usuario NAO TINHA DATA DE FIM em lugar nenhum.
+    // Quem assinava virava "basico"/"pro"/"premium" no banco e continuava
+    // assim para sempre; a unica coisa capaz de rebaixar era chegar um
+    // webhook RTDN da Google. Se esse webhook se perdesse (Pub/Sub mal
+    // configurado, servidor fora do ar no minuto da entrega, token ausente
+    // da tabela pagamentos), o plano pago virava vitalicio e ninguem
+    // descobria — nao ha erro, nao ha log, o usuario so continua usando.
+    //
+    // Agora guardamos o expiryTime que a propria Play API devolve, e ele
+    // funciona como REDE DE SEGURANCA: mesmo sem nenhum webhook, o plano
+    // cai sozinho no dia em que a assinatura realmente vence.
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS plano_expira_em TIMESTAMPTZ`);
     // Trava contra colisao de PIN (30/07/2026) — impede duas contas com o
     // mesmo PIN, que causava login sempre cair na conta errada (LIMIT 1 sem
     // ORDER BY pegava qualquer uma das duplicadas). Indice PARCIAL (so pin
@@ -428,7 +462,7 @@ async function dbIncrementarAnalise(userId) {
       var r = await pool.query("SELECT plano, mes_reset FROM usuarios WHERE user_id=$1", [userId]);
       if (r.rows.length > 0) {
         var u = r.rows[0];
-        var plano = u.plano || "gratuito";
+        var plano = planoVigente(u);
         var mesReset = u.mes_reset || "";
         if (plano !== "gratuito" && mesReset !== mes) {
           await pool.query(
@@ -447,7 +481,7 @@ async function dbIncrementarAnalise(userId) {
   }
   if (usuariosMemoria[userId]) {
     var u = usuariosMemoria[userId];
-    var plano = u.plano || "gratuito";
+    var plano = planoVigente(u);
     if (plano !== "gratuito" && (u.mesReset||"") !== mes) {
       u.analisesUsadas = 1; u.mesReset = mes;
     } else {
@@ -469,7 +503,7 @@ async function dbIncrementarVideo(userId) {
       var r = await pool.query("SELECT plano, mes_reset, videos_usados FROM usuarios WHERE user_id=$1", [userId]);
       if (r.rows.length > 0) {
         var u = r.rows[0];
-        var plano = u.plano || "gratuito";
+        var plano = planoVigente(u);
         var mesReset = u.mes_reset || "";
         if (plano !== "gratuito" && mesReset !== mes) {
           await pool.query(
@@ -488,7 +522,7 @@ async function dbIncrementarVideo(userId) {
   }
   if (usuariosMemoria[userId]) {
     var u = usuariosMemoria[userId];
-    var plano = u.plano || "gratuito";
+    var plano = planoVigente(u);
     if (plano !== "gratuito" && (u.mesReset||"") !== mes) {
       u.videosUsados = 1; u.mesReset = mes;
     } else {
@@ -596,16 +630,16 @@ async function confirmarCompraPlay(productId, purchaseToken) {
 
 // Ativa o plano no banco a partir do estado retornado pela Play API.
 // basePlanId precisa bater com uma chave de PLANOS (ex: "basico_mensal").
-async function ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, valor) {
+async function ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, valor, expiraEm) {
   var tipo = basePlanId.indexOf("premium")>-1?"premium":basePlanId.indexOf("pro")>-1?"pro":"basico";
-  await dbAtualizarPlano(userId, tipo, basePlanId);
+  await dbAtualizarPlano(userId, tipo, basePlanId, expiraEm);
   if (pool) {
     await pool.query(
       "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
       [purchaseToken.substring(0,120), userId, basePlanId, "approved", valor||0]
     );
   }
-  console.log("✅ [Play Billing] Plano", tipo, "ativado para", userId);
+  console.log("✅ [Play Billing] Plano", tipo, "ativado para", userId, "| vence em:", expiraEm||"(sem data)");
   return tipo;
 }
 
@@ -639,9 +673,13 @@ async function processarCompraPlay(userId, purchaseToken) {
   if (!plano) {
     return { ok:false, erro:"basePlanId derivado da Play API nao encontrado em PLANOS: "+basePlanId+" (confira se o nome do base plan no Play Console eh exatamente 'mensal'/'anual')." };
   }
-  var tipoAtivado = await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, plano.valor);
+  // expiryTime vem no lineItem confirmado pela propria Google — e a data em
+  // que o acesso realmente termina se nao houver renovacao. Guardar isso e o
+  // que impede um plano pago virar vitalicio quando um webhook se perde.
+  var expiraEm = item.expiryTime || dadosCompra.expiryTime || null;
+  var tipoAtivado = await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, plano.valor, expiraEm);
   try { await confirmarCompraPlay(item.productId, purchaseToken); } catch(eAck) { console.error("Erro ao confirmar compra:", eAck.message); }
-  return { ok:true, tipo:tipoAtivado, plano:basePlanId };
+  return { ok:true, tipo:tipoAtivado, plano:basePlanId, expiraEm:expiraEm };
 }
 
 // Chamado pelo app logo apos o usuario completar a compra via
@@ -652,6 +690,9 @@ app.post("/verificar-compra-play", async function(req, res) {
   var purchaseToken = req.body.purchaseToken;
   if (!userId || !purchaseToken) {
     return res.status(400).json({ erro:"Campos obrigatorios: userId, purchaseToken" });
+  }
+  if (!checkCobrancaRate("vc|" + userId + "|" + ipDaReq(req))) {
+    return res.status(429).json({ erro:"Muitas verificacoes seguidas. Aguarde alguns minutos." });
   }
   try {
     var resultado = await processarCompraPlay(userId, purchaseToken);
@@ -674,6 +715,9 @@ app.post("/reconciliar-compras-play", async function(req, res) {
   var tokens = req.body.purchaseTokens;
   if (!userId || !Array.isArray(tokens) || !tokens.length) {
     return res.status(400).json({ erro:"Campos obrigatorios: userId, purchaseTokens (array)." });
+  }
+  if (!checkCobrancaRate("rc|" + userId + "|" + ipDaReq(req))) {
+    return res.status(429).json({ erro:"Muitas reconciliacoes seguidas. Aguarde alguns minutos." });
   }
   tokens = tokens.slice(0, 10);
   var resultados = [];
@@ -721,21 +765,65 @@ app.post("/webhook-play-rtdn", async function(req, res) {
       return res.status(200).json({ ok:true });
     }
 
-    if (tipoNotif===2 || tipoNotif===1 || tipoNotif===7) {
-      // Renovado, recuperado ou reiniciado -> reconfirma que esta ativo
+    // ── CORRIGIDO 18/09/2026 ────────────────────────────────────
+    // O tratamento anterior rebaixava para gratuito no tipo 3 junto com o 12
+    // e o 13. Isso estava ERRADO e tirava do cliente o que ele ja tinha pago.
+    //
+    // Na Google Play, tipo 3 (SUBSCRIPTION_CANCELED) NAO significa que o
+    // acesso acabou: significa que o usuario desligou a renovacao automatica.
+    // A assinatura continua valendo ate o fim do periodo ja pago. Quem avisa
+    // que o acesso terminou de fato e o tipo 13 (EXPIRED).
+    //
+    // Na pratica, o que acontecia: o produtor pagava R$29,90, cancelava a
+    // renovacao no segundo dia para nao ser cobrado de novo — atitude
+    // comum e legitima — e PERDIA na hora os 28 dias que ja tinha pago.
+    // Isso rende pedido de reembolso, nota 1 na Play Store e reclamacao
+    // procedente: ele pagou por um mes e recebeu dois dias.
+    //
+    // Agora: tipo 3 so registra. Quem derruba o acesso e o 13 (venceu) ou o
+    // 12 (revogado — reembolso/estorno, aí o acesso termina na hora mesmo).
+    if (tipoNotif===2 || tipoNotif===1 || tipoNotif===7 || tipoNotif===4) {
+      // 4 comprado, 2 renovado, 1 recuperado, 7 reiniciado -> confirma ativo.
+      // O tipo 4 (SUBSCRIPTION_PURCHASED) nao era tratado: servia de rede
+      // para a compra que o app nao conseguiu confirmar (fechou no meio,
+      // perdeu sinal). So funciona quando o token ja esta na tabela
+      // pagamentos; a primeira compra continua sendo confirmada pelo app
+      // via /verificar-compra-play e pela reconciliacao no boot.
       var dados = await consultarAssinaturaPlay(purchaseToken);
       if (dados.subscriptionState==="SUBSCRIPTION_STATE_ACTIVE" && basePlanId) {
-        await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, (PLANOS[basePlanId]||{}).valor);
+        var itemR = dados.lineItems && dados.lineItems[0];
+        var expR = (itemR && itemR.expiryTime) || dados.expiryTime || null;
+        await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, (PLANOS[basePlanId]||{}).valor, expR);
       }
-    } else if (tipoNotif===3 || tipoNotif===12 || tipoNotif===13) {
-      // Cancelado, revogado ou expirado -> rebaixa pro plano gratuito
-      await dbAtualizarPlano(userId, "gratuito", null);
+    } else if (tipoNotif===3) {
+      // Renovacao automatica desligada. O acesso CONTINUA ate vencer.
+      // Nao mexemos no plano; so realinhamos a data de expiracao com o que
+      // a Google diz, para o acesso cair sozinho no dia certo mesmo que o
+      // webhook de expiracao (13) nunca chegue.
+      try {
+        var dCanc = await consultarAssinaturaPlay(purchaseToken);
+        var itemC = dCanc.lineItems && dCanc.lineItems[0];
+        var expC = (itemC && itemC.expiryTime) || dCanc.expiryTime || null;
+        if (expC && pool) {
+          await pool.query("UPDATE usuarios SET plano_expira_em=$2, atualizado_em=NOW() WHERE user_id=$1", [userId, new Date(expC)]);
+        }
+        console.log("ℹ️ [Play Billing] Renovacao desligada por", userId, "— acesso mantido ate", expC||"(data nao informada)");
+      } catch(eC) {
+        console.error("RTDN tipo 3: nao consegui confirmar a data de expiracao:", eC.message);
+      }
+    } else if (tipoNotif===12 || tipoNotif===13) {
+      // 13 expirou (acesso acabou de verdade), 12 revogado (reembolso/estorno
+      // — nesse caso o acesso termina imediatamente, por determinacao da Google)
+      await dbAtualizarPlano(userId, "gratuito", null, null);
       console.log("⬇️ [Play Billing] Plano rebaixado pra gratuito:", userId, "(notificationType", tipoNotif+")");
     }
     // Os demais tipos (5 on_hold, 6 grace period, 9 deferred, 10 paused,
     // 11 pause_schedule, 14 pending_cancel) sao informativos — por ora
-    // so logamos, sem mudar o plano do usuario automaticamente. Revisar
-    // se isso precisa de tratamento proprio conforme o volume de uso.
+    // so logamos, sem mudar o plano do usuario automaticamente. Note que
+    // 5 (on_hold) e 6 (grace period) sao situacoes de pagamento falhado em
+    // que a propria Google ainda da prazo ao cliente; deixar o acesso de pe
+    // durante esse prazo e o comportamento correto, e a expiracao gravada
+    // no banco encerra sozinha se o pagamento nunca for regularizado.
 
     res.status(200).json({ ok:true });
   } catch(e) {
@@ -746,13 +834,23 @@ app.post("/webhook-play-rtdn", async function(req, res) {
   }
 });
 
-async function dbAtualizarPlano(userId, plano, planoId) {
+// expiraEm (18/09/2026): data em que a assinatura deixa de valer, vinda do
+// campo expiryTime da propria Play API. null = sem data (ativacao manual de
+// admin, ou rebaixamento para gratuito) — nesse caso a coluna e limpa.
+//
+// ATENCAO ao zerar analises_usadas: isso e correto na COMPRA e na RENOVACAO
+// (mes novo, cota nova), mas seria um presente indevido se fosse chamado a
+// cada webhook informativo. Por isso os tipos informativos do RTDN nao
+// chamam esta funcao.
+async function dbAtualizarPlano(userId, plano, planoId, expiraEm) {
   var mes = mesAtual();
+  var exp = expiraEm ? new Date(expiraEm) : null;
+  if (exp && isNaN(exp.getTime())) exp = null;
   if (pool) {
     try {
       await pool.query(
-        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, atualizado_em=NOW() WHERE user_id=$1",
-        [userId, plano, planoId||"", mes]
+        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, plano_expira_em=$5, atualizado_em=NOW() WHERE user_id=$1",
+        [userId, plano, planoId||"", mes, exp]
       );
       return true;
     } catch(e) { console.error("dbAtualizarPlano:", e.message); }
@@ -762,6 +860,7 @@ async function dbAtualizarPlano(userId, plano, planoId) {
     usuariosMemoria[userId].planoId = planoId;
     usuariosMemoria[userId].analisesUsadas = 0;
     usuariosMemoria[userId].mesReset = mes;
+    usuariosMemoria[userId].plano_expira_em = exp;
   }
   return true;
 }
@@ -895,9 +994,23 @@ function normalizarUsageOpenRouter(usage) {
 //    e /teste-daninha-flash existem para isso).
 // Para reverter: troque as duas linhas abaixo de volta para "qwen3.7-plus".
 // Nada mais precisa mudar — o resto do arquivo referencia estas constantes.
-var MODELO_PRODUCAO = "qwen3.7-flash";
-var MODELO_PRODUCAO_LOG = "qwen3.7-flash";
-var URL_MODELO_PRODUCAO = "https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"; // endpoint dedicado do workspace (Singapore) — mais estavel que o generico
+//
+// AGORA CONFIGURAVEL POR VARIAVEL DE AMBIENTE (07/09/2026). Motivo concreto:
+// a Alibaba avisou que desativa em 10/10/2026, de uma vez, todos os modelos
+// "legacy long-tail" do Model Studio, e que chamada para modelo desativado
+// simplesmente NAO retorna resultado. O mesmo vale para instabilidade ou
+// mudanca de preco. Antes, trocar de modelo exigia editar este arquivo e
+// fazer deploy; com as variaveis abaixo, da para trocar no painel do Railway
+// e reiniciar, com o app fora do ar por segundos em vez de minutos.
+// Os valores atuais continuam como PADRAO: se a variavel nao existir, nada
+// muda em relacao ao que esta rodando hoje.
+//   MODELO_PRODUCAO      — nome do modelo enviado na chamada
+//   MODELO_PRODUCAO_LOG  — nome usado no log de custo (mantenha igual, a menos
+//                          que queira separar os registros de um teste A/B)
+//   URL_MODELO_PRODUCAO  — endpoint; precisa trocar junto se mudar de provedor
+var MODELO_PRODUCAO = process.env.MODELO_PRODUCAO || "qwen3.7-flash";
+var MODELO_PRODUCAO_LOG = process.env.MODELO_PRODUCAO_LOG || MODELO_PRODUCAO;
+var URL_MODELO_PRODUCAO = process.env.URL_MODELO_PRODUCAO || "https://ws-qmtud7hcd86gxmha.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"; // endpoint dedicado do workspace (Singapore) — mais estavel que o generico
 function headersModeloProducao() {
   return { "Content-Type":"application/json", "Authorization":"Bearer "+process.env.DASHSCOPE_API_KEY };
 }
@@ -1036,6 +1149,66 @@ var PLANOS = {
   premium_mensal: { nome:"Premium Mensal", valor:49.90,  analises:500 },
   premium_anual:  { nome:"Premium Anual",  valor:499.90, analises:500 }
 };
+
+// ── LIMITE DE CADENCIA NOS ENDPOINTS DE COBRANCA (18/09/2026) ────
+// Os endpoints de pagamento nao tinham limite nenhum. Todos eles disparam
+// chamadas a APIs externas pagas ou cotadas: /assinar-site e /gerar-pix
+// batem no Mercado Pago, /verificar-compra-play e /reconciliar-compras-play
+// batem na Google Play Developer API (que tem cota diaria e, estourada,
+// para de responder — derrubando a confirmacao de compra de TODOS os
+// clientes, inclusive os legitimos).
+//
+// Sao acoes raras por natureza: ninguem assina dez vezes por minuto. Um
+// teto folgado nao atrapalha ninguem de verdade e impede que um script
+// consuma a cota do dia.
+var cobrancaRateMap = {};
+var COBRANCA_MAX = 12;                       // por janela
+var COBRANCA_JANELA = 10 * 60 * 1000;        // 10 minutos
+function checkCobrancaRate(chave) {
+  var agora = Date.now();
+  chave = String(chave || "anonimo");
+  if (!cobrancaRateMap[chave] || agora > cobrancaRateMap[chave].resetAt) {
+    cobrancaRateMap[chave] = { count:1, resetAt: agora + COBRANCA_JANELA };
+    return true;
+  }
+  cobrancaRateMap[chave].count++;
+  return cobrancaRateMap[chave].count <= COBRANCA_MAX;
+}
+setInterval(function() {
+  var agora = Date.now();
+  Object.keys(cobrancaRateMap).forEach(function(k){ if (agora > cobrancaRateMap[k].resetAt) delete cobrancaRateMap[k]; });
+}, 10 * 60 * 1000);
+
+// ── MERCADO PAGO: ids de plano e links de emergencia ─────────────
+// Os preapproval_plan_id abaixo sao os MESMOS que estavam escritos a mao no
+// index.html. Trazer para o servidor tem dois motivos: (1) o app passa a
+// pedir o link ao backend, que anexa o userId; (2) se um plano mudar, muda
+// num lugar so, em vez de num HTML que fica meses preso no cache do celular.
+// Sobrescrevivel por variavel de ambiente para trocar sem deploy.
+var MP_PLAN_IDS = {
+  basico_mensal:  process.env.MP_PLAN_BASICO_MENSAL  || "3bdcbffc028a4d259f32fe37a96ae224",
+  basico_anual:   process.env.MP_PLAN_BASICO_ANUAL   || "bd08a04de79f4213886611769b6c9486",
+  pro_mensal:     process.env.MP_PLAN_PRO_MENSAL     || "106181c5ed584a65af06403bd1af0608",
+  pro_anual:      process.env.MP_PLAN_PRO_ANUAL      || "661a046d15c9415a9508970d2f45c819",
+  premium_mensal: process.env.MP_PLAN_PREMIUM_MENSAL || "5bcfb2b27c6241b8a433b3ec0fb2a5c7",
+  premium_anual:  process.env.MP_PLAN_PREMIUM_ANUAL  || "346f4589aca84ba3b4e76351563fdbe1"
+};
+var LINKS_MP_FALLBACK = {};
+Object.keys(MP_PLAN_IDS).forEach(function(k){
+  LINKS_MP_FALLBACK[k] = "https://www.mercadopago.com.br/subscriptions/checkout?preapproval_plan_id=" + MP_PLAN_IDS[k];
+});
+
+// Quanto tempo um plano do Mercado Pago vale a partir do pagamento aprovado.
+// Tolerancia de 3 dias pelo mesmo motivo do Play: a cobranca recorrente nem
+// sempre cai no segundo exato, e derrubar o acesso de quem esta em dia e pior
+// do que dar alguns dias a mais.
+function expiracaoMP(planoId) {
+  var d = new Date();
+  if (String(planoId).indexOf("anual") > -1) d.setFullYear(d.getFullYear() + 1);
+  else d.setMonth(d.getMonth() + 1);
+  d.setDate(d.getDate() + 3);
+  return d;
+}
 
 // ── ENDPOINTS BÁSICOS ─────────────────────────────────────────
 app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe API", db: pool?"postgres":"memoria" }); });
@@ -1252,7 +1425,7 @@ app.post("/atualizar-foto-perfil", async function(req, res) {
     await dbSaveUser({
       userId: userId, cpf: u.cpf||"", celular: u.celular||"", nome: u.nome||"",
       pin: u.pin||"", email: u.email||"", regiao: u.regiao||"",
-      fotoPerfil: fotoPerfil, plano: u.plano||"gratuito",
+      fotoPerfil: fotoPerfil, plano: planoVigente(u),
       analisesUsadas: u.analises_usadas||0, mesReset: u.mes_reset||""
     });
     res.json({ ok:true, fotoPerfil: fotoPerfil });
@@ -1284,7 +1457,7 @@ app.post("/entrar", async function(req, res) {
       email: u.email,
       regiao: u.regiao,
       fotoPerfil: u.foto_perfil||"",
-      plano: u.plano||"gratuito",
+      plano: planoVigente(u),
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes
     });
@@ -1312,7 +1485,7 @@ app.post("/entrar-pin", async function(req, res) {
       celular: u.celular,
       email: u.email,
       regiao: u.regiao,
-      plano: u.plano||"gratuito",
+      plano: planoVigente(u),
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes
     });
@@ -1328,13 +1501,13 @@ app.get("/analises-restantes/:userId", async function(req, res) {
     if (!u) return res.status(404).json({ erro:"Usuario nao encontrado." });
     var restantes = analisesRestantes(u);
     res.json({
-      plano: u.plano||"gratuito",
+      plano: planoVigente(u),
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,
       analisesRestantes: restantes,
-      limite: LIMITES[u.plano||"gratuito"]||LIMITES.gratuito,
+      limite: LIMITES[planoVigente(u)]||LIMITES.gratuito,
       videosUsados: u.videos_usados||u.videosUsados||0,
       videosRestantes: videosRestantes(u),
-      limiteVideo: VIDEO_LIMITES[u.plano||"gratuito"]||2
+      limiteVideo: VIDEO_LIMITES[planoVigente(u)]||2
     });
   } catch(e) {
     res.status(500).json({ erro:e.message });
@@ -1351,10 +1524,10 @@ app.post("/incrementar-analise", async function(req, res) {
   var atualizado = await dbGetUser(userId);
   res.json({
     ok:true,
-    plano: (atualizado&&atualizado.plano)||"gratuito",
+    plano: planoVigente(atualizado),
     analisesUsadas: (atualizado&&(atualizado.analises_usadas||atualizado.analisesUsadas))||0,
     analisesRestantes: atualizado ? analisesRestantes(atualizado) : null,
-    limite: LIMITES[(atualizado&&atualizado.plano)||"gratuito"]||LIMITES.gratuito
+    limite: LIMITES[planoVigente(atualizado)]||LIMITES.gratuito
   });
 });
 
@@ -1533,9 +1706,108 @@ app.get("/custo-api", async function(req, res) {
 });
 
 // ── WEBHOOK MERCADO PAGO ──────────────────────────────────────
+// ── ASSINATURA DO MERCADO PAGO: resolve o dono e ativa ───────────
+// CRIADO 18/09/2026. O webhook abaixo so tratava type "payment" — que e a
+// notificacao de pagamento AVULSO (o caso do Pix). Assinatura recorrente
+// notifica em outros topicos ("preapproval"/"subscription_preapproval" na
+// autorizacao e "subscription_authorized_payment" a cada cobranca), e esses
+// caiam no vazio. Somado a falta do external_reference, nenhuma assinatura
+// feita pelo site jamais ativou sozinha.
+async function ativarAssinaturaMP(preapprovalId, origem) {
+  var r = await fetch("https://api.mercadopago.com/preapproval/" + encodeURIComponent(preapprovalId), {
+    headers: { "Authorization":"Bearer "+MP_TOKEN }
+  });
+  var a = await r.json();
+  if (!a || a.error) { console.error("MP preapproval "+preapprovalId+" nao lido:", JSON.stringify(a).substr(0,200)); return; }
+
+  // external_reference e o userId que gravamos ao criar a assinatura.
+  var userId = a.external_reference || null;
+  if (!userId && pool) {
+    // Rede de seguranca: assinaturas criadas ANTES desta correcao (pelos
+    // links estaticos) nao tem external_reference. Tentamos achar pelo
+    // registro pendente e, por ultimo, pelo email do pagador.
+    try {
+      var rp = await pool.query("SELECT user_id FROM pagamentos WHERE id=$1 LIMIT 1", [String(preapprovalId)]);
+      if (rp.rows[0]) userId = rp.rows[0].user_id;
+      if (!userId && a.payer_email) {
+        var re = await pool.query("SELECT user_id FROM usuarios WHERE LOWER(email)=LOWER($1) ORDER BY criado_em DESC LIMIT 1", [a.payer_email]);
+        if (re.rows[0]) userId = re.rows[0].user_id;
+      }
+    } catch(eB) { console.error("MP: busca de dono falhou:", eB.message); }
+  }
+  if (!userId) {
+    // Nao adivinhamos. Fica registrado para resolver manualmente com
+    // /admin/definir-plano, e o produtor nao fica sem resposta.
+    console.error("⚠️ MP: assinatura", preapprovalId, "aprovada mas SEM dono identificavel. Email do pagador:", a.payer_email||"(nao informado)", "— ative manualmente por /admin/definir-plano.");
+    return;
+  }
+
+  var planoId = null;
+  if (pool) {
+    try {
+      var rpl = await pool.query("SELECT plano_id FROM pagamentos WHERE id=$1 AND plano_id IS NOT NULL LIMIT 1", [String(preapprovalId)]);
+      if (rpl.rows[0]) planoId = rpl.rows[0].plano_id;
+    } catch(e) {}
+  }
+  if (!planoId) {
+    // Sem registro previo: descobre pelo plano do Mercado Pago.
+    var idPlanoMP = a.preapproval_plan_id;
+    Object.keys(MP_PLAN_IDS).forEach(function(k){ if (MP_PLAN_IDS[k] === idPlanoMP) planoId = k; });
+  }
+  if (!planoId) {
+    console.error("⚠️ MP: nao identifiquei o plano da assinatura", preapprovalId, "— ative manualmente.");
+    return;
+  }
+
+  var status = a.status;  // authorized | paused | cancelled | pending
+  var tipo = planoId.indexOf("premium")>-1?"premium":planoId.indexOf("pro")>-1?"pro":"basico";
+
+  if (status === "authorized") {
+    await dbAtualizarPlano(userId, tipo, planoId, expiracaoMP(planoId));
+    if (pool) {
+      try {
+        await pool.query(
+          "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO UPDATE SET status='approved'",
+          [String(preapprovalId), userId, planoId, "approved", (PLANOS[planoId]||{}).valor||0]
+        );
+      } catch(e) {}
+    }
+    console.log("✅ [MP "+origem+"] Plano", tipo, "ativado para", userId, "| vence em", expiracaoMP(planoId).toISOString());
+  } else if (status === "cancelled") {
+    // Mesmo criterio do Google Play: cancelar a renovacao NAO tira o que ja
+    // foi pago. O acesso segue ate a data de expiracao ja gravada, e cai
+    // sozinho por planoVigente(). Nada a fazer aqui alem de registrar.
+    console.log("ℹ️ [MP "+origem+"] Assinatura cancelada por", userId, "— acesso mantido ate a data ja paga.");
+  } else {
+    console.log("ℹ️ [MP "+origem+"] Assinatura", preapprovalId, "com status", status, "— nenhuma mudanca de plano.");
+  }
+}
+
 app.post("/webhook-pagamento", async function(req, res) {
   console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
   var data = req.body;
+
+  // Topicos de ASSINATURA (recorrente). O Mercado Pago usa nomes diferentes
+  // conforme a versao da integracao, entao aceitamos todos os conhecidos.
+  var tipoMP = data.type || data.topic || "";
+  var idMP = (data.data && data.data.id) || data.id || null;
+  if (idMP && (tipoMP === "subscription_preapproval" || tipoMP === "preapproval")) {
+    try { await ativarAssinaturaMP(idMP, tipoMP); }
+    catch(e) { console.error("Webhook MP assinatura erro:", e.message); }
+    return res.json({ ok:true });
+  }
+  // Cobranca recorrente aprovada: renova a validade da assinatura.
+  if (idMP && tipoMP === "subscription_authorized_payment") {
+    try {
+      var rr = await fetch("https://api.mercadopago.com/authorized_payments/"+encodeURIComponent(idMP), {
+        headers:{ "Authorization":"Bearer "+MP_TOKEN }
+      });
+      var ap = await rr.json();
+      if (ap && ap.preapproval_id) await ativarAssinaturaMP(ap.preapproval_id, "renovacao");
+    } catch(e) { console.error("Webhook MP renovacao erro:", e.message); }
+    return res.json({ ok:true });
+  }
+
   if (data.type === "payment" && data.data && data.data.id) {
     try {
       var r = await fetch("https://api.mercadopago.com/v1/payments/"+data.data.id, {
@@ -1547,7 +1819,10 @@ app.post("/webhook-pagamento", async function(req, res) {
         var planoId = pagamento.metadata.plano_id;
         var tipo    = planoId && planoId.indexOf("premium")>-1?"premium":planoId && planoId.indexOf("pro")>-1?"pro":"basico";
         if (userId) {
-          await dbAtualizarPlano(userId, tipo, planoId);
+          // Pix e pagamento avulso: vale por um ciclo a partir de agora.
+          // Antes nao gravava expiracao nenhuma, entao um Pix de R$29,90
+          // liberava o plano para sempre.
+          await dbAtualizarPlano(userId, tipo, planoId, expiracaoMP(planoId));
           if (pool) {
             await pool.query(
               "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
@@ -1564,6 +1839,10 @@ app.post("/webhook-pagamento", async function(req, res) {
 
 // ── GERAR PIX ─────────────────────────────────────────────────
 app.post("/gerar-pix", async function(req, res) {
+  if (!checkCobrancaRate("pix|" + (req.body.userId||"") + "|" + ipDaReq(req))) {
+    return res.status(429).json({ erro:"Muitas tentativas de PIX seguidas. Aguarde alguns minutos." });
+  }
+
   var planoId = req.body.plano, userId = req.body.userId;
   var email   = req.body.email||"produtor@doutorcafe.app";
   var plano   = PLANOS[planoId];
@@ -1623,6 +1902,83 @@ app.post("/gerar-pix", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
+// ── ASSINATURA PELO SITE (Mercado Pago) ──────────────────────────
+// CRIADO 18/09/2026, na auditoria comercial. O que existia antes:
+//
+// O app abria um link ESTATICO de checkout do Mercado Pago
+// (.../subscriptions/checkout?preapproval_plan_id=XXXX), um link fixo por
+// plano, igual para todo mundo. Esse link nao carrega NENHUMA identificacao
+// do usuario. Quando o pagamento era aprovado, o webhook recebia a
+// notificacao e procurava "pagamento.metadata.user_id" — que nunca existia,
+// porque ninguem tinha colocado ali. Resultado: o plano NAO era ativado.
+//
+// Some-se a isso que o app, ao voltar do checkout, gravava o plano no
+// localStorage por conta propria (ver verificarRetornoPagamento no
+// index.html). Ou seja, o produtor pagava, via a tela dizer "Bem-vindo ao
+// Plano Premium", e continuava travado nas analises do plano gratuito,
+// porque o servidor — que e quem conta — nunca soube da compra.
+//
+// Cliente pagando e nao recebendo e o pior defeito possivel num app, e esse
+// caminho estava assim para TODA venda feita fora do app Android.
+//
+// A correcao: criar a assinatura pela API, passando external_reference com
+// o userId. Assim toda notificacao futura dessa assinatura diz a quem ela
+// pertence. Se a API falhar, devolvemos o link estatico como ultimo recurso
+// e sinalizamos isso na resposta, para o app avisar o produtor de que a
+// ativacao pode nao ser automatica — melhor um aviso honesto do que uma
+// tela alegre e uma conta travada.
+app.post("/assinar-site", async function(req, res) {
+  var planoId = (req.body.plano||"").trim();
+  var userId  = (req.body.userId||"").trim();
+  var email   = (req.body.email||"").trim();
+  var plano   = PLANOS[planoId];
+
+  if (!plano)  return res.status(400).json({ erro:"Plano invalido.", planos_validos:Object.keys(PLANOS) });
+  if (!userId) return res.status(400).json({ erro:"userId obrigatorio — sem ele nao ha como ativar o plano depois do pagamento." });
+  if (!checkCobrancaRate(userId + "|" + ipDaReq(req))) return res.status(429).json({ erro:"Muitas tentativas de assinatura. Aguarde alguns minutos." });
+
+  var ciclo = planoId.indexOf("anual") > -1 ? "anual" : "mensal";
+  var linkEstatico = LINKS_MP_FALLBACK[planoId] || null;
+
+  if (!MP_TOKEN) {
+    return res.json({ url: linkEstatico, automatico:false, motivo:"Mercado Pago nao configurado no servidor." });
+  }
+
+  try {
+    var corpo = {
+      preapproval_plan_id: MP_PLAN_IDS[planoId] || undefined,
+      reason: "Doutor Cafe — " + plano.nome,
+      // external_reference e o que amarra a assinatura ao usuario. E o campo
+      // que faltava e que quebrava a ativacao inteira.
+      external_reference: userId,
+      payer_email: email || undefined,
+      back_url: "https://doutor-cafe-app.vercel.app?pagamento=retorno"
+    };
+    var r = await fetch("https://api.mercadopago.com/preapproval", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN },
+      body: JSON.stringify(corpo)
+    });
+    var d = await r.json();
+    if (d && d.init_point) {
+      if (pool) {
+        try {
+          await pool.query(
+            "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
+            [String(d.id), userId, planoId, "pending", plano.valor]
+          );
+        } catch(eIns) { console.error("/assinar-site: nao gravei o pendente:", eIns.message); }
+      }
+      return res.json({ url:d.init_point, id:d.id, automatico:true, ciclo:ciclo });
+    }
+    console.error("/assinar-site: Mercado Pago nao devolveu init_point:", JSON.stringify(d).substr(0,300));
+    return res.json({ url: linkEstatico, automatico:false, motivo:"Mercado Pago nao devolveu link de checkout." });
+  } catch(e) {
+    console.error("/assinar-site erro:", e.message);
+    return res.json({ url: linkEstatico, automatico:false, motivo:e.message });
+  }
+});
+
 app.post("/criar-assinatura", async function(req, res) {
   var planoId = req.body.plano, email = req.body.email||"produtor@doutorcafe.app", userId = req.body.userId, plano = PLANOS[planoId];
   if (!plano) return res.status(400).json({ erro:"Plano inválido" });
@@ -1678,7 +2034,7 @@ app.get("/plano/:userId", async function(req, res) {
       videosUsados:0, videosRestantes: VIDEO_LIMITES.gratuito, limiteVideo: VIDEO_LIMITES.gratuito
     });
     var restantes = analisesRestantes(u);
-    var planoU = u.plano||"gratuito";
+    var planoU = planoVigente(u);
     res.json({
       plano: planoU,
       analisesUsadas: u.analises_usadas||u.analisesUsadas||0,

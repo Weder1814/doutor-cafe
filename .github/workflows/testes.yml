@@ -1,17 +1,22 @@
-# Roda as travas de solo a cada push e a cada pull request.
-# Motivo: o desenvolvimento e feito pelo celular, sem terminal para rodar
-# "node teste-solo.js" na mao. O GitHub roda por nos e marca o commit com
-# visto verde ou X vermelho.
+# Roda as travas do app a cada push e a cada pull request.
+# Motivo: o desenvolvimento e feito pelo celular, sem terminal local para
+# rodar os testes na mao. O GitHub roda por nos e marca o commit com visto
+# verde ou X vermelho, visivel tambem no app do GitHub.
 #
-# X vermelho em "Travas de solo" = dose de calcario ou de potassio saindo
-# errada. Nao faca deploy nesse estado.
+# X vermelho em "Travas de solo"    = dose de calcario ou potassio saindo errada.
+# X vermelho em "Ciclo da assinatura" = cliente perdendo acesso que pagou, ou
+#                                       plano pago virando vitalicio.
+# X vermelho em "Valores e planos"  = preco ou limite divergindo entre o app e
+#                                     o servidor (o mesmo tipo de erro do
+#                                     "10 analises em cima, 15 embaixo").
+# Nao faca deploy com nenhum deles vermelho.
 
 name: Testes
 
 on:
   push:
   pull_request:
-  workflow_dispatch:   # permite rodar na mao pelo botao "Run workflow"
+  workflow_dispatch:
 
 jobs:
   solo:
@@ -19,13 +24,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Sintaxe do servidor
+        run: node --check server.js
+      - name: Travas de calagem, unidade do laudo e potassio
+        run: node teste-solo.js
 
+  planos:
+    name: Ciclo da assinatura (comprou, cancelou, venceu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Comprou, cancelou, venceu, virou o mes
+        run: node teste-planos.js
+
+  valores:
+    name: Valores e planos (app x servidor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Sintaxe do servidor
-        run: node --check server.js
+      # O app (index.html) mora no OUTRO repositorio, o doutor-cafe-app.
+      # Em vez de manter uma copia aqui — que ficaria velha e faria o teste
+      # mentir —, baixamos a versao que esta REALMENTE no ar. Isso tem um
+      # ganho extra: pega tambem o caso de ter subido o servidor e esquecido
+      # de subir o app (ou o contrario), que e justamente quando os valores
+      # divergem na tela do produtor.
+      - name: Baixar o app publicado
+        continue-on-error: true
+        run: curl -sS --max-time 30 -o index.html https://doutor-cafe-app.vercel.app/ || echo "site fora do ar — o teste vai pular"
 
-      - name: Travas de calagem, unidade do laudo e potassio
-        run: node teste-solo.js
+      # Se o download falhar, o teste avisa e passa: site fora do ar nao e
+      # divergencia de preco, e nao deve travar um deploy do backend.
+      - name: Precos, limites e promessas dos planos
+        run: node teste-valores.js

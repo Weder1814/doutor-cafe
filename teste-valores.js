@@ -31,6 +31,18 @@ if (!aFe) {
 console.log("Servidor: " + aSrv + "\nApp:      " + aFe + "\n");
 
 var srv = fs.readFileSync(aSrv, "utf8"), fe = fs.readFileSync(aFe, "utf8");
+
+// O index.html escreve acentos como entidade (&#234; = e-circunflexo). Para
+// procurar por texto do jeito que o produtor LE na tela, decodificamos antes.
+// Sem isso o teste procurava "mês" e o arquivo tinha "m&#234;s" — e acusava
+// falta de um aviso que estava la.
+var feTexto = fe.replace(/&#(\d+);/g, function(_, n){ return String.fromCharCode(+n); });
+
+// Os comentarios do HTML CITAM o texto antigo de proposito, para quem ler
+// entender o que foi tirado e por que. Toda checagem do tipo "nao promete
+// mais X" roda sobre o HTML SEM comentarios — senao o teste acha a frase
+// dentro do comentario que a explica e acusa falha falsa.
+var feVisivel = feTexto.replace(/<!--[\s\S]*?-->/g, "");
 function objeto(marca) {
   var i = srv.indexOf(marca);
   if (i < 0) throw new Error("nao achei " + marca);
@@ -65,11 +77,22 @@ console.log("\n== Preco exibido x preco do plano no servidor ==");
     t + " anual: app R$" + PRECOS[t].anual.toFixed(2) + " = servidor R$" + PLANOS[t + "_anual"].valor.toFixed(2));
 });
 
-console.log("\n== Sublimite de video divulgado x entregue ==");
-[["basico", 10], ["pro", 25], ["premium", 50]].forEach(function (x) {
-  ok(fe.indexOf("Até " + x[1] + " análises por vídeo/mês") > -1 && VIDEO_LIMITES[x[0]] === x[1],
-    x[0] + ": cartao diz " + x[1] + " e o servidor entrega " + VIDEO_LIMITES[x[0]]);
-});
+console.log("\n== Video: nao anunciar o que o app nao tem ==");
+// O botao de video esta desativado no app (bloco comentado na tela inicial).
+// Enquanto estiver assim, o cartao de venda NAO pode prometer analise por
+// video — seria a mesma promessa vazia que tiramos do "Relatorio mensal".
+// Quando o video voltar, este teste inverte: passa a EXIGIR a linha no cartao
+// e a conferir o numero contra VIDEO_LIMITES.
+var videoNoApp = /id="btnVid"/.test(feVisivel);
+if (videoNoApp) {
+  [["basico", 10], ["pro", 25], ["premium", 50]].forEach(function (x) {
+    ok(feTexto.indexOf("Até " + x[1] + " análises por vídeo/mês") > -1 && VIDEO_LIMITES[x[0]] === x[1],
+      x[0] + ": cartao diz " + x[1] + " video e o servidor entrega " + VIDEO_LIMITES[x[0]]);
+  });
+} else {
+  ok(!/análises por vídeo/.test(feVisivel),
+    "video desligado no app: o cartao nao promete analise por video");
+}
 
 console.log("\n== Anual precisa valer a pena de verdade ==");
 ["basico", "pro", "premium"].forEach(function (t) {
@@ -78,8 +101,46 @@ console.log("\n== Anual precisa valer a pena de verdade ==");
 });
 
 console.log("\n== Promessas que o app nao cumpre ==");
-ok(fe.indexOf("Relatório mensal da lavoura") === -1, 'nao promete "Relatório mensal da lavoura" (nao existe no produto)');
-ok(fe.indexOf("Histórico completo") === -1, 'nao promete "Histórico completo" (o historico e de 10 para todos os planos)');
+ok(feVisivel.indexOf("Relatório mensal da lavoura") === -1, 'nao promete "Relatório mensal da lavoura" (nao existe no produto)');
+ok(feVisivel.indexOf("Histórico completo") === -1, 'nao promete "Histórico completo" (o historico e de 10 para todos os planos)');
+
+console.log("\n== Condicoes da assinatura visiveis ANTES de pagar ==");
+// Exigencia da politica de assinaturas do Google Play e do Codigo de Defesa
+// do Consumidor: periodo, renovacao automatica e como cancelar precisam estar
+// claros na hora da compra. Ate 20/09/2026 a tela de compra nao dizia nada
+// disso — a unica frase "Cancele quando quiser" estava na landing, falando do
+// plano GRATUITO.
+ok(/Renova sozinha todo mês/.test(feTexto), "diz que a assinatura renova sozinha");
+ok(/cancelar/i.test(fe) && fe.indexOf("termos-onde") > -1, "diz como e onde cancelar");
+ok(/continua usando até o fim do mês que já pagou/.test(feTexto),
+  "avisa que o acesso vale ate o fim do periodo pago (bate com a regra do servidor)");
+ok(/PIX é diferente/.test(feTexto) && /não renova sozinho/.test(feTexto),
+  "separa o PIX (pagamento unico) da assinatura recorrente");
+
+console.log("\n== Plano anual: fora da tela, inteiro no servidor ==");
+// Retirado da oferta em 20/09/2026, mas NAO apagado: o servidor continua
+// pronto para o dia em que ele voltar. Se um dos dois lados mudar sozinho,
+// este teste avisa.
+var htmlSemComentario = fe.replace(/<!--[\s\S]*?-->/g, "");
+ok(htmlSemComentario.indexOf('onclick="setCiclo(\'anual\')"') === -1,
+  "o botao Anual nao esta sendo oferecido na tela");
+ok(!!PLANOS["basico_anual"] && !!PLANOS["pro_anual"] && !!PLANOS["premium_anual"],
+  "o servidor continua com os tres planos anuais cadastrados (prontos para voltar)");
+
+console.log("\n== Cartao no site: desligado ate ser provado ==");
+// Decisao de 20/09/2026: o caminho do cartao no site continua no codigo, mas
+// so e oferecido depois de uma compra real confirmar que o plano ativa. Este
+// teste garante que ninguem religue sem querer — e que o produtor que cair no
+// site saiba para onde ir enquanto isso.
+ok(/CARTAO_SITE_ATIVO/.test(srv), "servidor tem a chave CARTAO_SITE_ATIVO");
+ok(/var CARTAO_SITE_LIBERADO = false/.test(fe),
+  "o app comeca assumindo DESLIGADO (se o /ping falhar, nao oferece)");
+ok(/cartaoDesligado/.test(srv),
+  "o servidor recusa /assinar-site enquanto a chave estiver desligada (nao so o botao some)");
+ok(/aviso-cartao-off/.test(fe) && /Prefere cart/.test(feTexto),
+  "com o cartao escondido, o site aponta o produtor para o app");
+ok(/cartao=teste|modoTesteCartao/.test(fe),
+  "existe um modo de teste por endereco, para validar sem expor a todos");
 
 console.log("\n== Politica de pagamento do Google Play ==");
 ok(fe.indexOf("ajustarBotoesPagamento") > -1, "existe a funcao que esconde pagamento alternativo dentro do app");

@@ -158,10 +158,28 @@ function analisesRestantes(u) {
 // Retorna null quando pode prosseguir, ou um objeto de erro para o
 // endpoint devolver.
 async function bloquearSeSemAnalises(userId) {
-  // "anonimo" é o userId usado antes do app gerar/enviar um id proprio.
-  // Continua liberado de proposito: sem id nao ha como contar nada, e
-  // esse caminho nao chega ao modelo nos endpoints que contam analise.
-  if (!userId || userId === "anonimo") return null;
+  // ── "anonimo" ERA PASSE LIVRE (corrigido 20/09/2026) ──────────
+  // O comentario que estava aqui garantia que esse caminho "nao chega ao
+  // modelo nos endpoints que contam analise". Nao era verdade: /diagnostico,
+  // /diagnostico-json e /diagnostico-video pulavam a checagem inteira quando
+  // o userId era "anonimo", e seguiam direto para o modelo.
+  //
+  // Como "anonimo" e o valor PADRAO quando o campo userId nao vem no corpo
+  // (req.body.userId||"anonimo"), bastava chamar a API sem userId nenhum para
+  // ter analises ilimitadas — sem conta, sem cadastro e sem limite. O unico
+  // freio era um rate limit de 10 por minuto compartilhado por todos os
+  // "anonimos" ao mesmo tempo, o que ainda da milhares de analises por dia
+  // saindo da nossa conta da Alibaba.
+  //
+  // O app nunca manda "anonimo": ele gera um userId proprio na primeira
+  // abertura, e o cadastro e obrigatorio antes de analisar. Fechar essa porta
+  // nao tira nada de nenhum usuario real.
+  if (!userId || userId === "anonimo") {
+    return { status:401, corpo:{
+      erro: "Faca o cadastro no app para analisar.",
+      precisaCadastro: true, semAnalises: true
+    }};
+  }
 
   var u = await dbGetUser(userId);
 
@@ -634,8 +652,14 @@ async function ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, valor, exp
   var tipo = basePlanId.indexOf("premium")>-1?"premium":basePlanId.indexOf("pro")>-1?"pro":"basico";
   await dbAtualizarPlano(userId, tipo, basePlanId, expiraEm);
   if (pool) {
+    // DO UPDATE (e nao DO NOTHING) para o token passar a apontar para o dono
+    // atual. Com DO NOTHING, depois de uma troca de aparelho o registro
+    // continuaria apontando para a conta antiga, e o webhook de renovacao
+    // renovaria o plano da conta errada — o produtor pagaria e o plano
+    // cairia numa conta que ele nao usa mais.
     await pool.query(
-      "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
+      "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) " +
+      "ON CONFLICT (id) DO UPDATE SET user_id=EXCLUDED.user_id, plano_id=EXCLUDED.plano_id, status=EXCLUDED.status",
       [purchaseToken.substring(0,120), userId, basePlanId, "approved", valor||0]
     );
   }
@@ -673,6 +697,42 @@ async function processarCompraPlay(userId, purchaseToken) {
   if (!plano) {
     return { ok:false, erro:"basePlanId derivado da Play API nao encontrado em PLANOS: "+basePlanId+" (confira se o nome do base plan no Play Console eh exatamente 'mensal'/'anual')." };
   }
+  // ── UMA ASSINATURA, UMA CONTA POR VEZ (20/09/2026) ────────────
+  // Nada ligava o purchaseToken a um userId. O app manda os dois no corpo da
+  // requisicao, e o servidor aceitava qualquer combinacao. Na pratica: quem
+  // assinasse uma vez podia passar o token adiante e ativar o plano em
+  // quantas contas quisesse — cada uma com a sua cota cheia, todas custando
+  // analises de verdade na nossa conta da Alibaba.
+  //
+  // A correcao NAO e recusar, e TRANSFERIR. Recusar quebraria um caso comum
+  // e legitimo: o produtor troca de celular, ou limpa os dados do app, ganha
+  // um userId novo e reconcilia a compra que e dele. Se recusassemos, ele
+  // perderia o plano que pagou — exatamente o defeito que esta auditoria
+  // existe para eliminar.
+  //
+  // Transferindo, os dois casos se resolvem sozinhos: o dono legitimo leva a
+  // assinatura para o aparelho novo, e o compartilhamento deixa de compensar,
+  // porque a assinatura sai de quem passou o token. Ela vive em uma conta por
+  // vez, que e o que uma assinatura individual deve ser.
+  if (pool) {
+    try {
+      var rDono = await pool.query(
+        "SELECT user_id FROM pagamentos WHERE id=$1 ORDER BY criado_em DESC LIMIT 1",
+        [purchaseToken.substring(0,120)]
+      );
+      var donoAntigo = rDono.rows[0] && rDono.rows[0].user_id;
+      if (donoAntigo && donoAntigo !== userId) {
+        await pool.query(
+          "UPDATE usuarios SET plano='gratuito', plano_id=NULL, plano_expira_em=NULL, atualizado_em=NOW() WHERE user_id=$1",
+          [donoAntigo]
+        );
+        console.log("↔️ [Play Billing] Assinatura transferida de", donoAntigo, "para", userId, "(mesmo purchaseToken)");
+      }
+    } catch(eTr) {
+      console.error("Nao consegui verificar o dono anterior do token:", eTr.message);
+    }
+  }
+
   // expiryTime vem no lineItem confirmado pela propria Google — e a data em
   // que o acesso realmente termina se nao houver renovacao. Guardar isso e o
   // que impede um plano pago virar vitalicio quando um webhook se perde.
@@ -842,23 +902,74 @@ app.post("/webhook-play-rtdn", async function(req, res) {
 // (mes novo, cota nova), mas seria um presente indevido se fosse chamado a
 // cada webhook informativo. Por isso os tipos informativos do RTDN nao
 // chamam esta funcao.
+// ── ZERAR A COTA E DECISAO, NAO ROTINA (corrigido 20/09/2026) ────
+// BUG ENCONTRADO NA AUDITORIA, e era o mais caro de todos porque nao exigia
+// nenhuma ma intencao — acontecia sozinho com todo assinante honesto.
+//
+// Esta funcao zerava analises_usadas em TODA chamada. Parece inofensivo: quem
+// compra ou renova comeca o periodo com a cota cheia, certo. O problema e
+// quem mais chama ela.
+//
+// O app roda reconciliarComprasPlayNoBoot() a cada abertura (entrarNoApp).
+// Isso manda os tokens de compra para /reconciliar-compras-play, que chama
+// processarCompraPlay -> ativarPlanoPelaPlay -> aqui. Ou seja:
+//
+//     ABRIR O APP ZERAVA A COTA DO ASSINANTE.
+//
+// Um assinante do Basico fazia as 150 analises, fechava o app, abria de novo
+// e tinha 150 outra vez. Na pratica, todo plano pago era ilimitado — e cada
+// analise extra e dinheiro real saindo na conta da Alibaba, todo mes,
+// crescendo com a base de assinantes. Nao aparece em log nenhum: do ponto de
+// vista do codigo, uma reconciliacao bem-sucedida acabou de acontecer.
+//
+// A regra certa: a cota zera quando o PERIODO DE COBRANCA vira, nao quando
+// alguem reconfirma uma assinatura que ja estava ativa. Comparamos a data de
+// expiracao: se a nova e a mesma que ja estava gravada, e a MESMA assinatura
+// sendo reconfirmada — mantem o consumo. Se avancou, houve renovacao — zera.
 async function dbAtualizarPlano(userId, plano, planoId, expiraEm) {
   var mes = mesAtual();
   var exp = expiraEm ? new Date(expiraEm) : null;
   if (exp && isNaN(exp.getTime())) exp = null;
+
+  // Decide se este e um periodo NOVO (zera) ou o mesmo de antes (mantem).
+  var zerar = true;
+  try {
+    var atual = await dbGetUser(userId);
+    if (atual) {
+      var planoAntes = atual.plano || "gratuito";
+      var expAntes = atual.plano_expira_em || atual.planoExpiraEm || null;
+      var mudouPlano = planoAntes !== plano;
+      if (!mudouPlano && exp && expAntes) {
+        var tAntes = new Date(expAntes).getTime();
+        // Tolerancia de 1 minuto: a Google devolve o mesmo expiryTime com
+        // diferenca de milissegundos entre chamadas, e isso nao e renovacao.
+        var periodoNovo = (exp.getTime() - tAntes) > 60000;
+        zerar = periodoNovo;
+      } else if (!mudouPlano && !exp && expAntes) {
+        // Reconfirmacao sem data (ativacao manual): nao ha motivo para zerar.
+        zerar = false;
+      }
+    }
+  } catch(eChk) {
+    // Na duvida, NAO zera: dar cota a mais por engano custa dinheiro,
+    // enquanto manter o consumo e recuperavel (a virada do mes resolve).
+    console.error("dbAtualizarPlano: nao consegui comparar o periodo:", eChk.message);
+    zerar = false;
+  }
+
   if (pool) {
     try {
-      await pool.query(
-        "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, mes_reset=$4, plano_expira_em=$5, atualizado_em=NOW() WHERE user_id=$1",
-        [userId, plano, planoId||"", mes, exp]
-      );
+      var sql = zerar
+        ? "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, videos_usados=0, mes_reset=$4, plano_expira_em=$5, atualizado_em=NOW() WHERE user_id=$1"
+        : "UPDATE usuarios SET plano=$2, plano_id=$3, mes_reset=$4, plano_expira_em=$5, atualizado_em=NOW() WHERE user_id=$1";
+      await pool.query(sql, [userId, plano, planoId||"", mes, exp]);
       return true;
     } catch(e) { console.error("dbAtualizarPlano:", e.message); }
   }
   if (usuariosMemoria[userId]) {
     usuariosMemoria[userId].plano = plano;
     usuariosMemoria[userId].planoId = planoId;
-    usuariosMemoria[userId].analisesUsadas = 0;
+    if (zerar) { usuariosMemoria[userId].analisesUsadas = 0; usuariosMemoria[userId].videosUsados = 0; }
     usuariosMemoria[userId].mesReset = mes;
     usuariosMemoria[userId].plano_expira_em = exp;
   }
@@ -1073,6 +1184,38 @@ function calcularCustoUSD(modelo, usage) {
 // Loga o uso real (tokens + custo estimado) de uma analise no banco.
 // Chamar sempre que a API Anthropic responder, passando o objeto "usage" cru
 // retornado por ela. Nao quebra o fluxo principal se falhar (best-effort).
+// ── QUEM DEBITA A COTA E O SERVIDOR (20/09/2026) ─────────────────
+// BUG ESTRUTURAL ENCONTRADO NA AUDITORIA.
+//
+// O servidor CONFERIA a cota antes de cada analise (bloquearSeSemAnalises),
+// mas nao DEBITAVA. Quem debitava era o app, chamando /incrementar-analise
+// depois que a analise voltava. Ou seja, o controle de consumo dependia da
+// boa vontade do cliente.
+//
+// Consequencia: qualquer um que chamasse /diagnostico direto (curl, script,
+// um app modificado) e simplesmente NAO chamasse /incrementar-analise tinha
+// analises infinitas. O contador nunca subia, a checagem nunca barrava, e
+// cada chamada custava tokens de verdade na Alibaba. O limite gratuito de 10
+// analises, que e a base inteira do negocio, valia so para quem usasse o app
+// do jeito esperado.
+//
+// Agora o debito acontece AQUI, no servidor, junto do registro de custo —
+// isto e, no momento em que a analise realmente foi produzida e o dinheiro
+// realmente saiu. Nao debitamos na entrada de proposito: analise que falha
+// (modelo fora do ar, foto ilegivel) nao pode consumir cota do produtor.
+//
+// /incrementar-analise virou inofensivo (ver la) para nao cobrar duas vezes
+// de quem ainda esta com uma versao antiga do app presa no cache.
+async function debitarAnalise(userId, tipo) {
+  if (!userId || userId === "anonimo") return;
+  try {
+    await dbIncrementarAnalise(userId);
+    if (tipo === "video") await dbIncrementarVideo(userId);
+  } catch(e) {
+    console.error("debitarAnalise falhou para", userId, ":", e.message);
+  }
+}
+
 async function logUsoAnalise(userId, tipo, modelo, usage, regiao) {
   if (!pool) return;
   try {
@@ -1202,8 +1345,21 @@ Object.keys(MP_PLAN_IDS).forEach(function(k){
 // Tolerancia de 3 dias pelo mesmo motivo do Play: a cobranca recorrente nem
 // sempre cai no segundo exato, e derrubar o acesso de quem esta em dia e pior
 // do que dar alguns dias a mais.
-function expiracaoMP(planoId) {
-  var d = new Date();
+// expiraAtual: se a pessoa ainda tem tempo pago, o novo periodo SOMA a partir
+// dali, em vez de recomecar de hoje.
+//
+// Sem isso (corrigido 20/09/2026), um produtor que pagasse PIX no dia 1 e de
+// novo no dia 10 PERDERIA os dias que sobravam do primeiro pagamento: a data
+// era sempre recalculada a partir de hoje. Ele pagava dois meses e recebia um
+// mes e vinte dias. E o mesmo defeito que esta auditoria veio corrigir —
+// cliente pagando e nao recebendo —, so que em miniatura.
+function expiracaoMP(planoId, expiraAtual) {
+  var base = new Date();
+  if (expiraAtual) {
+    var t = new Date(expiraAtual);
+    if (!isNaN(t.getTime()) && t.getTime() > base.getTime()) base = t;
+  }
+  var d = new Date(base.getTime());
   if (String(planoId).indexOf("anual") > -1) d.setFullYear(d.getFullYear() + 1);
   else d.setMonth(d.getMonth() + 1);
   d.setDate(d.getDate() + 3);
@@ -1218,7 +1374,32 @@ app.get("/", function(req, res) { res.json({ status:"online", app:"Doutor Cafe A
 // mais — foi o que aconteceu com "15 analises gratis" depois que o limite
 // mudou. Com o valor vindo do /ping, que TODO app chama no boot, o texto se
 // corrige sozinho mesmo em shell antigo, sem depender de novo deploy chegar.
-app.get("/ping", function(req, res) { res.json({ ok:true, ts:Date.now(), gratis: ANALISES_GRATIS }); });
+// ── CARTAO NO SITE: DESLIGADO ATE SER PROVADO (20/09/2026) ───────
+// Decisao do Dinho na auditoria: manter o caminho do cartao no site, mas so
+// oferecer depois de uma compra real confirmar que o plano ativa sozinho.
+//
+// Por que ele nasce desligado: e o unico dos tres caminhos de pagamento que
+// nunca processou dinheiro de verdade. Ja houve produtor pagando por ali e
+// nao recebendo (os links fixos do Mercado Pago, sem user_id), e o conserto
+// foi escrito conforme a documentacao, sem nunca ter sido energizado. Deixar
+// ligado no lancamento seria apostar o dinheiro do produtor numa integracao
+// que ninguem viu funcionar.
+//
+// COMO LIGAR, depois do teste dar certo: no painel do Railway, criar a
+// variavel CARTAO_SITE_ATIVO com valor 1 e reiniciar. Nao precisa de deploy
+// nem de mexer no codigo. Para desligar de novo, apagar a variavel.
+//
+// COMO TESTAR ENQUANTO ESTA DESLIGADO: abrir o site com ?cartao=teste no fim
+// do endereco. O botao aparece so para quem usar esse endereco — o produtor
+// comum continua vendo apenas o PIX.
+var CARTAO_SITE_ATIVO = (function(){
+  var v = String(process.env.CARTAO_SITE_ATIVO || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "sim";
+})();
+
+app.get("/ping", function(req, res) {
+  res.json({ ok:true, ts:Date.now(), gratis: ANALISES_GRATIS, cartaoSite: CARTAO_SITE_ATIVO });
+});
 
 // ── PREÇO DO CAFÉ (Coffee C via Alpha Vantage — API oficial) ───
 // Requer variavel de ambiente ALPHAVANTAGE_API_KEY no Railway (gratis em
@@ -1507,7 +1688,11 @@ app.get("/analises-restantes/:userId", async function(req, res) {
       limite: LIMITES[planoVigente(u)]||LIMITES.gratuito,
       videosUsados: u.videos_usados||u.videosUsados||0,
       videosRestantes: videosRestantes(u),
-      limiteVideo: VIDEO_LIMITES[planoVigente(u)]||2
+      limiteVideo: VIDEO_LIMITES[planoVigente(u)]||2,
+      // Data ate a qual a assinatura vale. O app mostra isso para o assinante
+      // ("renova em 20/10"), que e a informacao que ele procura quando abre a
+      // tela de plano — e tambem o que evita a surpresa da cobranca.
+      expiraEm: u.plano_expira_em || u.planoExpiraEm || null
     });
   } catch(e) {
     res.status(500).json({ erro:e.message });
@@ -1515,13 +1700,23 @@ app.get("/analises-restantes/:userId", async function(req, res) {
 });
 
 // ── INCREMENTAR ANÁLISE ───────────────────────────────────────
+// ── NAO DEBITA MAIS (20/09/2026) ─────────────────────────────────
+// Este endpoint existia para o app avisar "gastei uma analise". Isso punha o
+// controle de consumo nas maos do cliente — ver o comentario em
+// debitarAnalise(). Agora quem debita e o servidor, no momento em que a
+// analise fica pronta.
+//
+// O endpoint CONTINUA existindo e respondendo o estado atual de proposito:
+// os aparelhos em campo tem o app antigo guardado no cache do service
+// worker, e esses vao seguir chamando aqui por semanas. Se ele ainda
+// debitasse, o produtor com app antigo gastaria DUAS analises por foto — uma
+// no servidor e outra aqui. Devolver so o estado atual mantem o contador da
+// tela certo em qualquer versao do app, velha ou nova.
 app.post("/incrementar-analise", async function(req, res) {
   var userId = req.body.userId;
   if (!userId) return res.json({ ok:true });
-  var bloqueio = await bloquearSeSemAnalises(userId);
-  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
-  await dbIncrementarAnalise(userId);
   var atualizado = await dbGetUser(userId);
+  if (!atualizado) return res.status(404).json({ erro:"Conta nao encontrada.", precisaCadastro:true });
   res.json({
     ok:true,
     plano: planoVigente(atualizado),
@@ -1534,6 +1729,8 @@ app.post("/incrementar-analise", async function(req, res) {
 // ── INCREMENTAR VIDEO (sub-limite) ──────────────────────────────
 // Chamar DEPOIS de /incrementar-analise (ou /salvar-analise) na mesma analise
 // de video, nessa ordem, para o reset mensal funcionar corretamente.
+// Mesmo caso do /incrementar-analise: o debito do video agora acontece no
+// servidor, dentro de debitarAnalise(). Mantido para o app antigo em cache.
 app.post("/incrementar-video", async function(req, res) {
   var userId = req.body.userId;
   if (!userId) return res.json({ ok:true });
@@ -1541,8 +1738,10 @@ app.post("/incrementar-video", async function(req, res) {
   if (u && videosRestantes(u) <= 0) {
     return res.status(403).json({ erro:"Limite de videos do plano atingido neste mes.", semVideos:true });
   }
-  await dbIncrementarVideo(userId);
-  res.json({ ok:true });
+  // NAO debita mais: debitarAnalise(userId,"video") ja fez isso no servidor
+  // quando a analise de video ficou pronta. Se debitasse aqui tambem, o
+  // produtor com app antigo em cache gastaria DOIS videos por gravacao.
+  res.json({ ok:true, videosRestantes: u ? videosRestantes(u) : null });
 });
 
 // ── SALVAR ANÁLISE NO SERVIDOR ────────────────────────────────
@@ -1555,7 +1754,11 @@ app.post("/salvar-analise", async function(req, res) {
   if (!userId) return res.status(400).json({ erro:"userId obrigatorio" });
   try {
     await dbSalvarAnalise(userId, talhaoId, diagnosticos, fotoThumb, regiao);
-    await dbIncrementarAnalise(userId);
+    // NAO debita mais (20/09/2026). Guardar a analise no historico do talhao
+    // nao e um consumo novo: a cota ja foi debitada no servidor quando a
+    // analise foi produzida (ver debitarAnalise). Como o app chama este
+    // endpoint depois de cada analise, manter o debito aqui faria o produtor
+    // gastar DUAS analises por foto.
     res.json({ ok:true });
   } catch(e) {
     res.status(500).json({ erro:e.message });
@@ -1763,7 +1966,12 @@ async function ativarAssinaturaMP(preapprovalId, origem) {
   var tipo = planoId.indexOf("premium")>-1?"premium":planoId.indexOf("pro")>-1?"pro":"basico";
 
   if (status === "authorized") {
-    await dbAtualizarPlano(userId, tipo, planoId, expiracaoMP(planoId));
+    // Passa a expiracao atual para que uma renovacao (ou um segundo
+    // pagamento no mesmo periodo) SOME ao que ja foi pago, em vez de
+    // recomecar de hoje e encurtar o que o produtor tem direito.
+    var uMP = await dbGetUser(userId);
+    var novaExp = expiracaoMP(planoId, uMP && (uMP.plano_expira_em || uMP.planoExpiraEm));
+    await dbAtualizarPlano(userId, tipo, planoId, novaExp);
     if (pool) {
       try {
         await pool.query(
@@ -1772,7 +1980,7 @@ async function ativarAssinaturaMP(preapprovalId, origem) {
         );
       } catch(e) {}
     }
-    console.log("✅ [MP "+origem+"] Plano", tipo, "ativado para", userId, "| vence em", expiracaoMP(planoId).toISOString());
+    console.log("✅ [MP "+origem+"] Plano", tipo, "ativado para", userId, "| vence em", novaExp.toISOString());
   } else if (status === "cancelled") {
     // Mesmo criterio do Google Play: cancelar a renovacao NAO tira o que ja
     // foi pago. O acesso segue ate a data de expiracao ja gravada, e cai
@@ -1819,10 +2027,12 @@ app.post("/webhook-pagamento", async function(req, res) {
         var planoId = pagamento.metadata.plano_id;
         var tipo    = planoId && planoId.indexOf("premium")>-1?"premium":planoId && planoId.indexOf("pro")>-1?"pro":"basico";
         if (userId) {
-          // Pix e pagamento avulso: vale por um ciclo a partir de agora.
-          // Antes nao gravava expiracao nenhuma, entao um Pix de R$29,90
-          // liberava o plano para sempre.
-          await dbAtualizarPlano(userId, tipo, planoId, expiracaoMP(planoId));
+          // Pix e pagamento avulso: vale por um ciclo. Antes nao gravava
+          // expiracao nenhuma, entao um Pix de R$29,90 liberava o plano para
+          // sempre. E agora soma ao tempo que a pessoa ainda tiver pago, para
+          // quem paga adiantado nao perder dias.
+          var uPix = await dbGetUser(userId);
+          await dbAtualizarPlano(userId, tipo, planoId, expiracaoMP(planoId, uPix && (uPix.plano_expira_em || uPix.planoExpiraEm)));
           if (pool) {
             await pool.query(
               "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
@@ -1935,6 +2145,41 @@ app.post("/assinar-site", async function(req, res) {
 
   if (!plano)  return res.status(400).json({ erro:"Plano invalido.", planos_validos:Object.keys(PLANOS) });
   if (!userId) return res.status(400).json({ erro:"userId obrigatorio — sem ele nao ha como ativar o plano depois do pagamento." });
+
+  // Barreira no SERVIDOR, nao so no botao: esconder o botao evita que o
+  // produtor comum chegue aqui, mas nao impede um link antigo, um favorito
+  // guardado ou uma versao do app presa no cache de continuar chamando.
+  // Enquanto o caminho nao estiver provado, ninguem paga por ele sem querer.
+  var modoTesteCartao = String(req.body.modoTeste || req.query.cartao || "") === "teste";
+  if (!CARTAO_SITE_ATIVO && !modoTesteCartao) {
+    return res.status(503).json({
+      erro: "A assinatura por cartao no site esta em testes. Assine pelo app do Doutor Cafe no Android, ou pague por PIX aqui mesmo.",
+      cartaoDesligado: true
+    });
+  }
+
+  // ── E-MAIL E OBRIGATORIO PARA ASSINAR PELO SITE (20/09/2026) ──
+  // O Mercado Pago EXIGE payer_email para criar uma assinatura. E no cadastro
+  // do app o e-mail e OPCIONAL (so nome, CPF, celular e PIN sao validados).
+  //
+  // Sem esta checagem, o produtor que se cadastrou sem e-mail caia num buraco
+  // silencioso: a API do Mercado Pago recusava a criacao, o codigo caia no
+  // link estatico de emergencia — que e justamente o link SEM user_id —, ele
+  // pagava e o plano nunca ativava. Era o bug original ressurgindo para uma
+  // fatia grande dos usuarios, e escondido pelo proprio plano B.
+  //
+  // Preferimos parar e pedir o e-mail: um campo a mais e um incomodo de dez
+  // segundos; pagar e nao receber e um estorno e um cliente perdido.
+  if (!email) {
+    var uSemEmail = await dbGetUser(userId);
+    email = (uSemEmail && uSemEmail.email) ? String(uSemEmail.email).trim() : "";
+  }
+  if (!email || email.indexOf("@") < 0) {
+    return res.status(400).json({
+      erro: "Para assinar pelo site precisamos do seu e-mail — e nele que o Mercado Pago envia o comprovante e o aviso de renovacao.",
+      precisaEmail: true
+    });
+  }
   if (!checkCobrancaRate(userId + "|" + ipDaReq(req))) return res.status(429).json({ erro:"Muitas tentativas de assinatura. Aguarde alguns minutos." });
 
   var ciclo = planoId.indexOf("anual") > -1 ? "anual" : "mensal";
@@ -1966,6 +2211,13 @@ app.post("/assinar-site", async function(req, res) {
           await pool.query(
             "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
             [String(d.id), userId, planoId, "pending", plano.valor]
+          );
+          // Guarda o e-mail na conta: alem de evitar pedir de novo, ele e a
+          // ultima rede para achar o dono de uma assinatura cujo
+          // external_reference se perca (ver ativarAssinaturaMP).
+          await pool.query(
+            "UPDATE usuarios SET email=$2, atualizado_em=NOW() WHERE user_id=$1 AND (email IS NULL OR email='')",
+            [userId, email]
           );
         } catch(eIns) { console.error("/assinar-site: nao gravei o pendente:", eIns.message); }
       }
@@ -2046,7 +2298,8 @@ app.get("/plano/:userId", async function(req, res) {
       semAnalises: restantes <= 0,
       videosUsados: u.videos_usados||u.videosUsados||0,
       videosRestantes: videosRestantes(u),
-      limiteVideo: VIDEO_LIMITES[planoU]||VIDEO_LIMITES.gratuito
+      limiteVideo: VIDEO_LIMITES[planoU]||VIDEO_LIMITES.gratuito,
+      expiraEm: u.plano_expira_em || u.planoExpiraEm || null
     });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -2064,10 +2317,10 @@ app.post("/diagnostico", async function(req, res) {
   if (!checkRateLimit(userId)) {
     return res.status(429).json({ erro:"Muitas análises em sequência. Aguarde 1 minuto." });
   }
-  if (userId !== "anonimo") {
-    var bloqueio = await bloquearSeSemAnalises(userId);
-    if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
-  }
+  // Checa SEMPRE (20/09/2026): a excecao para "anonimo" que existia aqui era
+  // justamente o que permitia analisar sem conta. Ver bloquearSeSemAnalises.
+  var bloqueio = await bloquearSeSemAnalises(userId);
+  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
 
   var contextoRegional = buildContextoRegional(regiao, altitude, false, especieEscolhida);
 
@@ -2285,6 +2538,7 @@ app.post("/diagnostico", async function(req, res) {
       resultado=anexarReferenciaVisual(resultado);
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
+      debitarAnalise(userId, "foto");
       encerrar();
     });
 
@@ -3106,10 +3360,10 @@ app.post("/diagnostico-json", async function(req, res) {
   var regiao=req.body.regiao||null, altitude=req.body.altitude||null, especieEscolhida=req.body.especie||null;
   var userId=req.body.userId||"anonimo";
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-  if (userId !== "anonimo") {
-    var bloqueio = await bloquearSeSemAnalises(userId);
-    if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
-  }
+  // Checa SEMPRE (20/09/2026): a excecao para "anonimo" que existia aqui era
+  // justamente o que permitia analisar sem conta. Ver bloquearSeSemAnalises.
+  var bloqueio = await bloquearSeSemAnalises(userId);
+  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
   var contextoRegional=buildContextoRegional(regiao,altitude,false, especieEscolhida);
   var abortCtrl = new AbortController();
   res.on("close", function(){ if(!res.writableEnded){ try { abortCtrl.abort(); } catch(e){} } });
@@ -3136,6 +3390,7 @@ app.post("/diagnostico-json", async function(req, res) {
     resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=garantirCloroseInternerval(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "foto", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
+    debitarAnalise(userId, "foto");
     res.json(resultado);
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-json:", e.message); res.status(500).json({ erro:e.message }); }
 });
@@ -3402,12 +3657,29 @@ app.post("/diagnostico-video", async function(req, res) {
   var userId=req.body.userId||"anonimo";
   if(!frames||frames.length===0) return res.status(400).json({ erro:"Nenhum frame recebido." });
   if(!checkRateLimit(userId)) return res.status(429).json({ erro:"Muitas análises. Aguarde 1 minuto." });
-  if (userId !== "anonimo") {
-    var bloqueio = await bloquearSeSemAnalises(userId);
-    if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
-    if (u && videosRestantes(u) <= 0) {
-      return res.status(403).json({ erro:"Limite de videos do plano atingido neste mes. Use foto ou aguarde o proximo ciclo.", semVideos:true });
-    }
+  // ── BUG ENCONTRADO NA AUDITORIA (20/09/2026) ──────────────────
+  // A linha abaixo era "if (u && videosRestantes(u) <= 0)", e a variavel u
+  // NUNCA FOI DECLARADA neste endpoint — nao ha "var u" em lugar nenhum dele,
+  // nem um u global no arquivo. Ler uma variavel inexistente lanca
+  // ReferenceError, e este handler e async sem try/catch em volta: o Express
+  // nao captura o erro, a requisicao fica sem resposta e o app do produtor
+  // espera ate estourar o timeout de 45 segundos.
+  //
+  // Ou seja: a analise por VIDEO responderia com erro para TODO usuario
+  // cadastrado. Ninguem viu porque o botao de video esta DESATIVADO no app
+  // (bloco comentado na tela inicial), entao o endpoint ficou inalcancavel —
+  // e o comentario que desativou o botao afirma que "o backend continua
+  // intacto e funcional", o que nao era verdade. Quando o video voltar numa
+  // proxima atualizacao, voltaria quebrado, e a suspeita cairia sobre a
+  // mudanca nova em vez de um bug que ja estava ali.
+  //
+  // Agora o usuario e carregado de verdade, uma vez so, e serve para as duas
+  // checagens — a de analises e a do sublimite de video.
+  var bloqueio = await bloquearSeSemAnalises(userId);
+  if (bloqueio) return res.status(bloqueio.status).json(bloqueio.corpo);
+  var uVideo = await dbGetUser(userId);
+  if (uVideo && videosRestantes(uVideo) <= 0) {
+    return res.status(403).json({ erro:"Limite de videos do plano atingido neste mes. Use foto ou aguarde o proximo ciclo.", semVideos:true });
   }
   var contextoRegional=buildContextoRegional(regiao,altitude,true, especieEscolhida);
   var content=[];
@@ -3433,6 +3705,7 @@ app.post("/diagnostico-video", async function(req, res) {
     resultado=normalizarNomesDiagnostico(resultado);resultado=corrigirCorynesporaEmArabica(resultado, regiao, especieEscolhida);resultado=injetarProdutosNoResultado(resultado);resultado=garantirAvisoFerrugem(resultado);resultado=corrigirFerrugemSemConfirmacao(resultado, especieDaRegiao(regiao, especieEscolhida));resultado=corrigirCercosporioseSemCentroClaro(resultado);resultado=garantirCloroseInternerval(resultado);resultado=avisarCarencia(resultado);resultado=focarNoPrincipal(resultado);
     resultado=anexarReferenciaVisual(resultado);
     logUsoAnalise(userId, "video", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
+    debitarAnalise(userId, "video");
     res.json(resultado||{diagnosticos:[{diagnostico:"saudavel",estagio:1,confianca:"baixa",visto:"",acao:"Nao foi possivel analisar. Tente novamente.",fungicidas:[]}]});
   } catch(e) { console.error("ERRO EXCECAO /diagnostico-video:", e.message); res.status(500).json({ erro:e.message }); }
 });
@@ -3904,6 +4177,7 @@ app.post("/analise-solo", async function(req, res) {
       } catch(eNpk) { console.error("ERRO calcularAdubacaoNPK:", eNpk.message); }
     }
     logUsoAnalise(userId, "solo", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(d.usage), regiao);
+    debitarAnalise(userId, "solo");
     res.json(resultado||{acao:"Nao foi possivel ler o laudo. Verifique a foto e tente novamente.",valores:{}});
   } catch(e) { console.error("ERRO EXCECAO /analise-solo:", e.message); res.status(500).json({ erro:e.message }); }
 });
@@ -4292,6 +4566,7 @@ app.post("/identifica-daninha", async function(req, res) {
       try { injetarHerbicidas(resultado); } catch(eHerb){ console.error("ERRO injetarHerbicidas:", eHerb.message); }
       res.write("data: "+JSON.stringify({ tipo:"fim", resultado })+"\n\n");
       logUsoAnalise(userId, "daninha", MODELO_PRODUCAO_LOG, usageCapturado, regiao);
+      debitarAnalise(userId, "daninha");
       encerrarDaninha();
     });
 
@@ -4375,6 +4650,7 @@ app.post("/identifica-defeito-grao", async function(req, res) {
     var txtGr=dGr.choices&&dGr.choices[0]&&dGr.choices[0].message?dGr.choices[0].message.content:"";
     var resultadoGr=extrairJSON(txtGr);
     logUsoAnalise(userId, "graos", MODELO_PRODUCAO_LOG, normalizarUsageOpenRouter(dGr.usage), regiao);
+    debitarAnalise(userId, "graos");
     if(resultadoGr && resultadoGr.defeitos){
       res.json(resultadoGr);
     } else {

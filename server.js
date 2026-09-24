@@ -305,6 +305,11 @@ async function initDB() {
     // funciona como REDE DE SEGURANCA: mesmo sem nenhum webhook, o plano
     // cai sozinho no dia em que a assinatura realmente vence.
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS plano_expira_em TIMESTAMPTZ`);
+    // origem distingue de quem e cada linha de pagamento: Google Play,
+    // assinatura do Mercado Pago ou PIX. A reconciliacao de pendentes so
+    // pode mexer nas do Mercado Pago — consultar um purchaseToken do Google
+    // na API do MP nao faria sentido nenhum.
+    await pool.query(`ALTER TABLE pagamentos ADD COLUMN IF NOT EXISTS origem TEXT`);
     // Trava contra colisao de PIN (30/07/2026) — impede duas contas com o
     // mesmo PIN, que causava login sempre cair na conta errada (LIMIT 1 sem
     // ORDER BY pegava qualquer uma das duplicadas). Indice PARCIAL (so pin
@@ -1991,6 +1996,115 @@ async function ativarAssinaturaMP(preapprovalId, origem) {
   }
 }
 
+// ── REDE DE SEGURANCA PARA PAGAMENTO QUE TRAVOU (24/09/2026) ─────
+// O Google Play ja tinha duas redes: o RTDN e a reconciliacao no boot do app.
+// O Mercado Pago nao tinha NENHUMA. Se o webhook se perdesse — Pub/Sub mal
+// configurado nao existe aqui, mas servidor reiniciando, rede instavel ou uma
+// notificacao entregue enquanto o Railway acordava, sim — o pagamento ficava
+// "pending" na tabela para sempre. Ninguem era avisado: nem o produtor, que
+// pagou e nao recebeu, nem o Dinho, que so descobriria por reclamacao.
+//
+// Isto aqui varre os pendentes e pergunta ao Mercado Pago o que aconteceu com
+// cada um. E o que torna o caminho do cartao seguro de ligar mesmo sem ter
+// 100% de certeza do webhook: se a notificacao falhar, esta varredura ativa o
+// plano em ate 10 minutos, sozinha.
+//
+// Janela: de 3 minutos (para nao brigar com o webhook, que costuma chegar
+// antes) ate 7 dias (depois disso o produtor ja desistiu ou pediu estorno, e
+// o caso e de atendimento humano, nao de automacao).
+async function reconciliarPendentesMP(origem) {
+  if (!pool || !MP_TOKEN) return { verificados:0, ativados:0 };
+  var verificados = 0, ativados = 0;
+  try {
+    var r = await pool.query(
+      "SELECT id, user_id FROM pagamentos " +
+      "WHERE status='pending' AND origem='mp_assinatura' " +
+      "AND criado_em < NOW() - INTERVAL '3 minutes' " +
+      "AND criado_em > NOW() - INTERVAL '7 days' " +
+      "ORDER BY criado_em DESC LIMIT 30"
+    );
+    for (var i = 0; i < r.rows.length; i++) {
+      verificados++;
+      var antes = await dbGetUser(r.rows[i].user_id);
+      var planoAntes = antes ? planoVigente(antes) : "gratuito";
+      try {
+        await ativarAssinaturaMP(r.rows[i].id, origem || "varredura");
+        var depois = await dbGetUser(r.rows[i].user_id);
+        if (depois && planoVigente(depois) !== planoAntes) ativados++;
+      } catch(e) {
+        console.error("Varredura MP: falhou em", r.rows[i].id, "-", e.message);
+      }
+    }
+    if (verificados) {
+      console.log("🔁 [MP varredura] " + verificados + " pendente(s) conferido(s), " + ativados + " ativado(s).");
+    }
+    // Pendente antigo que continua pendente e caso para atendimento humano.
+    var velhos = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM pagamentos " +
+      "WHERE status='pending' AND origem='mp_assinatura' " +
+      "AND criado_em < NOW() - INTERVAL '1 day' AND criado_em > NOW() - INTERVAL '7 days'"
+    );
+    if (velhos.rows[0] && velhos.rows[0].n > 0) {
+      console.error("⚠️ ATENCAO: " + velhos.rows[0].n + " assinatura(s) do Mercado Pago pendente(s) ha mais de 24h. " +
+        "Pode ser produtor que pagou e nao recebeu. Confira no painel do Mercado Pago e libere por /admin/definir-plano.");
+    }
+  } catch(e) {
+    console.error("Varredura MP falhou:", e.message);
+  }
+  return { verificados: verificados, ativados: ativados };
+}
+
+// A cada 10 minutos. Barato: so roda se houver linha pendente, e a consulta e
+// limitada a 30 por vez.
+setInterval(function(){ reconciliarPendentesMP("automatica"); }, 10 * 60 * 1000);
+
+// ── O PRODUTOR PODE SE RESGATAR SOZINHO ──────────────────────────
+// Sem isto, quem pagasse e nao recebesse teria que mandar WhatsApp e esperar
+// alguem olhar. Com isto, ele toca um botao no app e a conferencia acontece
+// na hora — e a maioria dos casos (webhook perdido) se resolve ali mesmo,
+// sem virar atendimento.
+app.post("/conferir-meu-pagamento", async function(req, res) {
+  var userId = (req.body.userId || "").trim();
+  if (!userId) return res.status(400).json({ erro:"userId obrigatorio." });
+  if (!checkCobrancaRate("conf|" + userId + "|" + ipDaReq(req))) {
+    return res.status(429).json({ erro:"Aguarde alguns minutos antes de conferir de novo." });
+  }
+  try {
+    var antes = await dbGetUser(userId);
+    var planoAntes = antes ? planoVigente(antes) : "gratuito";
+
+    if (pool && MP_TOKEN) {
+      var r = await pool.query(
+        "SELECT id FROM pagamentos WHERE user_id=$1 AND status='pending' AND origem='mp_assinatura' " +
+        "AND criado_em > NOW() - INTERVAL '7 days' ORDER BY criado_em DESC LIMIT 5",
+        [userId]
+      );
+      for (var i = 0; i < r.rows.length; i++) {
+        try { await ativarAssinaturaMP(r.rows[i].id, "pedido do produtor"); }
+        catch(e) { console.error("Conferencia pedida pelo produtor falhou em", r.rows[i].id, "-", e.message); }
+      }
+    }
+
+    var depois = await dbGetUser(userId);
+    var planoDepois = depois ? planoVigente(depois) : "gratuito";
+    var liberou = planoDepois !== "gratuito" && planoDepois !== planoAntes;
+
+    res.json({
+      ok: true,
+      liberou: liberou,
+      plano: planoDepois,
+      mensagem: liberou
+        ? "Pagamento confirmado! Seu plano foi liberado."
+        : (planoDepois !== "gratuito"
+            ? "Seu plano ja esta ativo."
+            : "Ainda nao encontramos o pagamento. Se voce ja pagou, fale com a gente no WhatsApp com o comprovante que liberamos na hora.")
+    });
+  } catch(e) {
+    console.error("/conferir-meu-pagamento:", e.message);
+    res.status(500).json({ erro:"Nao consegui conferir agora. Tente de novo em instantes." });
+  }
+});
+
 app.post("/webhook-pagamento", async function(req, res) {
   console.log("Webhook MP:", JSON.stringify(req.body).substr(0,200));
   var data = req.body;
@@ -2209,8 +2323,8 @@ app.post("/assinar-site", async function(req, res) {
       if (pool) {
         try {
           await pool.query(
-            "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
-            [String(d.id), userId, planoId, "pending", plano.valor]
+            "INSERT INTO pagamentos (id,user_id,plano_id,status,valor,origem) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+            [String(d.id), userId, planoId, "pending", plano.valor, "mp_assinatura"]
           );
           // Guarda o e-mail na conta: alem de evitar pedir de novo, ele e a
           // ultima rede para achar o dono de uma assinatura cujo

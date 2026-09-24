@@ -142,6 +142,25 @@ ok(/aviso-cartao-off/.test(fe) && /Prefere cart/.test(feTexto),
 ok(/cartao=teste|modoTesteCartao/.test(fe),
   "existe um modo de teste por endereco, para validar sem expor a todos");
 
+console.log("\n== Espera honesta quando falta internet ==");
+// Caso real de 23/09/2026: teste em campo sem internet. O app ficou mais de
+// 25 segundos rodando, mostrando "Enviando foto ✓" e mais dois vistos verdes
+// de etapas que nunca aconteceram. Duas causas: navigator.onLine diz apenas
+// que EXISTE interface de rede (no iPhone, com barras e sem dados, ele
+// devolve true), e o fetch do fluxo principal nao tinha timeout nenhum.
+ok(/function sondarConexao/.test(fe),
+  "existe sonda de conexao real (nao confia so no navigator.onLine)");
+ok(/function confirmarEnvioSpinner/.test(fe),
+  "o visto verde de 'Enviando foto' depende do servidor responder");
+var proc = fe.slice(fe.indexOf("function processar(file, isVideo)"),
+                    fe.indexOf("function processar(file, isVideo)") + 14000);
+ok(/sondarConexao\(/.test(proc), "o fluxo da foto sonda a conexao antes de subir");
+ok(/abortDiag/.test(proc) && /relogioPrimeiroByte/.test(proc),
+  "o fetch do diagnostico tem tempo limite de primeiro byte (antes nao tinha nenhum)");
+ok(/sondarConexao\(function\(temRede\)\{[\s\S]{0,200}reject\(erroOriginal\)/.test(fe.replace(/\s+/g," ").replace(/ /g,"")) ||
+   /nao insiste/.test(fe),
+  "a segunda tentativa so acontece se houver rede (evita esperar o dobro)");
+
 console.log("\n== Politica de pagamento do Google Play ==");
 ok(fe.indexOf("ajustarBotoesPagamento") > -1, "existe a funcao que esconde pagamento alternativo dentro do app");
 ok(/function abrirPix\([^)]*\)\s*\{\s*(\/\/[^\n]*\n\s*)*if \(playBillingDisponivel\(\)\)/.test(fe),

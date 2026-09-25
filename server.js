@@ -9,6 +9,11 @@ app.use(express.json({ limit: "50mb" }));
 
 // ── VARIÁVEIS DE AMBIENTE ──────────────────────────────────────
 var MP_TOKEN   = process.env.MP_ACCESS_TOKEN;
+// Chave PUBLICA do Mercado Pago. Diferente do token acima: ela e feita para
+// ficar visivel no navegador — e com ela que o formulario de cartao na nossa
+// tela manda o numero do cartao DIRETO para o Mercado Pago e recebe de volta
+// um token descartavel. O numero do cartao nunca passa por este servidor.
+var MP_PUBLIC_KEY = process.env.MP_PUBLIC_KEY || "";
 var BASE_URL   = process.env.BASE_URL || "https://doutor-cafe-production.up.railway.app";
 var DB_URL     = process.env.DATABASE_URL;
 var KEY        = process.env.ANTHROPIC_API_KEY;
@@ -1403,7 +1408,8 @@ var CARTAO_SITE_ATIVO = (function(){
 })();
 
 app.get("/ping", function(req, res) {
-  res.json({ ok:true, ts:Date.now(), gratis: ANALISES_GRATIS, cartaoSite: CARTAO_SITE_ATIVO });
+  res.json({ ok:true, ts:Date.now(), gratis: ANALISES_GRATIS, cartaoSite: CARTAO_SITE_ATIVO,
+             mpPublicKey: MP_PUBLIC_KEY || "" });
 });
 
 // ── PREÇO DO CAFÉ (Coffee C via Alpha Vantage — API oficial) ───
@@ -1921,7 +1927,7 @@ app.get("/custo-api", async function(req, res) {
 // autorizacao e "subscription_authorized_payment" a cada cobranca), e esses
 // caiam no vazio. Somado a falta do external_reference, nenhuma assinatura
 // feita pelo site jamais ativou sozinha.
-async function ativarAssinaturaMP(preapprovalId, origem) {
+async function ativarAssinaturaMP(preapprovalId, origem, planoIdConhecido) {
   var r = await fetch("https://api.mercadopago.com/preapproval/" + encodeURIComponent(preapprovalId), {
     headers: { "Authorization":"Bearer "+MP_TOKEN }
   });
@@ -1957,6 +1963,10 @@ async function ativarAssinaturaMP(preapprovalId, origem) {
       if (rpl.rows[0]) planoId = rpl.rows[0].plano_id;
     } catch(e) {}
   }
+  // Assinatura criada pelo formulario na nossa tela nao tem
+  // preapproval_plan_id (o valor vai inline, vindo de PLANOS). Quem chamou
+  // sabe qual plano e; usar isso evita depender do INSERT ter dado certo.
+  if (!planoId && planoIdConhecido && PLANOS[planoIdConhecido]) planoId = planoIdConhecido;
   if (!planoId) {
     // Sem registro previo: descobre pelo plano do Mercado Pago.
     var idPlanoMP = a.preapproval_plan_id;
@@ -2251,14 +2261,25 @@ app.post("/gerar-pix", async function(req, res) {
 // e sinalizamos isso na resposta, para o app avisar o produtor de que a
 // ativacao pode nao ser automatica — melhor um aviso honesto do que uma
 // tela alegre e uma conta travada.
-app.post("/assinar-site", async function(req, res) {
+// ── VALIDACAO COMUM AOS DOIS CAMINHOS DE CARTAO (24/09/2026) ─────
+// Existem dois jeitos de assinar com cartao no site: o formulario na nossa
+// propria tela (/assinar-site-cartao) e o redirecionamento para o Mercado
+// Pago (/assinar-site), que ficou como reserva. Os dois precisam EXATAMENTE
+// das mesmas checagens — plano valido, dono identificavel, cartao liberado,
+// e-mail e limite de tentativas.
+//
+// Estao aqui, numa funcao so, de proposito. Duplicar as checagens seria
+// repetir o erro que esta auditoria inteira veio consertar: conserto aplicado
+// num lugar e esquecido no irmao ao lado. Se amanha o cartao for desligado,
+// os DOIS caminhos fecham juntos.
+async function checarPedidoAssinaturaSite(req) {
   var planoId = (req.body.plano||"").trim();
   var userId  = (req.body.userId||"").trim();
   var email   = (req.body.email||"").trim();
   var plano   = PLANOS[planoId];
 
-  if (!plano)  return res.status(400).json({ erro:"Plano invalido.", planos_validos:Object.keys(PLANOS) });
-  if (!userId) return res.status(400).json({ erro:"userId obrigatorio — sem ele nao ha como ativar o plano depois do pagamento." });
+  if (!plano)  return { status:400, corpo:{ erro:"Plano invalido.", planos_validos:Object.keys(PLANOS) } };
+  if (!userId) return { status:400, corpo:{ erro:"userId obrigatorio — sem ele nao ha como ativar o plano depois do pagamento." } };
 
   // Barreira no SERVIDOR, nao so no botao: esconder o botao evita que o
   // produtor comum chegue aqui, mas nao impede um link antigo, um favorito
@@ -2266,14 +2287,165 @@ app.post("/assinar-site", async function(req, res) {
   // Enquanto o caminho nao estiver provado, ninguem paga por ele sem querer.
   var modoTesteCartao = String(req.body.modoTeste || req.query.cartao || "") === "teste";
   if (!CARTAO_SITE_ATIVO && !modoTesteCartao) {
-    return res.status(503).json({
+    return { status:503, corpo:{
       erro: "A assinatura por cartao no site esta em testes. Assine pelo app do Doutor Cafe no Android, ou pague por PIX aqui mesmo.",
       cartaoDesligado: true
-    });
+    } };
   }
 
-  // ── E-MAIL E OBRIGATORIO PARA ASSINAR PELO SITE (20/09/2026) ──
-  // O Mercado Pago EXIGE payer_email para criar uma assinatura. E no cadastro
+  if (!email) {
+    var uSemEmail = await dbGetUser(userId);
+    email = (uSemEmail && uSemEmail.email) ? String(uSemEmail.email).trim() : "";
+  }
+  if (!email || email.indexOf("@") < 0) {
+    return { status:400, corpo:{
+      erro: "Para assinar pelo site precisamos do seu e-mail — e nele que o Mercado Pago envia o comprovante e o aviso de renovacao.",
+      precisaEmail: true
+    } };
+  }
+  if (!checkCobrancaRate(userId + "|" + ipDaReq(req))) {
+    return { status:429, corpo:{ erro:"Muitas tentativas de assinatura. Aguarde alguns minutos." } };
+  }
+  return { ok:true, planoId:planoId, plano:plano, userId:userId, email:email, modoTeste:modoTesteCartao };
+}
+
+// Traduz a recusa do Mercado Pago para uma frase que o produtor entenda. O
+// texto cru vem em ingles e as vezes so com um codigo; mostrar aquilo na tela
+// de quem esta com o cartao na mao nao ajuda ninguem a resolver.
+function mensagemErroMP(d) {
+  var txt = "";
+  try {
+    if (d && d.cause && d.cause[0]) txt = d.cause[0].description || d.cause[0].code || "";
+    if (!txt && d && d.message) txt = d.message;
+    if (!txt && d && d.error) txt = d.error;
+  } catch(e) {}
+  var t = String(txt).toLowerCase();
+  if (t.indexOf("collector") > -1 || t.indexOf("same") > -1)
+    return "Esse cartao ou e-mail pertence a mesma conta que recebe o pagamento. Use um e-mail e um cartao diferentes.";
+  if (t.indexOf("token") > -1)
+    return "Os dados do cartao expiraram antes de terminar. Preencha de novo, por favor.";
+  if (t.indexOf("email") > -1)
+    return "O Mercado Pago nao aceitou esse e-mail. Confira se esta escrito certo.";
+  if (t.indexOf("amount") > -1)
+    return "Houve um problema com o valor da assinatura. Avise o suporte pelo WhatsApp.";
+  return "Nao consegui concluir a assinatura com esse cartao. Confira os dados ou tente outro cartao.";
+}
+
+// ── CARTAO NA PROPRIA TELA, SEM SAIR DO SITE (24/09/2026) ────────
+// Antes, assinar com cartao levava o produtor para DUAS telas do Mercado
+// Pago: o resumo do plano e depois o formulario. Cada tela a mais e gente
+// que desiste no meio, ainda mais em celular e internet de lavoura.
+//
+// Aqui o formulario fica na nossa tela. O numero do cartao vai do celular
+// DIRETO para o Mercado Pago (pela chave publica) e volta como um token
+// descartavel — este servidor nunca ve, nunca guarda e nunca registra o
+// numero do cartao. Com o token, criamos a assinatura ja autorizada.
+//
+// ATENCAO ao que "autorizada" significa: o Mercado Pago autoriza a assinatura
+// na hora, mas a primeira cobranca cai em ate 1 hora. Liberamos o plano na
+// hora mesmo assim — segurar o acesso de quem acabou de digitar o cartao
+// seria pior. Se a cobranca falhar depois, o Mercado Pago tenta de novo por
+// ate 10 dias e avisa no webhook; ai o plano cai sozinho na data de
+// vencimento, pela mesma regra de sempre (planoVigente). A exposicao maxima
+// e um mes de um plano — menos do que perder o cliente na segunda tela.
+//
+// O caminho antigo continua inteiro em /assinar-site, como reserva: se o SDK
+// do Mercado Pago nao carregar, se a chave publica nao estiver configurada ou
+// se este endpoint falhar, o app manda o produtor para la automaticamente.
+app.post("/assinar-site-cartao", async function(req, res) {
+  var v = await checarPedidoAssinaturaSite(req);
+  if (!v.ok) return res.status(v.status).json(v.corpo);
+
+  var cardTokenId = String(req.body.cardTokenId || "").trim();
+  if (!cardTokenId) {
+    return res.status(400).json({ erro:"Faltaram os dados do cartao.", usarRedirecionamento:true });
+  }
+  if (!MP_TOKEN) {
+    return res.status(503).json({ erro:"Pagamento indisponivel no momento.", usarRedirecionamento:true });
+  }
+
+  var anual = v.planoId.indexOf("anual") > -1;
+  var corpo = {
+    reason: "Doutor Cafe — " + v.plano.nome,
+    // external_reference e o que amarra a assinatura ao usuario. Sem ele a
+    // notificacao do Mercado Pago chega sem dizer de quem e.
+    external_reference: v.userId,
+    payer_email: v.email,
+    card_token_id: cardTokenId,
+    status: "authorized",
+    back_url: "https://doutor-cafe-app.vercel.app?pagamento=retorno",
+    // O valor vem de PLANOS, a mesma fonte que o teste-valores compara com o
+    // preco mostrado no app. Nao ha plano cadastrado no Mercado Pago para
+    // sair do lugar sem ninguem perceber.
+    auto_recurring: {
+      frequency: 1,
+      frequency_type: anual ? "years" : "months",
+      transaction_amount: v.plano.valor,
+      currency_id: "BRL"
+    }
+  };
+
+  try {
+    var r = await fetch("https://api.mercadopago.com/preapproval", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+MP_TOKEN },
+      body: JSON.stringify(corpo)
+    });
+    var d = await r.json();
+
+    if (!r.ok || !d || !d.id) {
+      console.error("/assinar-site-cartao: Mercado Pago recusou:", JSON.stringify(d).substr(0,400));
+      return res.status(400).json({ erro: mensagemErroMP(d), usarRedirecionamento:true });
+    }
+
+    // Grava o pendente ANTES de ativar, pelos mesmos motivos do outro
+    // caminho: e por essa linha que a varredura de 10 em 10 minutos e o botao
+    // "ja paguei" encontram a assinatura se algo travar daqui para a frente.
+    if (pool) {
+      try {
+        await pool.query(
+          "INSERT INTO pagamentos (id,user_id,plano_id,status,valor,origem) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+          [String(d.id), v.userId, v.planoId, "pending", v.plano.valor, "mp_assinatura"]
+        );
+        await pool.query(
+          "UPDATE usuarios SET email=$2, atualizado_em=NOW() WHERE user_id=$1 AND (email IS NULL OR email='')",
+          [v.userId, v.email]
+        );
+      } catch(eIns) { console.error("/assinar-site-cartao: nao gravei o pendente:", eIns.message); }
+    }
+
+    // Reusa a MESMA funcao que o webhook usa. Nada de caminho paralelo para
+    // ativar plano: o lugar onde o plano vira pago continua sendo um so.
+    try { await ativarAssinaturaMP(String(d.id), "cartao na tela", v.planoId); }
+    catch(eAt) { console.error("/assinar-site-cartao: ativacao falhou:", eAt.message); }
+
+    var u = await dbGetUser(v.userId);
+    var vigente = u ? planoVigente(u) : "gratuito";
+    var liberou = vigente !== "gratuito";
+
+    return res.json({
+      ok: true,
+      id: d.id,
+      statusMP: d.status || "",
+      plano: vigente,
+      liberou: liberou,
+      mensagem: liberou
+        ? "Assinatura confirmada! Seu plano ja esta liberado."
+        : "Recebemos sua assinatura. Se o plano nao aparecer em alguns minutos, toque em \"Ja paguei e nao liberou\"."
+    });
+  } catch(e) {
+    console.error("/assinar-site-cartao erro:", e.message);
+    return res.status(500).json({ erro:"Nao consegui falar com o Mercado Pago agora.", usarRedirecionamento:true });
+  }
+});
+
+app.post("/assinar-site", async function(req, res) {
+  var v = await checarPedidoAssinaturaSite(req);
+  if (!v.ok) return res.status(v.status).json(v.corpo);
+  var planoId = v.planoId, userId = v.userId, email = v.email, plano = v.plano;
+
+  // ── POR QUE O E-MAIL E OBRIGATORIO (20/09/2026) ───────────────
+  // O Mercado Pago EXIGE payer_email para criar uma assinatura, e no cadastro
   // do app o e-mail e OPCIONAL (so nome, CPF, celular e PIN sao validados).
   //
   // Sem esta checagem, o produtor que se cadastrou sem e-mail caia num buraco
@@ -2282,19 +2454,8 @@ app.post("/assinar-site", async function(req, res) {
   // pagava e o plano nunca ativava. Era o bug original ressurgindo para uma
   // fatia grande dos usuarios, e escondido pelo proprio plano B.
   //
-  // Preferimos parar e pedir o e-mail: um campo a mais e um incomodo de dez
-  // segundos; pagar e nao receber e um estorno e um cliente perdido.
-  if (!email) {
-    var uSemEmail = await dbGetUser(userId);
-    email = (uSemEmail && uSemEmail.email) ? String(uSemEmail.email).trim() : "";
-  }
-  if (!email || email.indexOf("@") < 0) {
-    return res.status(400).json({
-      erro: "Para assinar pelo site precisamos do seu e-mail — e nele que o Mercado Pago envia o comprovante e o aviso de renovacao.",
-      precisaEmail: true
-    });
-  }
-  if (!checkCobrancaRate(userId + "|" + ipDaReq(req))) return res.status(429).json({ erro:"Muitas tentativas de assinatura. Aguarde alguns minutos." });
+  // A checagem em si vive agora em checarPedidoAssinaturaSite, junto com as
+  // outras, para valer igual nos dois caminhos de cartao.
 
   var ciclo = planoId.indexOf("anual") > -1 ? "anual" : "mensal";
   var linkEstatico = LINKS_MP_FALLBACK[planoId] || null;

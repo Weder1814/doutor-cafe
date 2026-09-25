@@ -152,5 +152,30 @@ ok(/pendente\(s\) ha mais de 24h/.test(src),
 ok(/app.post\("\/conferir-meu-pagamento"/.test(src),
   "o produtor consegue pedir a conferencia sozinho, sem WhatsApp");
 
+// ── 9. CARTAO NA PROPRIA TELA ────────────────────────────────────
+console.log("\n== 9. Assinar com cartao sem sair do app ==");
+// Criado em 25/09/2026, depois do teste em campo: o caminho antigo jogava o
+// produtor em DUAS telas do Mercado Pago. Aqui o risco novo e outro — o
+// numero do cartao passar perto do nosso servidor, e uma falha deste caminho
+// deixar o produtor sem NENHUM jeito de pagar.
+var cart = semComentarios(corpoEndpoint("/assinar-site-cartao") || "");
+ok(cart.length > 0, "o endpoint /assinar-site-cartao existe");
+ok(/card_token_id: *cardTokenId/.test(cart),
+  "usa o token descartavel do Mercado Pago");
+ok(!/numero|card_number|cvv|securityCode/i.test(cart),
+  "o servidor nunca toca no numero do cartao nem no CVV");
+ok(/status: *"authorized"/.test(cart),
+  "cria a assinatura ja autorizada (e o que dispensa a tela do Mercado Pago)");
+ok(/external_reference: *v\.userId/.test(cart),
+  "amarra a assinatura ao usuario (sem isso a ativacao nao sabe de quem e)");
+ok(/checarPedidoAssinaturaSite/.test(cart),
+  "passa pelas MESMAS travas do outro caminho (cartao ligado, e-mail, limite de tentativas)");
+ok(/origem: *undefined/.test(cart) === false && /"mp_assinatura"/.test(cart),
+  "grava o pendente com origem mp_assinatura, entao a varredura de 10 min tambem cobre este caminho");
+ok(/ativarAssinaturaMP\(String\(d\.id\)/.test(cart),
+  "ativa pelo mesmo caminho do webhook (nao existe segundo lugar que vira plano pago)");
+ok((cart.match(/usarRedirecionamento/g) || []).length >= 3,
+  "toda falha devolve 'usarRedirecionamento': o produtor cai no Mercado Pago em vez de ficar sem pagar");
+
 console.log(falhas === 0 ? "\nTODOS OS TESTES PASSARAM\n" : "\n" + falhas + " FALHA(S)\n");
 process.exit(falhas ? 1 : 0);

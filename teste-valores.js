@@ -166,5 +166,37 @@ ok(fe.indexOf("ajustarBotoesPagamento") > -1, "existe a funcao que esconde pagam
 ok(/function abrirPix\([^)]*\)\s*\{\s*(\/\/[^\n]*\n\s*)*if \(playBillingDisponivel\(\)\)/.test(fe),
   "abrirPix se recusa a abrir dentro do app Android");
 
+console.log("\n== Cartao na propria tela (sem duas paradas no Mercado Pago) ==");
+// 25/09/2026: o produtor testou e caiu em duas telas do Mercado Pago antes de
+// digitar o cartao. O formulario passou para dentro do app. O que este teste
+// protege NAO e a tela bonita: e o caminho de reserva. Se o formulario proprio
+// sumir sem o redirecionamento continuar funcionando, o site fica sem NENHUM
+// jeito de pagar com cartao — falha muito pior do que a que consertamos.
+ok(/function abrirCartaoNaTela/.test(fe), "existe o formulario de cartao dentro do app");
+ok(/function assinarPeloRedirecionamento/.test(fe),
+  "o caminho antigo do Mercado Pago continua inteiro, como reserva");
+ok(/if \(!MP_PUBLIC_KEY\) return assinarPeloRedirecionamento/.test(fe),
+  "sem chave publica configurada, cai na reserva em vez de travar");
+ok(/catch\(function\(err\)\{[\s\S]{0,400}assinarPeloRedirecionamento/.test(fe.replace(/\s+/g,"")) ||
+   /assinarPeloRedirecionamento\(tipo\);\s*\}\)/.test(fe),
+  "se o SDK do Mercado Pago nao carregar, cai na reserva");
+ok(/usarRedirecionamento/.test(fe),
+  "se o servidor recusar o token, o app leva o produtor para o Mercado Pago");
+ok(/sdk\.mercadopago\.com\/js\/v2/.test(fe),
+  "o cartao e cifrado pelo SDK oficial do Mercado Pago, no proprio celular");
+ok(!/cardNumber|securityCode|numeroCartao|cvv/i.test(feVisivel),
+  "o app nao le nem guarda numero de cartao em campo proprio");
+ok(/setTimeout\(function\(\)\{ reject\(new Error\("sdk demorou"\)\); \}, 8000\)/.test(fe),
+  "o carregamento do SDK tem tempo limite (celular com sinal fraco nao fica preso)");
+
+console.log("\n== Limite gratuito: app e servidor no mesmo numero ==");
+// Sobra do tempo em que eram 15. O servidor bloqueia em 10; com 15 aqui, o
+// app deixava tentar a 11a analise e so entao mostrava o "nao" do servidor.
+var lg = fe.match(/LIMITE_GRATIS=(\d+)/);
+ok(lg && +lg[1] === ANALISES_GRATIS,
+  "limite gratuito no app (" + (lg ? lg[1] : "?") + ") = limite do servidor (" + ANALISES_GRATIS + ")");
+ok(/LIMITE_GRATIS = n;/.test(fe),
+  "e se o servidor mudar o numero, o app passa a seguir ele sozinho");
+
 console.log(falhas === 0 ? "\nTODOS OS VALORES BATEM\n" : "\n" + falhas + " DIVERGENCIA(S)\n");
 process.exit(falhas ? 1 : 0);

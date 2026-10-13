@@ -310,6 +310,10 @@ async function initDB() {
     // funciona como REDE DE SEGURANCA: mesmo sem nenhum webhook, o plano
     // cai sozinho no dia em que a assinatura realmente vence.
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS plano_expira_em TIMESTAMPTZ`);
+    // De onde veio o plano vigente: play, mp_assinatura, pix ou admin. So o
+    // PIX nao renova sozinho — e o app precisa saber disso para avisar o
+    // produtor antes de vencer, em vez de deixar o plano cair sem aviso.
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS plano_origem TEXT`);
     // origem distingue de quem e cada linha de pagamento: Google Play,
     // assinatura do Mercado Pago ou PIX. A reconciliacao de pendentes so
     // pode mexer nas do Mercado Pago — consultar um purchaseToken do Google
@@ -660,7 +664,7 @@ async function confirmarCompraPlay(productId, purchaseToken) {
 // basePlanId precisa bater com uma chave de PLANOS (ex: "basico_mensal").
 async function ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, valor, expiraEm) {
   var tipo = basePlanId.indexOf("premium")>-1?"premium":basePlanId.indexOf("pro")>-1?"pro":"basico";
-  await dbAtualizarPlano(userId, tipo, basePlanId, expiraEm);
+  await dbAtualizarPlano(userId, tipo, basePlanId, expiraEm, "play");
   if (pool) {
     // DO UPDATE (e nao DO NOTHING) para o token passar a apontar para o dono
     // atual. Com DO NOTHING, depois de uma troca de aparelho o registro
@@ -884,7 +888,7 @@ app.post("/webhook-play-rtdn", async function(req, res) {
     } else if (tipoNotif===12 || tipoNotif===13) {
       // 13 expirou (acesso acabou de verdade), 12 revogado (reembolso/estorno
       // — nesse caso o acesso termina imediatamente, por determinacao da Google)
-      await dbAtualizarPlano(userId, "gratuito", null, null);
+      await dbAtualizarPlano(userId, "gratuito", null, null, null);
       console.log("⬇️ [Play Billing] Plano rebaixado pra gratuito:", userId, "(notificationType", tipoNotif+")");
     }
     // Os demais tipos (5 on_hold, 6 grace period, 9 deferred, 10 paused,
@@ -936,7 +940,7 @@ app.post("/webhook-play-rtdn", async function(req, res) {
 // alguem reconfirma uma assinatura que ja estava ativa. Comparamos a data de
 // expiracao: se a nova e a mesma que ja estava gravada, e a MESMA assinatura
 // sendo reconfirmada — mantem o consumo. Se avancou, houve renovacao — zera.
-async function dbAtualizarPlano(userId, plano, planoId, expiraEm) {
+async function dbAtualizarPlano(userId, plano, planoId, expiraEm, origem) {
   var mes = mesAtual();
   var exp = expiraEm ? new Date(expiraEm) : null;
   if (exp && isNaN(exp.getTime())) exp = null;
@@ -973,6 +977,14 @@ async function dbAtualizarPlano(userId, plano, planoId, expiraEm) {
         ? "UPDATE usuarios SET plano=$2, plano_id=$3, analises_usadas=0, videos_usados=0, mes_reset=$4, plano_expira_em=$5, atualizado_em=NOW() WHERE user_id=$1"
         : "UPDATE usuarios SET plano=$2, plano_id=$3, mes_reset=$4, plano_expira_em=$5, atualizado_em=NOW() WHERE user_id=$1";
       await pool.query(sql, [userId, plano, planoId||"", mes, exp]);
+      // Origem separada do UPDATE principal: se esta coluna falhar por
+      // qualquer motivo, o plano em si ja foi gravado.
+      if (origem !== undefined) {
+        try {
+          await pool.query("UPDATE usuarios SET plano_origem=$2 WHERE user_id=$1",
+            [userId, plano === "gratuito" ? null : origem]);
+        } catch(eOr) { console.error("dbAtualizarPlano (origem):", eOr.message); }
+      }
       return true;
     } catch(e) { console.error("dbAtualizarPlano:", e.message); }
   }
@@ -1705,7 +1717,11 @@ app.get("/analises-restantes/:userId", async function(req, res) {
       // Data ate a qual a assinatura vale. O app mostra isso para o assinante
       // ("renova em 20/10"), que e a informacao que ele procura quando abre a
       // tela de plano — e tambem o que evita a surpresa da cobranca.
-      expiraEm: u.plano_expira_em || u.planoExpiraEm || null
+      expiraEm: u.plano_expira_em || u.planoExpiraEm || null,
+      // So o PIX nao renova sozinho. O app usa isto para avisar antes de
+      // vencer; para Google Play e cartao a renovacao e automatica.
+      origemPlano: u.plano_origem || null,
+      renovaSozinho: (u.plano_origem || null) !== "pix"
     });
   } catch(e) {
     res.status(500).json({ erro:e.message });
@@ -1874,6 +1890,15 @@ app.get("/admin/quem-tentou-pagar", async function(req, res) {
       "SELECT nome, celular, email, plano, analises_usadas, criado_em " +
       "FROM usuarios ORDER BY criado_em DESC LIMIT 60"
     );
+    // PIX nao renova sozinho. Quem vence nos proximos 7 dias (ou venceu ha
+    // ate 3, ainda dentro da carencia) aparece aqui com a mensagem de
+    // WhatsApp ja escrita — um toque e ela abre pronta para enviar.
+    var venc = await pool.query(
+      "SELECT nome, celular, plano, plano_expira_em FROM usuarios " +
+      "WHERE plano_origem='pix' AND plano_expira_em IS NOT NULL " +
+      "AND plano_expira_em BETWEEN NOW() - INTERVAL '3 days' AND NOW() + INTERVAL '7 days' " +
+      "ORDER BY plano_expira_em ASC LIMIT 60"
+    );
 
     function quando(d) {
       try { return new Date(d).toLocaleString("pt-BR", { timeZone:"America/Sao_Paulo" }); }
@@ -1893,6 +1918,23 @@ app.get("/admin/quem-tentou-pagar", async function(req, res) {
              "</td><td>" + escHtml(STATUS[r.status] || r.status) +
              "</td><td>" + escHtml(r.origem || "pix") + "</td></tr>";
     }).join("");
+    var NOMES_PLANO = { basico:"Básico", pro:"Pro", premium:"Premium" };
+    var linhasVenc = venc.rows.map(function(r){
+      var dt = new Date(r.plano_expira_em);
+      var dia = dt.toLocaleDateString("pt-BR", { timeZone:"America/Sao_Paulo" });
+      var primeiroNome = String(r.nome || "").trim().split(/\s+/)[0] || "";
+      var jaVenceu = dt.getTime() < Date.now();
+      var msg = "Olá" + (primeiroNome ? ", " + primeiroNome : "") + "! Aqui é do Doutor Café. " +
+        "Seu Plano " + (NOMES_PLANO[r.plano] || r.plano) + (jaVenceu ? " venceu em " : " vence em ") + dia +
+        ". Como o pagamento foi por PIX, ele não renova sozinho. Para continuar com suas análises, " +
+        "é só abrir o app e renovar: https://doutor-cafe-app.vercel.app";
+      var n = String(r.celular || "").replace(/[^0-9]/g, "");
+      var botao = n.length >= 10
+        ? '<a href="https://wa.me/55' + n + '?text=' + encodeURIComponent(msg) + '">Enviar aviso</a>'
+        : "sem celular";
+      return "<tr><td>" + escHtml(dia) + (jaVenceu ? " (venceu)" : "") + "</td><td>" + escHtml(r.nome) +
+             "</td><td>" + escHtml(NOMES_PLANO[r.plano] || r.plano) + "</td><td>" + botao + "</td></tr>";
+    }).join("");
     var linhasCad = cad.rows.map(function(r){
       return "<tr><td>" + quando(r.criado_em) + "</td><td>" + escHtml(r.nome) +
              "</td><td>" + zap(r.celular) + "</td><td>" + escHtml(r.plano) +
@@ -1908,6 +1950,9 @@ app.get("/admin/quem-tentou-pagar", async function(req, res) {
       '.t{overflow-x:auto}table{border-collapse:collapse;font-size:13px;min-width:560px}' +
       'td,th{border-bottom:1px solid #ddd;padding:7px 8px;text-align:left;white-space:nowrap}' +
       'th{background:#eee}a{color:#1a5c2a;font-weight:600}</style></head><body>' +
+      '<h2>PIX vencendo</h2><p>Pagaram por PIX e o plano vence nos próximos 7 dias. Toque em "Enviar aviso": o WhatsApp abre com a mensagem pronta.</p>' +
+      '<div class="t"><table><tr><th>Vence</th><th>Nome</th><th>Plano</th><th>WhatsApp</th></tr>' +
+      (linhasVenc || '<tr><td colspan="4">Ninguém vencendo agora.</td></tr>') + '</table></div>' +
       '<h2>Tentativas de pagamento</h2><p>Toque no celular para abrir o WhatsApp. "Não pagou" = gerou o PIX e não concluiu.</p>' +
       '<div class="t"><table><tr><th>Quando</th><th>Nome</th><th>Celular</th><th>Plano</th><th>Situação</th><th>Meio</th></tr>' +
       (linhasPg || '<tr><td colspan="6">Nenhuma ainda.</td></tr>') + '</table></div>' +
@@ -1940,7 +1985,7 @@ app.post("/admin/definir-plano", async function(req, res) {
     var u = await dbGetUserByCPF(cpf);
     if (!u) return res.status(404).json({ erro:"Nenhum usuario com esse CPF." });
     var userId = u.user_id || u.userId;
-    await dbAtualizarPlano(userId, plano, plano === "admin" ? "admin_manual" : "");
+    await dbAtualizarPlano(userId, plano, plano === "admin" ? "admin_manual" : "", undefined, "admin");
     res.json({
       ok: true,
       userId: userId,
@@ -2063,7 +2108,7 @@ async function ativarAssinaturaMP(preapprovalId, origem, planoIdConhecido) {
     // recomecar de hoje e encurtar o que o produtor tem direito.
     var uMP = await dbGetUser(userId);
     var novaExp = expiracaoMP(planoId, uMP && (uMP.plano_expira_em || uMP.planoExpiraEm));
-    await dbAtualizarPlano(userId, tipo, planoId, novaExp);
+    await dbAtualizarPlano(userId, tipo, planoId, novaExp, "mp_assinatura");
     if (pool) {
       try {
         await pool.query(
@@ -2227,21 +2272,7 @@ app.post("/webhook-pagamento", async function(req, res) {
         var userId  = pagamento.metadata.user_id;
         var planoId = pagamento.metadata.plano_id;
         var tipo    = planoId && planoId.indexOf("premium")>-1?"premium":planoId && planoId.indexOf("pro")>-1?"pro":"basico";
-        if (userId) {
-          // Pix e pagamento avulso: vale por um ciclo. Antes nao gravava
-          // expiracao nenhuma, entao um Pix de R$29,90 liberava o plano para
-          // sempre. E agora soma ao tempo que a pessoa ainda tiver pago, para
-          // quem paga adiantado nao perder dias.
-          var uPix = await dbGetUser(userId);
-          await dbAtualizarPlano(userId, tipo, planoId, expiracaoMP(planoId, uPix && (uPix.plano_expira_em || uPix.planoExpiraEm)));
-          if (pool) {
-            await pool.query(
-              "INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
-              [String(pagamento.id), userId, planoId, "approved", pagamento.transaction_amount||0]
-            );
-          }
-          console.log("✅ Plano", tipo, "ativado para", userId);
-        }
+        if (userId) await ativarPixAprovado(pagamento, "webhook");
       }
     } catch(e) { console.error("Webhook erro:", e.message); }
   }
@@ -2293,8 +2324,8 @@ app.post("/gerar-pix", async function(req, res) {
     if (d.id && d.point_of_interaction) {
       if (pool) {
         try {
-          await pool.query("INSERT INTO pagamentos (id,user_id,plano_id,status,valor) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
-            [String(d.id), userId, planoId, "pending", plano.valor]);
+          await pool.query("INSERT INTO pagamentos (id,user_id,plano_id,status,valor,origem) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+            [String(d.id), userId, planoId, "pending", plano.valor, "pix"]);
         } catch(e) {}
       }
       res.json({ id:d.id, qr_code:d.point_of_interaction.transaction_data.qr_code, qr_code_base64:d.point_of_interaction.transaction_data.qr_code_base64, valor:plano.valor, plano:plano.nome });
@@ -2618,13 +2649,71 @@ app.post("/criar-assinatura", async function(req, res) {
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
 
+// ── PIX APROVADO: UM LUGAR SO, E UMA VEZ SO (13/10/2026) ─────────
+// Dois defeitos que esta funcao fecha:
+//
+// 1. /verificar-pix ativava SEM data de validade. O app consulta esse
+//    endpoint a cada 5 segundos enquanto o QR esta na tela, e normalmente
+//    chega antes do webhook. Plano sem data nunca vence (planoVigente), entao
+//    um PIX de R$29,90 podia virar plano vitalicio, dependendo de quem
+//    chegasse por ultimo. O webhook ja tinha sido corrigido em 20/09; este
+//    caminho irmao ficou para tras.
+//
+// 2. Nenhum dos dois era idempotente. O Mercado Pago reenvia notificacoes, e
+//    /verificar-pix e um GET aberto: cada chamada repetida com o mesmo
+//    pagamento somava mais um mes (expiracaoMP soma ao que ja existe).
+//
+// Agora o pagamento e "reivindicado" no banco antes de ativar: so a primeira
+// chamada que muda o status para approved ativa o plano. As outras veem que
+// ja foi feito e nao mexem em nada.
+async function ativarPixAprovado(p, origem) {
+  var userId = p && p.metadata && p.metadata.user_id;
+  var planoId = p && p.metadata && p.metadata.plano_id;
+  if (!userId || !planoId || !PLANOS[planoId]) {
+    console.error("PIX aprovado sem dono ou plano reconhecivel:", p && p.id);
+    return false;
+  }
+  var tipo = planoId.indexOf("premium")>-1?"premium":planoId.indexOf("pro")>-1?"pro":"basico";
+
+  if (pool) {
+    var claim;
+    try {
+      claim = await pool.query(
+        "INSERT INTO pagamentos (id,user_id,plano_id,status,valor,origem) VALUES ($1,$2,$3,'approved',$4,'pix') " +
+        "ON CONFLICT (id) DO UPDATE SET status='approved' WHERE pagamentos.status IS DISTINCT FROM 'approved' " +
+        "RETURNING id",
+        [String(p.id), userId, planoId, p.transaction_amount || PLANOS[planoId].valor]
+      );
+    } catch(eCl) {
+      console.error("PIX: nao consegui registrar o pagamento", p.id, "-", eCl.message);
+      return false;
+    }
+    if (!claim.rows.length) return false;   // ja tinha sido ativado antes
+  }
+
+  try {
+    var u = await dbGetUser(userId);
+    var exp = expiracaoMP(planoId, u && (u.plano_expira_em || u.planoExpiraEm));
+    await dbAtualizarPlano(userId, tipo, planoId, exp, "pix");
+    console.log("✅ [PIX " + origem + "] Plano", tipo, "ativado para", userId, "| vence em", exp.toISOString());
+    return true;
+  } catch(eAt) {
+    // Devolve o pagamento para pendente, para a proxima consulta (do app ou
+    // do webhook) tentar de novo em vez de achar que ja esta feito.
+    console.error("PIX: ativacao falhou para", p.id, "-", eAt.message);
+    if (pool) {
+      try { await pool.query("UPDATE pagamentos SET status='pending' WHERE id=$1", [String(p.id)]); } catch(e) {}
+    }
+    return false;
+  }
+}
+
 app.get("/verificar-pix/:paymentId", async function(req, res) {
   try {
-    var r = await fetch("https://api.mercadopago.com/v1/payments/"+req.params.paymentId, { headers:{ "Authorization":"Bearer "+MP_TOKEN } });
+    var r = await fetch("https://api.mercadopago.com/v1/payments/"+encodeURIComponent(req.params.paymentId), { headers:{ "Authorization":"Bearer "+MP_TOKEN } });
     var p = await r.json();
     if (p.status === "approved" && p.metadata && p.metadata.user_id) {
-      var tipo = p.metadata.plano_id && p.metadata.plano_id.indexOf("premium")>-1?"premium":p.metadata.plano_id && p.metadata.plano_id.indexOf("pro")>-1?"pro":"basico";
-      await dbAtualizarPlano(p.metadata.user_id, tipo, p.metadata.plano_id);
+      await ativarPixAprovado(p, "app");
     }
     res.json({ status:p.status, aprovado:p.status==="approved", plano_id:p.metadata&&p.metadata.plano_id, user_id:p.metadata&&p.metadata.user_id });
   } catch(e) { res.status(500).json({ erro:e.message }); }
@@ -2670,7 +2759,11 @@ app.get("/plano/:userId", async function(req, res) {
       videosUsados: u.videos_usados||u.videosUsados||0,
       videosRestantes: videosRestantes(u),
       limiteVideo: VIDEO_LIMITES[planoU]||VIDEO_LIMITES.gratuito,
-      expiraEm: u.plano_expira_em || u.planoExpiraEm || null
+      expiraEm: u.plano_expira_em || u.planoExpiraEm || null,
+      // So o PIX nao renova sozinho. O app usa isto para avisar antes de
+      // vencer; para Google Play e cartao a renovacao e automatica.
+      origemPlano: u.plano_origem || null,
+      renovaSozinho: (u.plano_origem || null) !== "pix"
     });
   } catch(e) { res.status(500).json({ erro:e.message }); }
 });
@@ -5799,6 +5892,13 @@ function buildSystemMessageComCache(isVideo, contextoRegional, instrucaoExtra) {
 initDB().then(function() {
   app.listen(process.env.PORT||8080, function() {
     console.log("🌿 Doutor Cafe API ok — porta", process.env.PORT||8080);
+    // 13/10/2026: a chave do Google Play faltava no Railway e nada avisava.
+    // Sem ela, toda compra pelo app Android e cobrada pelo Google, o plano
+    // nao ativa e, sem confirmacao em 3 dias, o Google devolve o dinheiro.
+    if (!process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON) {
+      console.error("⚠️ ATENCAO: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON nao esta configurada. " +
+        "Compras pelo app Android NAO serao ativadas nem confirmadas (o Google reembolsa em 3 dias).");
+    }
     console.log("   DB:", pool?"PostgreSQL":"memória");
   });
 });

@@ -691,10 +691,48 @@ var PRODUCT_ID_PARA_TIPO = { plano_basico:"basico", plano_pro:"pro", plano_premi
 // confirma. Usado tanto pelo fluxo de compra "quente" (/verificar-compra-play)
 // quanto pela reconciliacao de compras pendentes no boot do app
 // (/reconciliar-compras-play) — uma unica fonte de verdade pras duas rotas.
+// ── CICLO A PARTIR DO ID DO PLANO BASE (13/10/2026) ──────────────
+// O codigo esperava que o plano base no Play Console se chamasse exatamente
+// "mensal". Os que existem de verdade sao "basico-mensal", "pro-mensal" e
+// "premim-mensal" (com o erro de digitacao) — e o Google NAO deixa renomear
+// o ID de um plano base depois de criado. Resultado: o servidor montava
+// "basico_basico-mensal", nao achava em PLANOS, e o plano nunca ativava.
+// Agora o ciclo e lido pelo que o ID contem. Nome desconhecido continua
+// sendo recusado: melhor nao ativar do que ativar o ciclo errado.
+function cicloDoPlanoBasePlay(id) {
+  var t = String(id || "").toLowerCase();
+  if (/anual|annual|yearly|year|ano/.test(t)) return "anual";
+  if (/mensal|monthly|month|mes/.test(t)) return "mensal";
+  return null;
+}
+// Ativa ou em periodo de tolerancia: nos dois o Google manda manter o acesso.
+// ("During a grace period, the user should still have access" — doc oficial.)
+function assinaturaPlayDaAcesso(estado) {
+  return estado === "SUBSCRIPTION_STATE_ACTIVE" || estado === "SUBSCRIPTION_STATE_IN_GRACE_PERIOD";
+}
+
+// Durante a tolerancia o Google empurra o expiryTime para a frente todo dia.
+// Se isso passasse por dbAtualizarPlano, cada empurrao contaria como mes novo
+// e zeraria as analises usadas. Aqui so a data anda; a cota fica como esta.
+async function estenderNaToleranciaPlay(userId, basePlanId, purchaseToken, expiraEm) {
+  var u = await dbGetUser(userId);
+  var tipo = basePlanId.indexOf("premium")>-1?"premium":basePlanId.indexOf("pro")>-1?"pro":"basico";
+  if (!u || planoVigente(u) !== tipo || !pool) {
+    // Ainda nao tem o plano nesta conta (ex.: celular novo): ativa por inteiro.
+    return ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, (PLANOS[basePlanId]||{}).valor, expiraEm);
+  }
+  await pool.query(
+    "UPDATE usuarios SET plano_expira_em=$2, atualizado_em=NOW() WHERE user_id=$1 AND (plano_expira_em IS NULL OR plano_expira_em < $2)",
+    [userId, new Date(expiraEm)]
+  );
+  console.log("⏳ [Play Billing] Em tolerancia (pagamento falhou, Google tentando de novo):", userId, "| acesso ate", expiraEm);
+  return tipo;
+}
+
 async function processarCompraPlay(userId, purchaseToken) {
   var dadosCompra = await consultarAssinaturaPlay(purchaseToken);
   var estado = dadosCompra.subscriptionState;
-  if (estado !== "SUBSCRIPTION_STATE_ACTIVE") {
+  if (!assinaturaPlayDaAcesso(estado)) {
     return { ok:false, erro:"Assinatura nao esta ativa segundo a Google Play.", estado: estado };
   }
   var item = dadosCompra.lineItems && dadosCompra.lineItems[0];
@@ -705,11 +743,16 @@ async function processarCompraPlay(userId, purchaseToken) {
   if (!tipo) {
     return { ok:false, erro:"productId retornado pela Play API nao reconhecido: "+item.productId };
   }
-  var cicloReal = (item.offerDetails && item.offerDetails.basePlanId) || "mensal";
+  var idPlanoBase = (item.offerDetails && item.offerDetails.basePlanId) || "";
+  var cicloReal = cicloDoPlanoBasePlay(idPlanoBase);
+  if (!cicloReal) {
+    console.error("⚠️ [Play Billing] Plano base com nome que nao diz o ciclo:", idPlanoBase, "— compra NAO ativada para", userId);
+    return { ok:false, erro:"Plano base '"+idPlanoBase+"' sem ciclo reconhecivel (o ID precisa conter 'mensal' ou 'anual')." };
+  }
   var basePlanId = tipo + "_" + cicloReal;
   var plano = PLANOS[basePlanId];
   if (!plano) {
-    return { ok:false, erro:"basePlanId derivado da Play API nao encontrado em PLANOS: "+basePlanId+" (confira se o nome do base plan no Play Console eh exatamente 'mensal'/'anual')." };
+    return { ok:false, erro:"Plano nao encontrado em PLANOS: "+basePlanId };
   }
   // ── UMA ASSINATURA, UMA CONTA POR VEZ (20/09/2026) ────────────
   // Nada ligava o purchaseToken a um userId. O app manda os dois no corpo da
@@ -751,7 +794,9 @@ async function processarCompraPlay(userId, purchaseToken) {
   // que o acesso realmente termina se nao houver renovacao. Guardar isso e o
   // que impede um plano pago virar vitalicio quando um webhook se perde.
   var expiraEm = item.expiryTime || dadosCompra.expiryTime || null;
-  var tipoAtivado = await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, plano.valor, expiraEm);
+  var tipoAtivado = (estado === "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" && expiraEm)
+    ? await estenderNaToleranciaPlay(userId, basePlanId, purchaseToken, expiraEm)
+    : await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, plano.valor, expiraEm);
   try { await confirmarCompraPlay(item.productId, purchaseToken); } catch(eAck) { console.error("Erro ao confirmar compra:", eAck.message); }
   return { ok:true, tipo:tipoAtivado, plano:basePlanId, expiraEm:expiraEm };
 }
@@ -856,7 +901,11 @@ app.post("/webhook-play-rtdn", async function(req, res) {
     //
     // Agora: tipo 3 so registra. Quem derruba o acesso e o 13 (venceu) ou o
     // 12 (revogado — reembolso/estorno, aí o acesso termina na hora mesmo).
-    if (tipoNotif===2 || tipoNotif===1 || tipoNotif===7 || tipoNotif===4) {
+    if (tipoNotif===2 || tipoNotif===1 || tipoNotif===7 || tipoNotif===4 || tipoNotif===6) {
+      // 6 = entrou em periodo de tolerancia (cartao recusado na renovacao; o
+      // Google tenta de novo por 7 dias). O produtor mantem o acesso nesse
+      // tempo — regra do Google. Antes o 6 era ignorado e o acesso caia no
+      // nosso prazo de 3 dias, antes do prazo do Google.
       // 4 comprado, 2 renovado, 1 recuperado, 7 reiniciado -> confirma ativo.
       // O tipo 4 (SUBSCRIPTION_PURCHASED) nao era tratado: servia de rede
       // para a compra que o app nao conseguiu confirmar (fechou no meio,
@@ -864,10 +913,14 @@ app.post("/webhook-play-rtdn", async function(req, res) {
       // pagamentos; a primeira compra continua sendo confirmada pelo app
       // via /verificar-compra-play e pela reconciliacao no boot.
       var dados = await consultarAssinaturaPlay(purchaseToken);
-      if (dados.subscriptionState==="SUBSCRIPTION_STATE_ACTIVE" && basePlanId) {
+      if (assinaturaPlayDaAcesso(dados.subscriptionState) && basePlanId) {
         var itemR = dados.lineItems && dados.lineItems[0];
         var expR = (itemR && itemR.expiryTime) || dados.expiryTime || null;
-        await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, (PLANOS[basePlanId]||{}).valor, expR);
+        if (dados.subscriptionState === "SUBSCRIPTION_STATE_IN_GRACE_PERIOD" && expR) {
+          await estenderNaToleranciaPlay(userId, basePlanId, purchaseToken, expR);
+        } else {
+          await ativarPlanoPelaPlay(userId, basePlanId, purchaseToken, (PLANOS[basePlanId]||{}).valor, expR);
+        }
       }
     } else if (tipoNotif===3) {
       // Renovacao automatica desligada. O acesso CONTINUA ate vencer.

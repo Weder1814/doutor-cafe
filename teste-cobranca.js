@@ -177,5 +177,20 @@ ok(/ativarAssinaturaMP\(String\(d\.id\)/.test(cart),
 ok((cart.match(/usarRedirecionamento/g) || []).length >= 3,
   "toda falha devolve 'usarRedirecionamento': o produtor cai no Mercado Pago em vez de ficar sem pagar");
 
+// ── 10. CAMINHO DE RESERVA NO FLUXO DOCUMENTADO ──────────────────
+console.log("\n== 10. Reserva do cartao (tela do Mercado Pago) ==");
+// 13/10/2026, antes de ligar o cartao no site: /assinar-site mandava
+// preapproval_plan_id sem cartao, combinacao que a documentacao do MP nao
+// prevê. Se falhasse, caia no link estatico sem userId — plano nao ativava.
+var res = semComentarios(corpoEndpoint("/assinar-site") || "");
+ok(res.indexOf("preapproval_plan_id") === -1,
+  "nao manda mais plano associado sem cartao");
+ok(/status: *"pending"/.test(res) && /auto_recurring/.test(res),
+  "usa o fluxo documentado: valor inline e status pending");
+ok(/transaction_amount: *plano\.valor/.test(res),
+  "o valor cobrado vem de PLANOS, a mesma fonte do preco mostrado no app");
+ok(/external_reference: *userId/.test(res),
+  "continua amarrando a assinatura ao produtor");
+
 console.log(falhas === 0 ? "\nTODOS OS TESTES PASSARAM\n" : "\n" + falhas + " FALHA(S)\n");
 process.exit(falhas ? 1 : 0);

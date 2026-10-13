@@ -214,5 +214,26 @@ ok(!/dbAtualizarPlano\(userId, tipo, planoId, expiracaoMP/.test(semComentarios(s
 ok(/GOOGLE_PLAY_SERVICE_ACCOUNT_JSON nao esta configurada/.test(src),
   "o servidor avisa no log quando falta a chave do Google Play");
 
+// ── 12. GOOGLE PLAY: OS IDS QUE EXISTEM DE VERDADE ───────────────
+console.log("\n== 12. Planos base reais do Play Console ==");
+// 13/10/2026, pelos prints do Play Console: os planos base sao
+// "basico-mensal", "pro-mensal" e "premim-mensal". O codigo exigia "mensal"
+// exato e nenhuma compra ativaria. ID de plano base nao pode ser renomeado.
+(function(){
+  var i = src.indexOf("function cicloDoPlanoBasePlay(");
+  var n = 0, j = src.indexOf("{", i), k = j;
+  do { if (src[k] === "{") n++; else if (src[k] === "}") n--; k++; } while (n > 0);
+  eval(src.slice(i, k));
+  ["basico-mensal", "pro-mensal", "premim-mensal", "mensal"].forEach(function(id){
+    ok(cicloDoPlanoBasePlay(id) === "mensal", '"' + id + '" e reconhecido como mensal');
+  });
+  ok(cicloDoPlanoBasePlay("basico-anual") === "anual", '"basico-anual" e reconhecido como anual');
+  ok(cicloDoPlanoBasePlay("promo-x") === null, "ID sem ciclo e recusado (nao chuta)");
+})();
+ok(/SUBSCRIPTION_STATE_IN_GRACE_PERIOD/.test(src) && /tipoNotif===6/.test(src),
+  "em periodo de tolerancia o produtor mantem o acesso (regra do Google)");
+ok(/async function estenderNaToleranciaPlay/.test(src),
+  "a tolerancia so estende a data, sem zerar as analises usadas");
+
 console.log(falhas === 0 ? "\nTODOS OS TESTES PASSARAM\n" : "\n" + falhas + " FALHA(S)\n");
 process.exit(falhas ? 1 : 0);

@@ -192,5 +192,27 @@ ok(/transaction_amount: *plano\.valor/.test(res),
 ok(/external_reference: *userId/.test(res),
   "continua amarrando a assinatura ao produtor");
 
+// ── 11. PIX: VALE UM MES, E SO UMA VEZ ───────────────────────────
+console.log("\n== 11. PIX ativa com data e nao soma em repeticao ==");
+// 13/10/2026: /verificar-pix ativava SEM data (plano vitalicio) e nenhum
+// caminho do PIX era idempotente (cada repeticao somava mais um mes).
+// corpoEndpoint so acha app.post; /verificar-pix e GET, entao recorta aqui.
+var iVp = src.indexOf('app.get("/verificar-pix/:paymentId"');
+var vpix = iVp < 0 ? "" : semComentarios(src.slice(iVp, iVp + 10 + src.slice(iVp + 10).search(/app\.(post|get)\("/)));
+ok(vpix.length > 0, "o endpoint /verificar-pix existe");
+ok(/ativarPixAprovado\(/.test(vpix) && !/dbAtualizarPlano\(/.test(vpix),
+  "/verificar-pix passa pela funcao unica (nao ativa por conta propria)");
+var fPix = semComentarios(src.slice(src.indexOf("async function ativarPixAprovado"), src.indexOf("app.get(\"/verificar-pix")));
+ok(/expiracaoMP\(/.test(fPix), "o PIX grava data de validade (nao vira plano vitalicio)");
+ok(/WHERE pagamentos\.status IS DISTINCT FROM 'approved'/.test(fPix) && /RETURNING id/.test(fPix),
+  "o pagamento e reivindicado no banco: so a primeira chamada ativa");
+ok(/if \(!claim\.rows\.length\) return false/.test(fPix),
+  "repeticao do webhook ou do app nao soma outro mes");
+ok(/"pix"\)/.test(fPix), "o plano fica marcado como PIX (para o aviso de vencimento)");
+ok(!/dbAtualizarPlano\(userId, tipo, planoId, expiracaoMP/.test(semComentarios(src)),
+  "o webhook nao tem mais ativacao propria do PIX, paralela a funcao unica");
+ok(/GOOGLE_PLAY_SERVICE_ACCOUNT_JSON nao esta configurada/.test(src),
+  "o servidor avisa no log quando falta a chave do Google Play");
+
 console.log(falhas === 0 ? "\nTODOS OS TESTES PASSARAM\n" : "\n" + falhas + " FALHA(S)\n");
 process.exit(falhas ? 1 : 0);

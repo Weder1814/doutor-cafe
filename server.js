@@ -1338,13 +1338,15 @@ setInterval(function() {
 // pedir o link ao backend, que anexa o userId; (2) se um plano mudar, muda
 // num lugar so, em vez de num HTML que fica meses preso no cache do celular.
 // Sobrescrevivel por variavel de ambiente para trocar sem deploy.
+// No Railway as variaveis foram criadas como MP_PLAN_ID_BASICO etc.; o codigo
+// so lia MP_PLAN_BASICO_MENSAL e caia sempre no valor fixo. Aceita os dois.
 var MP_PLAN_IDS = {
-  basico_mensal:  process.env.MP_PLAN_BASICO_MENSAL  || "3bdcbffc028a4d259f32fe37a96ae224",
-  basico_anual:   process.env.MP_PLAN_BASICO_ANUAL   || "bd08a04de79f4213886611769b6c9486",
-  pro_mensal:     process.env.MP_PLAN_PRO_MENSAL     || "106181c5ed584a65af06403bd1af0608",
-  pro_anual:      process.env.MP_PLAN_PRO_ANUAL      || "661a046d15c9415a9508970d2f45c819",
-  premium_mensal: process.env.MP_PLAN_PREMIUM_MENSAL || "5bcfb2b27c6241b8a433b3ec0fb2a5c7",
-  premium_anual:  process.env.MP_PLAN_PREMIUM_ANUAL  || "346f4589aca84ba3b4e76351563fdbe1"
+  basico_mensal:  process.env.MP_PLAN_BASICO_MENSAL  || process.env.MP_PLAN_ID_BASICO || "3bdcbffc028a4d259f32fe37a96ae224",
+  basico_anual:   process.env.MP_PLAN_BASICO_ANUAL   || process.env.MP_PLAN_ID_BASICO_ANUAL || "bd08a04de79f4213886611769b6c9486",
+  pro_mensal:     process.env.MP_PLAN_PRO_MENSAL     || process.env.MP_PLAN_ID_PRO || "106181c5ed584a65af06403bd1af0608",
+  pro_anual:      process.env.MP_PLAN_PRO_ANUAL      || process.env.MP_PLAN_ID_PRO_ANUAL || "661a046d15c9415a9508970d2f45c819",
+  premium_mensal: process.env.MP_PLAN_PREMIUM_MENSAL || process.env.MP_PLAN_ID_PREMIUM || "5bcfb2b27c6241b8a433b3ec0fb2a5c7",
+  premium_anual:  process.env.MP_PLAN_PREMIUM_ANUAL  || process.env.MP_PLAN_ID_PREMIUM_ANUAL || "346f4589aca84ba3b4e76351563fdbe1"
 };
 var LINKS_MP_FALLBACK = {};
 Object.keys(MP_PLAN_IDS).forEach(function(k){
@@ -1841,6 +1843,81 @@ app.get("/usuarios", async function(req, res) {
     }
     res.json({ total:Object.keys(usuariosMemoria).length, usuarios:Object.values(usuariosMemoria) });
   } catch(e) { res.status(500).json({ erro:e.message }); }
+});
+
+// ── ADMIN: QUEM TENTOU PAGAR (13/10/2026) ────────────────────────
+// Caso real: a Atividade do Mercado Pago mostrava 4 PIX cancelados no nome de
+// "Produtor Rural" e o Dinho nao tinha como saber quem eram. O nome generico
+// era bug do app (ver gerarPix no index.html), mas a identidade de verdade
+// SEMPRE esteve aqui: o PIX leva o user_id, e o cadastro guarda nome e
+// celular. Esta pagina so junta as duas tabelas.
+//
+// Pagina HTML, nao JSON, porque e aberta no navegador do celular. Protegida
+// pela mesma ADMIN_SENHA dos outros endpoints de admin: ela mostra nome,
+// celular e e-mail de clientes.
+function escHtml(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){
+    return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
+  });
+}
+app.get("/admin/quem-tentou-pagar", async function(req, res) {
+  if (!adminAutorizado(req)) return res.status(401).send("Nao autorizado.");
+  if (!pool) return res.send("Sem banco Postgres configurado.");
+  try {
+    var pg = await pool.query(
+      "SELECT p.id, p.plano_id, p.status, p.valor, p.origem, p.criado_em, " +
+      "       u.nome, u.celular, u.email, u.plano AS plano_atual " +
+      "FROM pagamentos p LEFT JOIN usuarios u ON u.user_id = p.user_id " +
+      "ORDER BY p.criado_em DESC LIMIT 60"
+    );
+    var cad = await pool.query(
+      "SELECT nome, celular, email, plano, analises_usadas, criado_em " +
+      "FROM usuarios ORDER BY criado_em DESC LIMIT 60"
+    );
+
+    function quando(d) {
+      try { return new Date(d).toLocaleString("pt-BR", { timeZone:"America/Sao_Paulo" }); }
+      catch(e) { return String(d); }
+    }
+    function zap(cel) {
+      var n = String(cel || "").replace(/[^0-9]/g, "");
+      if (n.length < 10) return escHtml(cel || "—");
+      return '<a href="https://wa.me/55' + n + '">' + escHtml(cel) + '</a>';
+    }
+    var STATUS = { pending:"Não pagou", approved:"Pago", authorized:"Pago",
+                   cancelled:"Cancelado", rejected:"Recusado", expired:"Expirou" };
+
+    var linhasPg = pg.rows.map(function(r){
+      return "<tr><td>" + quando(r.criado_em) + "</td><td>" + escHtml(r.nome || "(sem cadastro)") +
+             "</td><td>" + zap(r.celular) + "</td><td>" + escHtml(r.plano_id) +
+             "</td><td>" + escHtml(STATUS[r.status] || r.status) +
+             "</td><td>" + escHtml(r.origem || "pix") + "</td></tr>";
+    }).join("");
+    var linhasCad = cad.rows.map(function(r){
+      return "<tr><td>" + quando(r.criado_em) + "</td><td>" + escHtml(r.nome) +
+             "</td><td>" + zap(r.celular) + "</td><td>" + escHtml(r.plano) +
+             "</td><td>" + escHtml(r.analises_usadas || 0) + "</td></tr>";
+    }).join("");
+
+    res.set("Cache-Control", "no-store");
+    res.send('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">' +
+      '<title>Quem tentou pagar</title><style>' +
+      'body{font-family:system-ui,sans-serif;margin:16px;color:#222;background:#fafaf7}' +
+      'h2{font-size:18px;margin:22px 0 8px}p{font-size:13px;color:#666;margin:0 0 10px}' +
+      '.t{overflow-x:auto}table{border-collapse:collapse;font-size:13px;min-width:560px}' +
+      'td,th{border-bottom:1px solid #ddd;padding:7px 8px;text-align:left;white-space:nowrap}' +
+      'th{background:#eee}a{color:#1a5c2a;font-weight:600}</style></head><body>' +
+      '<h2>Tentativas de pagamento</h2><p>Toque no celular para abrir o WhatsApp. "Não pagou" = gerou o PIX e não concluiu.</p>' +
+      '<div class="t"><table><tr><th>Quando</th><th>Nome</th><th>Celular</th><th>Plano</th><th>Situação</th><th>Meio</th></tr>' +
+      (linhasPg || '<tr><td colspan="6">Nenhuma ainda.</td></tr>') + '</table></div>' +
+      '<h2>Cadastros recentes</h2><p>Quem baixou e se cadastrou. Quem baixou e não se cadastrou não aparece em lugar nenhum.</p>' +
+      '<div class="t"><table><tr><th>Quando</th><th>Nome</th><th>Celular</th><th>Plano</th><th>Análises</th></tr>' +
+      (linhasCad || '<tr><td colspan="5">Nenhum ainda.</td></tr>') + '</table></div></body></html>');
+  } catch(e) {
+    console.error("/admin/quem-tentou-pagar:", e.message);
+    res.status(500).send("Erro ao montar a lista: " + escHtml(e.message));
+  }
 });
 
 // ── ADMIN: DEFINIR PLANO DE UM USUARIO (por CPF) ───────────────
@@ -2465,13 +2542,32 @@ app.post("/assinar-site", async function(req, res) {
   }
 
   try {
+    // ── SEM PLANO ASSOCIADO, COM PAGAMENTO PENDENTE (13/10/2026) ──
+    // Antes este corpo mandava preapproval_plan_id SEM cartao. A documentacao
+    // do Mercado Pago diz que assinatura COM plano associado "sempre devera
+    // ser criada com seu card_token_id" — ou seja, a combinacao que usavamos
+    // nao e a documentada. Se o MP recusasse, o codigo caia no link estatico,
+    // que nao carrega o userId: o produtor pagava e o plano nao ativava
+    // sozinho. Exatamente o bug de 18/09 voltando pela porta dos fundos.
+    //
+    // O fluxo documentado para "mandar o produtor pagar na tela do Mercado
+    // Pago" e: sem plano, valor inline e status "pending". O valor vem de
+    // PLANOS — a mesma fonte do formulario na tela e do teste-valores. Assim
+    // os dois caminhos do cartao cobram do mesmo lugar, e ID de plano
+    // cadastrado no painel nao pode mais ficar desatualizado sem ninguem ver.
     var corpo = {
-      preapproval_plan_id: MP_PLAN_IDS[planoId] || undefined,
       reason: "Doutor Cafe — " + plano.nome,
       // external_reference e o que amarra a assinatura ao usuario. E o campo
       // que faltava e que quebrava a ativacao inteira.
       external_reference: userId,
       payer_email: email || undefined,
+      status: "pending",
+      auto_recurring: {
+        frequency: 1,
+        frequency_type: ciclo === "anual" ? "years" : "months",
+        transaction_amount: plano.valor,
+        currency_id: "BRL"
+      },
       back_url: "https://doutor-cafe-app.vercel.app?pagamento=retorno"
     };
     var r = await fetch("https://api.mercadopago.com/preapproval", {

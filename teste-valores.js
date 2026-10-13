@@ -137,8 +137,16 @@ ok(/var CARTAO_SITE_LIBERADO = false/.test(fe),
   "o app comeca assumindo DESLIGADO (se o /ping falhar, nao oferece)");
 ok(/cartaoDesligado/.test(srv),
   "o servidor recusa /assinar-site enquanto a chave estiver desligada (nao so o botao some)");
-ok(/aviso-cartao-off/.test(fe) && /Prefere cart/.test(feTexto),
-  "com o cartao escondido, o site aponta o produtor para o app");
+ok(/aviso-cartao-off/.test(fe) && /assine com.*PIX/i.test(feTexto),
+  "com o cartao escondido, o site oferece o PIX como caminho (funciona para qualquer celular)");
+// Falha real de 28/09/2026: o aviso mandava TODO MUNDO "assinar pelo app no
+// Android" — inclusive quem esta no site porque tem iPhone, e para quem o
+// app nao e opcao nenhuma. A mencao ao app so pode aparecer condicionada
+// ("se voce tiver um celular Android"), nunca como se fosse universal.
+ok(feTexto.indexOf("Se você tiver um celular Android") > -1,
+  "a mencao ao app Android e condicional, nao presume que quem le tem Android");
+ok(feTexto.indexOf("Assine pelo app do Doutor Café no Android —") === -1,
+  "nao promete mais o app Android para quem esta no site sem ter um (frase antiga removida)");
 ok(/cartao=teste|modoTesteCartao/.test(fe),
   "existe um modo de teste por endereco, para validar sem expor a todos");
 
@@ -197,6 +205,27 @@ ok(lg && +lg[1] === ANALISES_GRATIS,
   "limite gratuito no app (" + (lg ? lg[1] : "?") + ") = limite do servidor (" + ANALISES_GRATIS + ")");
 ok(/LIMITE_GRATIS = n;/.test(fe),
   "e se o servidor mudar o numero, o app passa a seguir ele sozinho");
+
+console.log("\n== PIX sai no nome de quem pagou, nao generico ==");
+// Achado em 13/10/2026 olhando a Atividade do Mercado Pago: quase todo PIX
+// saia no nome "Produtor Rural" — o cadastro de verdade (nome obrigatorio)
+// grava em CADASTRO_INICIAL_KEY, mas gerarPix() so lia CADASTRO_KEY, que o
+// cadastro nunca preenche. O nome do produtor nunca chegava ao Mercado Pago.
+var pix = fe.slice(fe.indexOf("function gerarPix("), fe.indexOf("function gerarPix(") + 600);
+ok(/getCadastro\(\)\s*\|\|\s*verificarCadastroInicial\(\)/.test(pix),
+  "gerarPix busca o nome nas DUAS chaves do cadastro, nao so na que fica vazia");
+
+console.log("\n== PIX avisa antes de vencer ==");
+// 13/10/2026: PIX nao renova sozinho e nada avisava o produtor.
+ok(/renovaSozinho/.test(srv) && /plano_origem/.test(srv),
+  "o servidor diz ao app se o plano renova sozinho");
+ok(/function avisoVencimentoPix/.test(fe) && /renovaSozinho !== false/.test(fe),
+  "o app avisa so quem pagou por PIX (cartao e Google Play renovam sozinhos)");
+ok(/avisoVencimentoPix\(d\)/.test(fe), "o aviso roda quando o plano e conferido");
+ok(/sincronizarIdentidade\(function\(\)\{[^}]*sincronizarPlanoComServidor\(\)/.test(fe),
+  "o plano e conferido ao abrir o app (antes so ao abrir a tela de planos)");
+ok(/PIX vencendo/.test(srv) && /wa\.me\/55/.test(srv),
+  "a pagina de admin lista quem vence, com o WhatsApp pronto");
 
 console.log(falhas === 0 ? "\nTODOS OS VALORES BATEM\n" : "\n" + falhas + " DIVERGENCIA(S)\n");
 process.exit(falhas ? 1 : 0);

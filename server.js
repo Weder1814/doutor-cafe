@@ -5951,6 +5951,13 @@ initDB().then(function() {
     if (!process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON) {
       console.error("⚠️ ATENCAO: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON nao esta configurada. " +
         "Compras pelo app Android NAO serao ativadas nem confirmadas (o Google reembolsa em 3 dias).");
+    } else {
+      // A variavel existir nao prova que funciona: um caractere faltando na
+      // colagem quebra a chave, e so descobririamos na primeira compra. Aqui
+      // o servidor pede um token ao Google logo ao ligar e diz no log se deu.
+      getGooglePlayAccessToken()
+        .then(function(){ console.log("✅ Chave do Google Play valida: o servidor consegue conferir compras do app Android."); })
+        .catch(function(e){ console.error("⚠️ ATENCAO: a chave do Google Play esta configurada mas NAO funciona:", e.message); });
     }
     console.log("   DB:", pool?"PostgreSQL":"memória");
   });
